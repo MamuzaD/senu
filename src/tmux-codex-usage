@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import sys
+import selectors
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+
+
+# SHOW_USAGE = False
+SHOW_USAGE = True
+
+# cache
+CACHE_TTL_SECONDS = 60
+CACHE_DIR = (
+    Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "tmux-codex-usage"
+)
+CACHE_FILE = CACHE_DIR / "snapshot.json"
+
+# colors
+BG_GOOD = "colour39"
+BG_WARN = "colour214"
+BG_BAD = "colour160"
+BG_UNKNOWN = "colour240"
+FG_BLACK = "#242424"
+FG_WHITE = "#E4E4E4"
+
+
+def format_duration(seconds):
+    if seconds is None:
+        return None
+
+    seconds = max(0, int(round(seconds)))
+    minutes, _ = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+
+    if days > 0:
+        return f"{days}d{hours}h" if hours > 0 else f"{days}d"
+    if hours > 0:
+        return f"{hours}h{minutes}m" if minutes > 0 else f"{hours}h"
+    return f"{minutes}m"
+
+
+def format_reset(epoch_seconds):
+    if epoch_seconds is None:
+        return None
+    return format_duration(epoch_seconds - time.time())
+
+
+def choose_status_colors(session_left, weekly_left):
+    lowest = min(session_left, weekly_left)
+    if lowest < 20:
+        return FG_WHITE, BG_BAD
+    if lowest < 40:
+        return FG_BLACK, BG_WARN
+    return FG_BLACK, BG_GOOD
+
+
+def error_snapshot(message):
+    return {
+        "ok": False,
+        "session_left": None,
+        "weekly_left": None,
+        "session_resets_at": None,
+        "weekly_resets_at": None,
+        "error": message,
+        "updated_at": int(time.time()),
+    }
+
+
+def terminate_process(proc):
+    if proc.poll() is not None:
+        return
+
+    try:
+        proc.terminate()
+        proc.wait(timeout=1)
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=1)
+        except Exception:
+            pass
+
+
+def run_rpc_probe():
+    proc = None
+    selector = selectors.DefaultSelector()
+    responses = {}
+
+    try:
+        proc = subprocess.Popen(
+            ["codex", "-s", "read-only", "-a", "untrusted", "app-server"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+        selector.register(proc.stdout, selectors.EVENT_READ)
+
+        requests = [
+            {
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "tmux-codex-usage", "version": "0.1.0"}
+                },
+            },
+            {"method": "initialized", "params": {}},
+            {"id": 2, "method": "account/rateLimits/read", "params": {}},
+        ]
+
+        for message in requests:
+            proc.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
+        proc.stdin.flush()
+
+        buffer = b""
+        deadline = time.time() + 4
+
+        while time.time() < deadline and 2 not in responses:
+            events = selector.select(0.2)
+            for key, _ in events:
+                chunk = os.read(key.fileobj.fileno(), 4096)
+                if not chunk:
+                    continue
+
+                buffer += chunk
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    if not line.strip():
+                        continue
+
+                    try:
+                        message = json.loads(line.decode("utf-8", "replace"))
+                    except json.JSONDecodeError:
+                        continue
+
+                    message_id = message.get("id")
+                    if isinstance(message_id, int):
+                        responses[message_id] = message
+
+        limits_message = responses.get(2, {})
+        if "error" in limits_message:
+            message = limits_message["error"].get("message") or "RPC request failed"
+            return error_snapshot(message)
+
+        rate_limits = limits_message.get("result", {}).get("rateLimits", {})
+        primary = rate_limits.get("primary") or {}
+        secondary = rate_limits.get("secondary") or {}
+
+        session_left = 100 - primary["usedPercent"]
+        weekly_left = 100 - secondary["usedPercent"]
+
+        return {
+            "ok": True,
+            "session_left": session_left,
+            "weekly_left": weekly_left,
+            "session_resets_at": primary.get("resetsAt"),
+            "weekly_resets_at": secondary.get("resetsAt"),
+            "error": None,
+            "updated_at": int(time.time()),
+        }
+    except FileNotFoundError:
+        return error_snapshot("Codex CLI not found")
+    except Exception as exc:
+        return error_snapshot(str(exc).strip() or "RPC probe failed")
+    finally:
+        selector.close()
+        if proc is not None:
+            terminate_process(proc)
+
+
+def load_cache(max_age=CACHE_TTL_SECONDS):
+    if not CACHE_FILE.exists():
+        return None
+
+    try:
+        payload = json.loads(CACHE_FILE.read_text())
+    except Exception:
+        return None
+
+    if time.time() - payload.get("cached_at", 0) > max_age:
+        return None
+
+    return payload.get("snapshot")
+
+
+def save_cache(snapshot):
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"cached_at": int(time.time()), "snapshot": snapshot}
+
+    with tempfile.NamedTemporaryFile("w", dir=CACHE_DIR, delete=False) as handle:
+        json.dump(payload, handle)
+        temp_name = handle.name
+
+    os.replace(temp_name, CACHE_FILE)
+
+
+def fetch_snapshot(force_refresh=False):
+    if not force_refresh:
+        cached = load_cache()
+        if cached is not None:
+            return cached
+
+    snapshot = run_rpc_probe()
+    save_cache(snapshot)
+    return snapshot
+
+
+def render_tmux(snapshot):
+    if not snapshot.get("ok"):
+        return f"#[fg={FG_BLACK},bg={BG_UNKNOWN},bold]  Codex n/a #[default]"
+
+    session_left = snapshot.get("session_left")
+    weekly_left = snapshot.get("weekly_left")
+    session_reset = format_reset(snapshot.get("session_resets_at"))
+    weekly_reset = format_reset(snapshot.get("weekly_resets_at"))
+
+    session_text = f"{session_left}%"
+    weekly_text = f"{weekly_left}%"
+
+    left = f"S-{session_text}"
+    if session_reset:
+        left += f" {session_reset}"
+
+    right = f"W-{weekly_text}"
+    if weekly_reset:
+        right += f" {weekly_reset}"
+
+    fg, bg = choose_status_colors(session_left, weekly_left)
+    body = f"  {left} | {right}"
+
+    return f"#[fg={fg},bg={bg},bold]  {body}  #[default]"
+
+
+def main():
+    if not SHOW_USAGE:
+        return 0
+
+    force_refresh = "--refresh" in sys.argv
+    snapshot = fetch_snapshot(force_refresh=force_refresh)
+    if not snapshot.get("ok") and snapshot.get("error"):
+        error_msg = snapshot["error"]
+        # This sends the message to the tmux notification bar
+        subprocess.run(
+            ["tmux", "-d", "5000", "display-message", f"Codex Error: {error_msg}"]
+        )
+    print(render_tmux(snapshot))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
