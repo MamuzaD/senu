@@ -51,8 +51,12 @@ def format_reset(epoch_seconds):
     return format_duration(epoch_seconds - time.time())
 
 
-def choose_status_colors(session_left, weekly_left):
-    lowest = min(session_left, weekly_left)
+def choose_status_colors(*percent_values):
+    values = [value for value in percent_values if value is not None]
+    if not values:
+        return FG_BLACK, BG_UNKNOWN
+
+    lowest = min(values)
     if lowest < 20:
         return FG_WHITE, BG_BAD
     if lowest < 40:
@@ -69,6 +73,54 @@ def error_snapshot(message):
         "weekly_resets_at": None,
         "error": message,
         "updated_at": int(time.time()),
+    }
+
+
+def percent_left(bucket):
+    if not bucket:
+        raise KeyError("missing rate limit bucket")
+
+    if bucket.get("remainingPercent") is not None:
+        return bucket["remainingPercent"]
+    if bucket.get("percentRemaining") is not None:
+        return bucket["percentRemaining"]
+    if bucket.get("usedPercent") is not None:
+        return 100 - bucket["usedPercent"]
+
+    remaining = bucket.get("remaining")
+    limit = bucket.get("limit")
+    if remaining is not None and limit:
+        return round((remaining / limit) * 100)
+
+    reset_remaining = bucket.get("resetRemaining")
+    reset_limit = bucket.get("resetLimit")
+    if reset_remaining is not None and reset_limit:
+        return round((reset_remaining / reset_limit) * 100)
+
+    raise KeyError("usedPercent")
+
+
+def bucket_label(bucket):
+    duration = bucket.get("windowDurationMins")
+    if duration is None:
+        return "L"
+    if duration <= 360:
+        return "S"
+    if duration >= 10080:
+        return "W"
+    if duration >= 1440:
+        return f"{round(duration / 1440)}d"
+    return f"{round(duration / 60)}h"
+
+
+def rate_limit_bucket(name, bucket):
+    if not bucket:
+        return None
+
+    return {
+        "label": bucket_label(bucket) if name in ("primary", "secondary") else name,
+        "left": percent_left(bucket),
+        "resets_at": bucket.get("resetsAt"),
     }
 
 
@@ -152,15 +204,19 @@ def run_rpc_probe():
         primary = rate_limits.get("primary") or {}
         secondary = rate_limits.get("secondary") or {}
 
-        session_left = 100 - primary["usedPercent"]
-        weekly_left = 100 - secondary["usedPercent"]
+        buckets = []
+        for name, bucket in (("primary", primary), ("secondary", secondary)):
+            item = rate_limit_bucket(name, bucket)
+            if item is not None:
+                buckets.append(item)
 
         return {
             "ok": True,
-            "session_left": session_left,
-            "weekly_left": weekly_left,
-            "session_resets_at": primary.get("resetsAt"),
-            "weekly_resets_at": secondary.get("resetsAt"),
+            "buckets": buckets,
+            "session_left": buckets[0]["left"] if buckets else None,
+            "weekly_left": buckets[-1]["left"] if buckets else None,
+            "session_resets_at": buckets[0]["resets_at"] if buckets else None,
+            "weekly_resets_at": buckets[-1]["resets_at"] if buckets else None,
             "error": None,
             "updated_at": int(time.time()),
         }
@@ -215,6 +271,20 @@ def render_tmux(snapshot):
     if not snapshot.get("ok"):
         return f"#[fg={FG_BLACK},bg={BG_UNKNOWN},bold]  Codex n/a #[default]"
 
+    buckets = snapshot.get("buckets")
+    if buckets:
+        parts = []
+        for bucket in buckets:
+            text = f"{bucket['label']}-{bucket['left']}%"
+            reset = format_reset(bucket.get("resets_at"))
+            if reset:
+                text += f" {reset}"
+            parts.append(text)
+
+        fg, bg = choose_status_colors(*(bucket.get("left") for bucket in buckets))
+        body = f"  {' | '.join(parts)}"
+        return f"#[fg={fg},bg={bg},bold]  {body}  #[default]"
+
     session_left = snapshot.get("session_left")
     weekly_left = snapshot.get("weekly_left")
     session_reset = format_reset(snapshot.get("session_resets_at"))
@@ -246,9 +316,10 @@ def main():
     if not snapshot.get("ok") and snapshot.get("error"):
         error_msg = snapshot["error"]
         # This sends the message to the tmux notification bar
-        subprocess.run(
-            ["tmux", "-d", "5000", "display-message", f"Codex Error: {error_msg}"]
-        )
+        if os.environ.get("TMUX"):
+            subprocess.run(
+                ["tmux", "display-message", "-d", "5000", f"Codex Error: {error_msg}"]
+            )
     print(render_tmux(snapshot))
     return 0
 
