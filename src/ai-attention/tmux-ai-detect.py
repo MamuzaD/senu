@@ -114,7 +114,7 @@ def _match_cond(cond, text):
 # region resolution (manifest region name -> text)
 # ---------------------------------------------------------------------------
 
-_RULE_LINE = re.compile(r"^\s*[\u2500-\u257F\-]{3,}\s*$")   # box-drawing / --- rules
+_RULE_LINE = re.compile(r"^\s*[\u2500\u2501\u2504\u2505\u2508\u2509\u254C\u254D\u2550\-]{3,}\s*$")  # horizontal rules only (not box corners)
 _PROMPT_MARK = re.compile(r"[\u276F\u2590\u203A]")            # ❯ ▐ ›
 _PROMPT_GT = re.compile(r"^\s*>\s")
 _BOX_TOP = re.compile(r"[\u256D\u250C]")                      # ╭ ┌

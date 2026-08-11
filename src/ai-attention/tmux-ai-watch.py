@@ -3,14 +3,25 @@
 
 Polls every tmux pane ~once/second, classifies agent panes with the vendored
 herdr manifests (via tmux-ai-detect), folds pane states up to a per-window
-@ai_state option (blocked > working > idle), and plays a sound on a background
-window's transition (working->idle = "done", ->blocked = "request").
+@ai_state option, and plays a sound on a background window's transition.
+
+States written to @ai_state (window-status-format renders them):
+    working  — agent busy                          (yellow  ●)
+    blocked  — agent needs you (permission/input)  (amber   !)
+    done     — finished while you weren't looking   (blue    ●) — sticky until you
+               focus the window, then it clears to idle
+    idle     — waiting, and you've seen it          (green   ◯)
+
+Sounds (background window only, or any window if @ai_sound_always on):
+    done    — on working -> idle
+    request — on entering blocked
 
 Start it from tmux.conf:   run-shell -b "~/.local/bin/tmux-ai-watch"
 It is single-instance guarded, so re-running on config reload is a no-op.
 
     tmux-ai-watch            # daemon loop
     tmux-ai-watch once       # single poll, print what it would do (debug)
+    tmux-ai-watch test       # play request then done (verify audio path)
 
 Sounds are resolved from, in order:
     * tmux options  @ai_sound_done / @ai_sound_request  (a file path)
@@ -129,8 +140,11 @@ def _sig(title, capture):
 
 class Watcher:
     def __init__(self):
-        self.pane_state = {}    # pane_id -> {"sig": h, "state": s}
-        self.win_state = {}     # window_id -> folded state string ("" = none)
+        self.pane_state = {}       # pane_id -> {"sig": h, "state": s}
+        self.win_raw = {}          # window_id -> last folded raw state
+        self.win_displayed = {}    # window_id -> value written to @ai_state
+        self.done_flag = {}        # window_id -> finished-but-unseen sticky flag
+        self.seen_windows = set()  # windows observed at least once (first-poll guard)
 
     def poll(self, dry=False):
         panes = list_panes()
@@ -183,34 +197,60 @@ class Watcher:
 
         for wid, info in windows.items():
             seen.add(wid)
-            new = self._fold(info["states"])
-            old = self.win_state.get(wid, "")
-            if new == old:
-                continue
+            raw = self._fold(info["states"])
+            old_raw = self.win_raw.get(wid, "")
+            fg = info["fg"]
+            first = wid not in self.seen_windows   # daemon's first sight of this window
+            self.seen_windows.add(wid)
 
-            if not dry:
-                if new:
-                    tmux("set-option", "-w", "-t", wid, "@ai_state", new)
-                else:
-                    tmux("set-option", "-uw", "-t", wid, "@ai_state")
-            changed = True
+            # --- sticky "done" (finished but unseen) ---
+            if raw in ("working", "blocked"):
+                self.done_flag[wid] = False        # new activity clears a pending done
+            elif raw == "idle" and old_raw == "working":
+                if not fg:
+                    self.done_flag[wid] = True      # finished off-screen -> blue dot
+                if always or not fg:
+                    self._sound("done", wid, old_raw, raw, dry)
+            if fg and self.done_flag.get(wid):
+                self.done_flag[wid] = False         # you looked -> clear
 
-            # sound on transition; background-only unless @ai_sound_always
-            if always or not info["fg"]:
-                if old == "working" and new == "idle":
-                    self._sound("done", wid, old, new, dry)
-                elif new == "blocked" and old != "blocked":
-                    self._sound("request", wid, old, new, dry)
+            # --- request sound on entering blocked (not on the daemon's first sight) ---
+            if raw == "blocked" and old_raw != "blocked" and not first \
+                    and (always or not fg):
+                self._sound("request", wid, old_raw, raw, dry)
 
-            self.win_state[wid] = new
+            # --- displayed state ---
+            if raw == "blocked":
+                displayed = "blocked"
+            elif raw == "working":
+                displayed = "working"
+            elif self.done_flag.get(wid):
+                displayed = "done"
+            else:
+                displayed = "idle" if raw == "idle" else ""
+
+            old_displayed = self.win_displayed.get(wid, "")
+            if displayed != old_displayed:
+                if not dry:
+                    if displayed:
+                        tmux("set-option", "-w", "-t", wid, "@ai_state", displayed)
+                    else:
+                        tmux("set-option", "-uw", "-t", wid, "@ai_state")
+                changed = True
+
+            self.win_raw[wid] = raw
+            self.win_displayed[wid] = displayed
 
         # windows that lost all agent panes -> clear
-        for wid in [w for w in self.win_state if w not in seen]:
-            if self.win_state[wid]:
+        for wid in [w for w in self.win_displayed if w not in seen]:
+            if self.win_displayed[wid]:
                 if not dry:
                     tmux("set-option", "-uw", "-t", wid, "@ai_state")
                 changed = True
-            del self.win_state[wid]
+            del self.win_displayed[wid]
+            self.win_raw.pop(wid, None)
+            self.done_flag.pop(wid, None)
+            self.seen_windows.discard(wid)
 
         if changed and not dry:
             tmux("refresh-client", "-S")
