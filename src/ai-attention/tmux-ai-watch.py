@@ -34,6 +34,7 @@ import os
 import sys
 import time
 import fcntl
+import random
 import hashlib
 import tempfile
 import subprocess
@@ -110,6 +111,15 @@ def sound_path(kind):
         opt = os.path.expanduser(opt)
         if os.path.exists(opt):
             return opt
+    # dynamic pool: sounds/<kind>/*.{aiff,wav,mp3,m4a} -> random pick each time
+    # (drop any number of clips/voice-lines in here; they rotate)
+    pool = os.path.join(_sounds_dir(), kind)
+    if os.path.isdir(pool):
+        cand = [os.path.join(pool, f) for f in os.listdir(pool)
+                if f.lower().endswith((".aiff", ".wav", ".mp3", ".m4a"))]
+        if cand:
+            return random.choice(cand)
+    # single fallback file
     for ext in ("aiff", "wav", "mp3", "m4a"):
         f = os.path.join(_sounds_dir(), f"{kind}.{ext}")
         if os.path.exists(f):
