@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# refresh-manifests — pull the latest agent-detection manifests from herdr's public
+# distribution into the vendored copy, so the standalone tmux AI-attention daemon never
+# drifts. Requires NO herdr install — fetches over HTTPS.
+#
+# Usage:
+#   refresh-manifests           # sync claude + codex, only rewrite on change
+#   refresh-manifests --check   # report drift, change nothing (exit 1 if stale)
+#
+# Source of truth: https://herdr.dev/agent-detection/<agent>.toml
+# (GitHub mirror fallback: herdrdev/herdr/website/agent-detection/<agent>.toml)
+set -euo pipefail
+
+AGENTS=(claude codex)
+PRIMARY="https://herdr.dev/agent-detection"
+MIRROR="https://raw.githubusercontent.com/herdrdev/herdr/HEAD/website/agent-detection"
+DEST_DIR="${HERDR_DETECTION_DIR:-$HOME/dotfiles/tmux/ai-attention/detection}"
+
+CHECK_ONLY=false
+DAILY=false
+case "${1:-}" in
+--check) CHECK_ONLY=true ;;
+--daily) DAILY=true ;;
+esac
+
+# --daily: throttle to at most once per 24h (keeps tmux startup instant). Skip silently
+# if we synced recently; otherwise fall through to a normal sync and stamp on success.
+STAMP="${XDG_STATE_HOME:-$HOME/.local/state}/tmux-ai-attention/last-sync"
+if $DAILY; then
+  if [[ -f "$STAMP" ]]; then
+    now=$(date +%s)
+    last=$(cat "$STAMP" 2>/dev/null || echo 0)
+    [[ $((now - last)) -lt 86400 ]] && exit 0
+  fi
+  mkdir -p "$(dirname "$STAMP")"
+fi
+
+command -v curl >/dev/null 2>&1 || {
+  echo "curl not found" >&2
+  exit 2
+}
+command -v python3 >/dev/null 2>&1 || {
+  echo "python3 not found" >&2
+  exit 2
+}
+
+# Validate a candidate file is a real manifest; print its version on success.
+validate() {
+  python3 - "$1" <<'PY'
+import sys
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib  # py<3.11
+try:
+    with open(sys.argv[1], "rb") as f:
+        d = tomllib.load(f)
+except Exception as e:
+    sys.stderr.write(f"parse error: {e}\n"); sys.exit(1)
+if not d.get("id") or not d.get("version") or not d.get("rules"):
+    sys.stderr.write("missing id/version/rules\n"); sys.exit(1)
+print(d["version"])
+PY
+}
+
+fetch() { # $1=agent  $2=out ; try primary then mirror
+  curl -fsSL --max-time 15 "$PRIMARY/$1.toml" -o "$2" 2>/dev/null && return 0
+  echo "  primary failed, trying GitHub mirror…" >&2
+  curl -fsSL --max-time 15 "$MIRROR/$1.toml" -o "$2" 2>/dev/null
+}
+
+mkdir -p "$DEST_DIR"
+changed=0 drift=0 failed=0
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+for a in "${AGENTS[@]}"; do
+  out="$tmp/$a.toml"
+  if ! fetch "$a" "$out"; then
+    echo "✗ $a: download failed (primary + mirror)"
+    failed=1
+    continue
+  fi
+  if ! newver="$(validate "$out")"; then
+    echo "✗ $a: fetched file failed validation, skipping"
+    failed=1
+    continue
+  fi
+  dest="$DEST_DIR/$a.toml"
+  oldver="$(grep -m1 '^version' "$dest" 2>/dev/null | sed 's/.*= *//; s/"//g' || echo none)"
+
+  if [[ -f "$dest" ]] && diff -q "$out" "$dest" >/dev/null 2>&1; then
+    echo "= $a: up to date ($newver)"
+    continue
+  fi
+
+  drift=1
+  if $CHECK_ONLY; then
+    echo "! $a: DRIFT — vendored=$oldver online=$newver"
+    continue
+  fi
+  [[ -f "$dest" ]] && cp "$dest" "$dest.bak"
+  mv "$out" "$dest"
+  echo "↑ $a: updated $oldver -> $newver"
+  changed=1
+done
+
+if $CHECK_ONLY; then
+  [[ "$drift" -eq 1 ]] && exit 1 || {
+    echo "no drift"
+    exit 0
+  }
+fi
+
+if [[ "$changed" -eq 1 ]]; then
+  echo "manifests updated — restart the watcher to load them: pkill -f tmux-ai-watch"
+  # best-effort live reload if the daemon is running
+  pkill -f tmux-ai-watch 2>/dev/null && echo "(restarted tmux-ai-watch)" || true
+fi
+# Stamp only on a clean run so a failed fetch retries on the next tmux start.
+$DAILY && [[ "$failed" -eq 0 ]] && date +%s >"$STAMP"
+[[ "$failed" -eq 1 ]] && exit 3 || exit 0
