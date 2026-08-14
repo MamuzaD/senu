@@ -3,7 +3,10 @@
 
 Lists every AI-agent window across ALL tmux sessions with its live status dot,
 sorted by how much it wants you (blocked > done > working > idle), and lets you
-jump straight to one. Meant to be opened in a popup, e.g. bound to prefix+a:
+jump straight to one. On macOS, if the agent's session is showing in another
+Ghostty tab, jumping raises that tab (via Ghostty's AppleScript dictionary)
+instead of pulling the session into your current tab. Meant to be opened in a
+popup, e.g. bound to prefix+a:
 
     bind-key a display-popup -w 50% -h 60% -E "~/.local/bin/tmux-ai-agents"
 
@@ -19,6 +22,7 @@ See tmux/ai-attention/docs/ai-attention-standalone.md.
 import os
 import re
 import curses
+import shutil
 import subprocess
 import importlib.machinery
 import importlib.util
@@ -160,9 +164,44 @@ def collect():
     return rows
 
 
+def _session_attached(session):
+    """True if the session is currently attached to a client (shown in a tab)."""
+    return session in tmux("list-clients", "-F", "#{session_name}").split()
+
+
+def _is_ghostty():
+    return "ghostty" in tmux("display-message", "-p", "#{client_termname}").lower()
+
+
+def _ghostty_focus_tab(session):
+    """macOS only: raise the Ghostty tab whose title contains the session name.
+    Ghostty sets each tab's title from the tmux session, so a substring match
+    lands the right tab. Returns True on success; degrades to False when
+    osascript/Ghostty/AppleScript isn't available (older Ghostty, no Automation
+    permission, non-Ghostty terminal) so the caller can fall back."""
+    if not _is_ghostty() or not shutil.which("osascript"):
+        return False
+    safe = session.replace("\\", "\\\\").replace('"', '\\"')
+    script = ('tell application "Ghostty"\n'
+              '  activate\n'
+              '  select tab (first tab of front window whose name contains "%s")\n'
+              'end tell' % safe)
+    return subprocess.run(["osascript", "-e", script], capture_output=True,
+                          text=True, check=False).returncode == 0
+
+
 def jump(row):
-    tmux("switch-client", "-t", row["session"])
-    tmux("select-window", "-t", row["window_id"])
+    session = row["session"]
+    # If the agent's session is already displayed in a (possibly different)
+    # Ghostty tab, raise that tab and just point it at the agent's window —
+    # don't switch-client, which would instead pull the session into the tab
+    # you're currently in. Fall back to switch-client for detached sessions or
+    # when Ghostty AppleScript isn't available.
+    if _session_attached(session) and _ghostty_focus_tab(session):
+        tmux("select-window", "-t", row["window_id"])
+    else:
+        tmux("switch-client", "-t", session)
+        tmux("select-window", "-t", row["window_id"])
 
 
 def kill(row):
