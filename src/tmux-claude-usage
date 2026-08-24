@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import subprocess
+import sys
+import time
+import tempfile
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+SHOW_USAGE = True
+
+CACHE_TTL_SECONDS = 300
+CACHE_DIR = (
+    Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "tmux-claude-usage"
+)
+CACHE_FILE = CACHE_DIR / "snapshot.json"
+LOCK_FILE = CACHE_DIR / "refresh.lock"
+LOCK_TTL_SECONDS = 10
+CREDENTIALS_FILE = Path.home() / ".claude" / ".credentials.json"
+API_URL = "https://api.anthropic.com/api/oauth/usage"
+
+# Claude orange color scheme
+BG_GOOD = "colour208"
+BG_WARN = "colour214"
+BG_BAD = "colour160"
+BG_UNKNOWN = "colour240"
+FG_BLACK = "#242424"
+FG_WHITE = "#E4E4E4"
+
+
+def format_duration(seconds):
+    if seconds is None:
+        return None
+    seconds = max(0, int(round(seconds)))
+    minutes, _ = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days > 0:
+        return f"{days}d{hours}h" if hours > 0 else f"{days}d"
+    if hours > 0:
+        return f"{hours}h{minutes}m" if minutes > 0 else f"{hours}h"
+    return f"{minutes}m"
+
+
+def format_reset(iso_timestamp):
+    if not iso_timestamp:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_timestamp)
+        now = datetime.now(timezone.utc)
+        return format_duration((dt - now).total_seconds())
+    except Exception:
+        return None
+
+
+def choose_status_colors(five_hour_left, seven_day_left):
+    lowest = min(five_hour_left, seven_day_left)
+    if lowest < 20:
+        return FG_WHITE, BG_BAD
+    if lowest < 40:
+        return FG_BLACK, BG_WARN
+    return FG_BLACK, BG_GOOD
+
+
+def error_snapshot(message):
+    return {
+        "ok": False,
+        "five_hour_left": None,
+        "seven_day_left": None,
+        "five_hour_resets_at": None,
+        "seven_day_resets_at": None,
+        "error": message,
+        "updated_at": int(time.time()),
+    }
+
+
+def load_token():
+    if not CREDENTIALS_FILE.exists():
+        return None
+    try:
+        data = json.loads(CREDENTIALS_FILE.read_text())
+        creds = data.get("claudeAiOauth", {})
+        token = creds.get("accessToken")
+        expires_at = creds.get("expiresAt", 0)
+        if expires_at and int(time.time() * 1000) > expires_at:
+            return None
+        return token
+    except Exception:
+        return None
+
+
+def fetch_from_api():
+    token = load_token()
+    if not token:
+        return error_snapshot("No Claude credentials")
+
+    try:
+        req = urllib.request.Request(
+            API_URL,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "anthropic-beta": "oauth-2025-04-20",
+                "Content-Type": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        five_hour = data.get("five_hour") or {}
+        seven_day = data.get("seven_day") or {}
+
+        return {
+            "ok": True,
+            "five_hour_left": 100 - (five_hour.get("utilization") or 0),
+            "seven_day_left": 100 - (seven_day.get("utilization") or 0),
+            "five_hour_resets_at": five_hour.get("resets_at"),
+            "seven_day_resets_at": seven_day.get("resets_at"),
+            "error": None,
+            "updated_at": int(time.time()),
+        }
+    except urllib.error.HTTPError as exc:
+        return error_snapshot(f"HTTP {exc.code}")
+    except Exception as exc:
+        return error_snapshot(str(exc).strip() or "API request failed")
+
+
+def load_cache(max_age=CACHE_TTL_SECONDS):
+    if not CACHE_FILE.exists():
+        return None
+    try:
+        payload = json.loads(CACHE_FILE.read_text())
+    except Exception:
+        return None
+    if time.time() - payload.get("cached_at", 0) > max_age:
+        return None
+    return payload.get("snapshot")
+
+
+def save_cache(snapshot):
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"cached_at": int(time.time()), "snapshot": snapshot}
+    with tempfile.NamedTemporaryFile("w", dir=CACHE_DIR, delete=False) as handle:
+        json.dump(payload, handle)
+        temp_name = handle.name
+    os.replace(temp_name, CACHE_FILE)
+
+
+def acquire_lock():
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        if LOCK_FILE.exists():
+            age = time.time() - LOCK_FILE.stat().st_mtime
+            if age < LOCK_TTL_SECONDS:
+                return False
+            LOCK_FILE.unlink(missing_ok=True)
+        LOCK_FILE.touch()
+        return True
+    except Exception:
+        return False
+
+
+def release_lock():
+    LOCK_FILE.unlink(missing_ok=True)
+
+
+def fetch_snapshot(force_refresh=False):
+    if not force_refresh:
+        cached = load_cache()
+        if cached is not None:
+            return cached
+
+    if not acquire_lock():
+        # Another process is refreshing; return stale cache rather than racing
+        stale = load_cache(max_age=float("inf"))
+        return stale if stale is not None else error_snapshot("Refreshing...")
+
+    try:
+        snapshot = fetch_from_api()
+        save_cache(snapshot)
+        return snapshot
+    finally:
+        release_lock()
+
+
+def render_tmux(snapshot):
+    if not snapshot.get("ok"):
+        if snapshot.get("error"):
+            error_msg = snapshot["error"]
+            subprocess.run(
+                ["tmux", "display-message", "-d", "5000", f"Claude Error: {error_msg}"]
+            )
+        return f"#[fg={FG_BLACK},bg={BG_UNKNOWN},bold]  Claude n/a #[default]"
+
+    five_hour_left = snapshot.get("five_hour_left")
+    seven_day_left = snapshot.get("seven_day_left")
+    five_hour_reset = format_reset(snapshot.get("five_hour_resets_at"))
+    seven_day_reset = format_reset(snapshot.get("seven_day_resets_at"))
+
+    left = f"S-{round(five_hour_left)}%"
+    if five_hour_reset:
+        left += f" {five_hour_reset}"
+
+    right = f"W-{round(seven_day_left)}%"
+    if seven_day_reset:
+        right += f" {seven_day_reset}"
+
+    fg, bg = choose_status_colors(five_hour_left, seven_day_left)
+    return f"#[fg={fg},bg={bg},bold]  {left} | {right}  #[default]"
+
+
+def main():
+    if not SHOW_USAGE:
+        return 0
+    force_refresh = "--refresh" in sys.argv
+    snapshot = fetch_snapshot(force_refresh=force_refresh)
+    print(render_tmux(snapshot))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
