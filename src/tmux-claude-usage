@@ -191,9 +191,9 @@ def render_tmux(snapshot):
     if not snapshot.get("ok"):
         if snapshot.get("error"):
             error_msg = snapshot["error"]
-            subprocess.run(
-                ["tmux", "display-message", "-d", "5000", f"Claude Error: {error_msg}"]
-            )
+            # subprocess.run(
+            #     ["tmux", "display-message", "-d", "5000", f"Claude Error: {error_msg}"]
+            # )
         return f"#[fg={FG_BLACK},bg={BG_UNKNOWN},bold]  Claude n/a #[default]"
 
     five_hour_left = snapshot.get("five_hour_left")
