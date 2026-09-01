@@ -266,6 +266,9 @@ class Watcher:
             tmux("refresh-client", "-S")
 
     def _sound(self, kind, wid, old, new, dry):
+        enabled = get_global_option("@ai_sound_enabled")
+        if enabled.lower() in ("0", "off", "false", "no"):
+            return
         if dry:
             print(f"[sound] {kind}  window={wid}  {old or '-'} -> {new}")
         else:
