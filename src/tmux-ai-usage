@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Popup summary of Claude Code + Codex usage, reusing tmux-claude-usage /
+tmux-codex-usage's own fetch logic via their --json output."""
+
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+BIN_DIR = Path(__file__).resolve().parent
+BAR_WIDTH = 20
+
+
+def fetch_json(script_name):
+    try:
+        out = subprocess.run(
+            [str(BIN_DIR / script_name), "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return json.loads(out.stdout)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc).strip() or "failed to run script"}
+
+
+def format_duration(seconds):
+    if seconds is None:
+        return None
+    seconds = max(0, int(round(seconds)))
+    minutes, _ = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days > 0:
+        return f"{days}d{hours}h" if hours > 0 else f"{days}d"
+    if hours > 0:
+        return f"{hours}h{minutes}m" if minutes > 0 else f"{hours}h"
+    return f"{minutes}m"
+
+
+def format_resets_at(value):
+    if not value:
+        return None
+    try:
+        # Codex gives epoch seconds, Claude gives an ISO timestamp.
+        if isinstance(value, (int, float)):
+            remaining = value - time.time()
+        else:
+            from datetime import datetime, timezone
+
+            dt = datetime.fromisoformat(value)
+            remaining = (dt - datetime.now(timezone.utc)).total_seconds()
+        return format_duration(remaining)
+    except Exception:
+        return None
+
+
+def bar(pct):
+    if pct is None:
+        return "░" * BAR_WIDTH
+    pct = max(0, min(100, pct))
+    filled = round(pct * BAR_WIDTH / 100)
+    return "█" * filled + "░" * (BAR_WIDTH - filled)
+
+
+def render_row(label, left, resets_at):
+    reset = format_resets_at(resets_at)
+    pct = f"{round(left)}%" if left is not None else "n/a"
+    line = f"  {label:<9} [{bar(left)}] {pct:>4}"
+    if reset:
+        line += f"   resets {reset}"
+    return line
+
+
+def claude_rows(snapshot):
+    if not snapshot.get("ok"):
+        return [f"  error: {snapshot.get('error', 'unknown')}"]
+    return [
+        render_row("Session", snapshot.get("five_hour_left"), snapshot.get("five_hour_resets_at")),
+        render_row("Week", snapshot.get("seven_day_left"), snapshot.get("seven_day_resets_at")),
+    ]
+
+
+def codex_rows(snapshot):
+    if not snapshot.get("ok"):
+        return [f"  error: {snapshot.get('error', 'unknown')}"]
+    buckets = snapshot.get("buckets")
+    if buckets:
+        return [render_row(b["label"], b.get("left"), b.get("resets_at")) for b in buckets]
+    return [
+        render_row("Session", snapshot.get("session_left"), snapshot.get("session_resets_at")),
+        render_row("Weekly", snapshot.get("weekly_left"), snapshot.get("weekly_resets_at")),
+    ]
+
+
+def main():
+    claude = fetch_json("tmux-claude-usage")
+    codex = fetch_json("tmux-codex-usage")
+
+    lines = ["", " Claude", *claude_rows(claude), "", " Codex", *codex_rows(codex), ""]
+    print("\n".join(lines))
+    print(" press any key to close", end="", flush=True)
+
+    try:
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    except Exception:
+        input()
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
