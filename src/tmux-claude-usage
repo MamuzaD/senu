@@ -21,6 +21,9 @@ CACHE_DIR = (
 CACHE_FILE = CACHE_DIR / "snapshot.json"
 LOCK_FILE = CACHE_DIR / "refresh.lock"
 LOCK_TTL_SECONDS = 10
+# beyond the TTL we still answer instantly from a stale cache and refresh in
+# the background, rather than blocking the caller on a network round trip.
+STALE_MAX_AGE_SECONDS = 15 * 60
 CREDENTIALS_FILE = Path.home() / ".claude" / ".credentials.json"
 API_URL = "https://api.anthropic.com/api/oauth/usage"
 
@@ -79,19 +82,41 @@ def error_snapshot(message):
     }
 
 
-def load_token():
+def _token_from_oauth_data(data):
+    creds = data.get("claudeAiOauth", {})
+    token = creds.get("accessToken")
+    expires_at = creds.get("expiresAt", 0)
+    if expires_at and int(time.time() * 1000) > expires_at:
+        return None
+    return token
+
+
+def _load_token_from_file():
     if not CREDENTIALS_FILE.exists():
         return None
     try:
-        data = json.loads(CREDENTIALS_FILE.read_text())
-        creds = data.get("claudeAiOauth", {})
-        token = creds.get("accessToken")
-        expires_at = creds.get("expiresAt", 0)
-        if expires_at and int(time.time() * 1000) > expires_at:
-            return None
-        return token
+        return _token_from_oauth_data(json.loads(CREDENTIALS_FILE.read_text()))
     except Exception:
         return None
+
+
+def _load_token_from_keychain():
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        return _token_from_oauth_data(json.loads(result.stdout))
+    except Exception:
+        return None
+
+
+def load_token():
+    return _load_token_from_file() or _load_token_from_keychain()
 
 
 def fetch_from_api():
@@ -150,7 +175,9 @@ def save_cache(snapshot):
     os.replace(temp_name, CACHE_FILE)
 
 
-def acquire_lock():
+def _try_claim_lock():
+    """Claim LOCK_FILE for the caller. True if claimed (or reclaimed after
+    it went stale), False if someone else already holds a fresh one."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     try:
         if LOCK_FILE.exists():
@@ -168,21 +195,54 @@ def release_lock():
     LOCK_FILE.unlink(missing_ok=True)
 
 
-def fetch_snapshot(force_refresh=False):
-    if not force_refresh:
-        cached = load_cache()
-        if cached is not None:
-            return cached
+def spawn_background_refresh():
+    if not _try_claim_lock():
+        return  # a refresh is already in flight
+    subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "--refresh", "--locked"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
-    if not acquire_lock():
-        # Another process is refreshing; return stale cache rather than racing
+
+def _do_refresh():
+    snapshot = fetch_from_api()
+    save_cache(snapshot)
+    return snapshot
+
+
+def fetch_snapshot(force_refresh=False, already_locked=False):
+    if force_refresh:
+        if already_locked:
+            try:
+                return _do_refresh()
+            finally:
+                release_lock()
+        if not _try_claim_lock():
+            stale = load_cache(max_age=float("inf"))
+            return stale if stale is not None else error_snapshot("Refreshing...")
+        try:
+            return _do_refresh()
+        finally:
+            release_lock()
+
+    fresh = load_cache()
+    if fresh is not None:
+        return fresh
+
+    stale = load_cache(max_age=STALE_MAX_AGE_SECONDS)
+    if stale is not None:
+        spawn_background_refresh()
+        return stale
+
+    # nothing cached yet at all; block once so the first-ever call has data
+    if not _try_claim_lock():
         stale = load_cache(max_age=float("inf"))
         return stale if stale is not None else error_snapshot("Refreshing...")
-
     try:
-        snapshot = fetch_from_api()
-        save_cache(snapshot)
-        return snapshot
+        return _do_refresh()
     finally:
         release_lock()
 
@@ -217,7 +277,11 @@ def main():
     if not SHOW_USAGE:
         return 0
     force_refresh = "--refresh" in sys.argv
-    snapshot = fetch_snapshot(force_refresh=force_refresh)
+    already_locked = "--locked" in sys.argv
+    snapshot = fetch_snapshot(force_refresh=force_refresh, already_locked=already_locked)
+    if "--json" in sys.argv:
+        print(json.dumps(snapshot))
+        return 0
     print(render_tmux(snapshot))
     return 0
 
