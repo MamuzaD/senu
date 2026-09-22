@@ -14,11 +14,21 @@ from pathlib import Path
 SHOW_USAGE = True
 
 # cache
+# Keyed by CODEX_HOME so personal/work profiles (see zsh/ai.zsh) don't clobber
+# each other's cached snapshot.
 CACHE_TTL_SECONDS = 60
+_codex_home = os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+_profile_key = _codex_home.rstrip("/").replace("/", "_")
 CACHE_DIR = (
-    Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "tmux-codex-usage"
+    Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / f"tmux-codex-usage{_profile_key}"
 )
 CACHE_FILE = CACHE_DIR / "snapshot.json"
+# codex app-server startup is slow (shared local daemon), so once a snapshot
+# exists we always answer from cache instantly and refresh it in the
+# background, rather than blocking the caller on a fresh probe.
+STALE_MAX_AGE_SECONDS = 15 * 60
+REFRESH_LOCK_FILE = CACHE_DIR / "refresh.lock"
+REFRESH_LOCK_TTL_SECONDS = 15
 
 # colors
 BG_GOOD = "colour39"
@@ -124,6 +134,35 @@ def rate_limit_bucket(name, bucket):
     }
 
 
+def reset_credits_summary(summary):
+    if not summary:
+        return None
+    credits = [
+        {
+            "title": credit.get("title"),
+            "expires_at": credit.get("expiresAt"),
+        }
+        for credit in summary.get("credits") or []
+        if credit.get("status") == "available"
+    ]
+    return {"available": summary.get("availableCount") or 0, "credits": credits}
+
+
+def spend_limit_summary(limit, reached):
+    if not limit:
+        return None
+    try:
+        return {
+            "limit": float(limit["limit"]),
+            "used": float(limit["used"]),
+            "left": limit.get("remainingPercent"),
+            "resets_at": limit.get("resetsAt"),
+            "reached": bool(reached),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def terminate_process(proc):
     if proc.poll() is not None:
         return
@@ -146,10 +185,10 @@ def run_rpc_probe():
 
     try:
         proc = subprocess.Popen(
-            ["codex", "-s", "read-only", "-a", "untrusted", "app-server"],
+            ["codex", "-s", "read-only", "-a", "never", "app-server"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
 
         selector.register(proc.stdout, selectors.EVENT_READ)
@@ -195,12 +234,19 @@ def run_rpc_probe():
                     if isinstance(message_id, int):
                         responses[message_id] = message
 
-        limits_message = responses.get(2, {})
+        if 2 not in responses:
+            if proc.poll() is not None:
+                stderr = proc.stderr.read().decode("utf-8", "replace").strip()
+                return error_snapshot(stderr or f"codex app-server exited ({proc.returncode})")
+            return error_snapshot("Timed out waiting for rate limits")
+
+        limits_message = responses[2]
         if "error" in limits_message:
             message = limits_message["error"].get("message") or "RPC request failed"
             return error_snapshot(message)
 
-        rate_limits = limits_message.get("result", {}).get("rateLimits", {})
+        result = limits_message.get("result", {})
+        rate_limits = result.get("rateLimits", {})
         primary = rate_limits.get("primary") or {}
         secondary = rate_limits.get("secondary") or {}
 
@@ -212,7 +258,12 @@ def run_rpc_probe():
 
         return {
             "ok": True,
+            "plan_type": rate_limits.get("planType"),
             "buckets": buckets,
+            "reset_credits": reset_credits_summary(result.get("rateLimitResetCredits")),
+            "spend_limit": spend_limit_summary(
+                rate_limits.get("individualLimit"), rate_limits.get("spendControlReached")
+            ),
             "session_left": buckets[0]["left"] if buckets else None,
             "weekly_left": buckets[-1]["left"] if buckets else None,
             "session_resets_at": buckets[0]["resets_at"] if buckets else None,
@@ -256,12 +307,43 @@ def save_cache(snapshot):
     os.replace(temp_name, CACHE_FILE)
 
 
-def fetch_snapshot(force_refresh=False):
-    if not force_refresh:
-        cached = load_cache()
-        if cached is not None:
-            return cached
+def spawn_background_refresh():
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        if REFRESH_LOCK_FILE.exists():
+            age = time.time() - REFRESH_LOCK_FILE.stat().st_mtime
+            if age < REFRESH_LOCK_TTL_SECONDS:
+                return  # a refresh is already in flight
+        REFRESH_LOCK_FILE.touch()
+    except Exception:
+        return
 
+    subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "--refresh"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def fetch_snapshot(force_refresh=False):
+    if force_refresh:
+        snapshot = run_rpc_probe()
+        save_cache(snapshot)
+        REFRESH_LOCK_FILE.unlink(missing_ok=True)
+        return snapshot
+
+    fresh = load_cache()
+    if fresh is not None:
+        return fresh
+
+    stale = load_cache(max_age=STALE_MAX_AGE_SECONDS)
+    if stale is not None:
+        spawn_background_refresh()
+        return stale
+
+    # nothing cached yet at all; block once so the first-ever call has data
     snapshot = run_rpc_probe()
     save_cache(snapshot)
     return snapshot
@@ -313,6 +395,9 @@ def main():
 
     force_refresh = "--refresh" in sys.argv
     snapshot = fetch_snapshot(force_refresh=force_refresh)
+    if "--json" in sys.argv:
+        print(json.dumps(snapshot))
+        return 0
     if not snapshot.get("ok") and snapshot.get("error"):
         error_msg = snapshot["error"]
         # This sends the message to the tmux notification bar
