@@ -1,0 +1,20 @@
+# ~/.config/senu/config.toml
+
+# Usage popup profiles, shown in this order. `home` is CODEX_HOME for Codex
+# and the Claude config dir for Claude. Without any profiles senu shows
+# Codex at $CODEX_HOME (or ~/.codex) and Claude at ~/.claude.
+
+[[usage.profiles]]
+kind = "codex"
+name = "personal"
+home = "~/.codex"
+
+[[usage.profiles]]
+kind = "codex"
+name = "work"
+home = "~/.codex-work"
+
+[[usage.profiles]]
+kind = "claude"
+name = "work"
+home = "~/.claude"
