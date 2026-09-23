@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { ConfigError, loadConfig, type Config } from "./config.ts"
+import { usageCommand } from "./usage/command.ts"
 
 const HELP = `senu: watches AI coding agents in tmux
 
@@ -20,7 +21,7 @@ const notPorted = (name: string): Command => async () => {
 }
 
 const COMMANDS: Record<string, Command> = {
-  usage: notPorted("usage"),
+  usage: usageCommand,
   watch: notPorted("watch"),
   agents: notPorted("agents"),
 }

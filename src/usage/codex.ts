@@ -97,6 +97,10 @@ export async function fetchCodex(codexHome: string): Promise<Snapshot> {
     return errorSnapshot("Codex CLI not found")
   }
 
+  // don't leave app-server running if senu exits mid-probe (popup closed early)
+  const killProbe = () => proc.kill()
+  process.once("exit", killProbe)
+
   let timer: Timer | undefined
   try {
     const requests = [
@@ -125,6 +129,7 @@ export async function fetchCodex(codexHome: string): Promise<Snapshot> {
     return errorSnapshot(err instanceof Error ? err.message : "RPC probe failed")
   } finally {
     clearTimeout(timer)
+    process.off("exit", killProbe)
     proc.kill()
   }
 }
