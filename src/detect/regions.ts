@@ -47,16 +47,20 @@ function lineStart(content: string, ls: string[], index: number): number {
 
 const fromLine = (content: string, ls: string[], index: number) => content.slice(lineStart(content, ls, index))
 
+const USIZE_MAX = 2n ** 64n - 1n
+
+/** Rust's `str::parse::<usize>()` on what's inside `name(…)`: an optional `+`, digits, no overflow. */
 function count(spec: string, name: string): number | null {
   if (!spec.startsWith(`${name}(`) || !spec.endsWith(")")) return null
   const digits = spec.slice(name.length + 1, -1)
-  return /^\d+$/.test(digits) ? Number(digits) : null
+  if (!/^\+?\d+$/.test(digits) || BigInt(digits.replace("+", "")) > USIZE_MAX) return null
+  return Number(digits)
 }
 
-/** `top_non_empty_lines(n)` is stricter: no leading zero, and at most u16::MAX. */
+/** `top_non_empty_lines(n)` is stricter: digits only, no leading zero, and at most u16::MAX. */
 function topCount(spec: string): number | null {
   const n = count(spec, "top_non_empty_lines")
-  if (n === null || spec.startsWith("top_non_empty_lines(0")) return null
+  if (n === null || !/^top_non_empty_lines\([1-9]\d*\)$/.test(spec)) return null
   return n <= 0xffff ? n : null
 }
 
