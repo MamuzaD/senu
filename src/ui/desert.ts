@@ -228,6 +228,19 @@ function locate(map: string[], ch: string) {
   return { x: 0, y: 0 }
 }
 
+/** The near dune's crest, in scene pixels. */
+function near(x: number) {
+  const PH = SCENE_ROWS * 2
+  return PH * 0.9 + (PH / 24) * (1.3 * Math.sin(x / 8 + 0.3) + 0.3 * Math.sin(x / 3.3 + 1))
+}
+
+/** Where she perches on the snag, in scene pixels; the same in every scene. */
+export const PERCH = (() => {
+  const f = locate(SNAG, "f")
+  const p = locate(SNAG, "p")
+  return { x: SNAG_X + p.x - f.x, y: Math.round(near(SNAG_X)) + p.y - f.y }
+})()
+
 /**
  * Paint the scene. `busy` keeps the stars twinkling, the fire flickering and
  * the smoke drifting; otherwise it's still.
@@ -241,7 +254,6 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
   const s = PH / 24
   const far = (x: number) => PH * 0.7 + s * (1.1 * Math.sin(x / 13 + 1) + 0.7 * Math.sin(x / 6.1))
   const mid = (x: number) => PH * 0.81 + s * (1.6 * Math.sin(x / 10 + 2.4) + 0.4 * Math.sin(x / 4.1))
-  const near = (x: number) => PH * 0.9 + s * (1.3 * Math.sin(x / 8 + 0.3) + 0.3 * Math.sin(x / 3.3 + 1))
 
   const glyphs: Glyph[] = []
   const m = { ...ORB, y: pal.orbY }
@@ -331,7 +343,6 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
   // the snag stands on the near dune
   const foot = Math.round(near(SNAG_X))
   const f = locate(SNAG, "f")
-  const p = locate(SNAG, "p")
   const tree = new Set<string>()
   SNAG.forEach((row, j) =>
     [...row].forEach((ch, i) => {
@@ -349,6 +360,6 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
     glyphs,
     orbAt: (x, y) => onDisc(x, y) && y < far(x),
     treeAt: (x, y) => tree.has(`${x},${y}`),
-    perch: { x: SNAG_X + p.x - f.x, y: foot + p.y - f.y },
+    perch: PERCH,
   }
 }

@@ -1,6 +1,6 @@
 import type { RGBA } from "@opentui/core"
 import { Braille, Quad, type Canvas } from "./canvas.tsx"
-import { SCENE_COLS, SCENE_ROWS, desert, night, type SceneTime } from "./desert.ts"
+import { PERCH, SCENE_COLS, SCENE_ROWS, desert, night, type SceneTime } from "./desert.ts"
 import { clamp, easeInOut, easeOut, phase, pulse, smooth } from "./motion.ts"
 import { brand, hex, mix } from "./theme.ts"
 
@@ -29,8 +29,6 @@ export interface FlightPlan {
   time: SceneTime
 }
 
-/** From breaking off the loop to her talons touching the snag. */
-export const ARC_MS = 1200
 /** From touching to folded and still. */
 const FOLD_MS = 330
 /** She never breaks off sooner than this after opening, so a fresh open still shows her flying in. */
@@ -38,7 +36,7 @@ const MIN_LEAVE_MS = 600
 const FLARE_MS = 260
 
 /** Is the flight over (she's folded on the snag), so nothing needs drawing again? */
-export const flightDone = (p: FlightPlan) => p.perched || (p.leave != null && p.t >= p.leave + ARC_MS + FOLD_MS)
+export const flightDone = (p: FlightPlan) => p.perched || (p.leave != null && p.t >= p.leave + arcMs(p.leave) + FOLD_MS)
 
 // ------------------------------------------------------------------- the loop
 
@@ -82,6 +80,87 @@ const hermite = (p0: number, v0: number, p1: number, v1: number, u: number) => {
   const u2 = u * u
   const u3 = u2 * u
   return (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * v0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * v1
+}
+
+// ---------------------------------------------------------------- the arc in
+
+/** Her perch, in dots, and where the flare starts: just beyond it and above, so she comes in toward the moon. */
+const PERCH_DOTS = { x: PERCH.x * 2 + 1, y: PERCH.y * 2 }
+const FLARE_FROM = { x: PERCH_DOTS.x + 2, y: PERCH_DOTS.y - 4 }
+
+/** How far round the loop the blend looks ahead; it shapes the arc, not how long she takes on it. */
+const ARC_SHAPE_MS = 940
+
+/** Her speed on the loop, in dots per ms, which she keeps on the way in. */
+const LOOP_SPEED = (() => {
+  let len = 0
+  let p = loopAt(0)
+  for (let t = 10; t <= LOOP.lap; t += 10) {
+    const q = loopAt(t)
+    len += Math.hypot(q.x - p.x, q.y - p.y)
+    p = q
+  }
+  return len / LOOP.lap
+})()
+
+/**
+ * The arc as a shape, `u` from breaking off (0) to the flare (1): the circling
+ * eases into a curl that swings in front of the snag, round its far side and
+ * in over the top.
+ */
+function arcPoint(leave: number, u: number) {
+  const th = 2.6 * (1 - easeInOut(u))
+  const shrink = 1 - u ** 1.6
+  const curl = { x: FLARE_FROM.x + 16 * shrink * Math.cos(th), y: FLARE_FROM.y + 5 * shrink * Math.sin(th) }
+  const lp = loopAt(leave + u * ARC_SHAPE_MS)
+  const w = smooth(u / 0.6)
+  return { x: lp.x + (curl.x - lp.x) * w, y: lp.y + (curl.y - lp.y) * w }
+}
+
+/**
+ * When she reaches each point of the arc: at her loop speed, easing off over
+ * the last quarter into the flare, so she never speeds up to reach the snag.
+ */
+const arcs = new Map<number, { ms: number; times: number[] }>()
+function arcTiming(leave: number) {
+  let timing = arcs.get(leave)
+  if (timing) return timing
+  const N = 240
+  const lens = [0]
+  let p = arcPoint(leave, 0)
+  for (let i = 1; i <= N; i++) {
+    const q = arcPoint(leave, i / N)
+    lens.push(lens[i - 1]! + Math.hypot(q.x - p.x, q.y - p.y))
+    p = q
+  }
+  const total = lens[N]!
+  const times = [0]
+  for (let i = 1; i <= N; i++) {
+    const mid = (lens[i - 1]! + lens[i]!) / 2
+    const speed = LOOP_SPEED * (1 - 0.65 * smooth((mid / total - 0.75) / 0.25))
+    times.push(times[i - 1]! + (lens[i]! - lens[i - 1]!) / speed)
+  }
+  timing = { ms: times[N]!, times }
+  arcs.set(leave, timing)
+  return timing
+}
+
+/** From breaking off the loop to her talons touching the snag. */
+export const arcMs = (leave: number) => arcTiming(leave).ms + FLARE_MS
+
+/** How far along the arc's shape she is `dt` ms after breaking off. */
+function arcU(leave: number, dt: number) {
+  const { times } = arcTiming(leave)
+  const N = times.length - 1
+  if (dt >= times[N]!) return 1
+  let lo = 0
+  let hi = N
+  while (hi - lo > 1) {
+    const m = (lo + hi) >> 1
+    if (times[m]! <= dt) lo = m
+    else hi = m
+  }
+  return (lo + (dt - times[lo]!) / (times[hi]! - times[lo]!)) / N
 }
 
 // ---------------------------------------------------------------- her sprites
@@ -166,7 +245,7 @@ interface Bird {
 /** Where she is and how she holds herself. `perch` is in dots; she lands facing left, toward the moon. */
 function birdAt(t: number, plan: FlightPlan, perch: { x: number; y: number }): Bird {
   const facing = -1
-  const land = plan.leave == null ? Infinity : plan.leave + ARC_MS
+  const land = plan.leave == null ? Infinity : plan.leave + arcMs(plan.leave)
   if (plan.perched || t >= land) {
     const since = plan.perched ? Infinity : t - land
     const pose: LandingPose = since < 140 ? "touch" : since < FOLD_MS ? "fold" : "perch"
@@ -175,29 +254,23 @@ function birdAt(t: number, plan: FlightPlan, perch: { x: number; y: number }): B
     return { x: perch.x, y: perch.y + give, near: 1, pixels: landingPixels(pose, facing), onLoop: false, flying: false }
   }
   const flareAt = land - FLARE_MS
-  // the flare begins just beyond the perch and above it, so she comes in toward the moon
-  const f = { x: perch.x - facing * 2, y: perch.y - 4 }
+  const f = FLARE_FROM
   if (plan.leave == null || t <= plan.leave) {
     const p = loopAt(t)
     const span = LOOP.far + (LOOP.near - LOOP.far) * p.near
     return { x: p.x, y: p.y, near: p.near, pixels: flyingPixels(span, wingbeat(t)), onLoop: true, flying: true }
   }
   if (t < flareAt) {
-    // one continuous arc: the circling eases into a curl that swings in front
-    // of the snag, round its far side and in over the top, closing on the flare
-    const u = (t - plan.leave) / (flareAt - plan.leave)
-    const th = 2.6 * (1 - easeInOut(u))
-    const shrink = 1 - u ** 1.6
-    const curl = { x: f.x + 16 * shrink * Math.cos(th), y: f.y + 5 * shrink * Math.sin(th) }
-    const lp = loopAt(t)
-    const w = smooth(u / 0.6)
+    // one continuous arc round the snag, at the speed she kept on the loop
+    const u = arcU(plan.leave, t - plan.leave)
+    const at = arcPoint(plan.leave, u)
     const n0 = loopAt(plan.leave).near
     const near = n0 + (1 - n0) * smooth(u)
     const span = LOOP.far + (LOOP.near - LOOP.far) * near - 1.5 * pulse(u, 0.3, 0.6)
     const flap = u < 0.25 ? wingbeat(t) * (1 - u / 0.25) : u > 0.85 ? -0.3 : 0
     return {
-      x: lp.x + (curl.x - lp.x) * w,
-      y: lp.y + (curl.y - lp.y) * w,
+      x: at.x,
+      y: at.y,
       near,
       pixels: flyingPixels(span, flap),
       onLoop: false,
@@ -356,7 +429,7 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
       }
 
     // the comet: where she's been, gold at her tail, cooling as she comes in to land
-    const cool = plan.leave == null ? 1 : 1 - smooth(phase(t, plan.leave, ARC_MS))
+    const cool = plan.leave == null ? 1 : 1 - smooth(phase(t, plan.leave, arcMs(plan.leave)))
     const N = 60
     if (cool > 0)
       for (let k = N; k >= 1; k--) {
