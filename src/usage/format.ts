@@ -18,6 +18,32 @@ export function formatDuration(seconds: number): string {
 export const formatUntil = (epochSeconds: number | null) =>
   epochSeconds == null ? null : formatDuration(epochSeconds - nowSeconds())
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+/**
+ * The local clock time of a reset, to sit after its countdown: `14:20` today,
+ * `Fri 09:00` within the next six days, `3 Oct` further out. 24-hour, like
+ * the tmux status bar, rounded to the nearest minute.
+ */
+export function formatClock(epochSeconds: number | null, now = new Date()): string | null {
+  if (epochSeconds == null) return null
+  const at = new Date(Math.round(epochSeconds / 60) * 60_000)
+  const days = Math.round(
+    (new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime() -
+      new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) /
+      86_400_000,
+  )
+  if (days < 0) return null
+  const hm = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`
+  if (days === 0) return hm
+  if (days < 7) return `${WEEKDAYS[at.getDay()]} ${hm}`
+  return `${at.getDate()} ${MONTHS[at.getMonth()]}`
+}
+
+/** The dimmed clock after a countdown, e.g. ` · 14:20`. */
+export const clockSuffix = (clock: string) => ` · ${clock}`
+
 /** Colour by percent left: green at 40+, yellow 20–39, red under 20, grey when unknown. */
 export function colorFor(left: number | null): RGBA {
   if (left == null) return colors.dim

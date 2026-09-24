@@ -14,8 +14,10 @@ import {
   LABEL_WIDTH,
   PACE_SLACK,
   bar,
+  clockSuffix,
   colorFor,
   evenLeft,
+  formatClock,
   formatDuration,
   formatUntil,
   markCell,
@@ -59,13 +61,22 @@ function vision(landedAt: number | null) {
   return 1 - tween(landedAt + VISION_HOLD_MS, VISION_MS - VISION_HOLD_MS, easeInOut)
 }
 
-function Row({ label, left, resetsAt, windowMs, fill, children }: {
+/** The dimmed clock after a countdown, when a row `used` columns long still fits in `cols` with it. */
+function Clock({ at, used, cols }: { at: number | null; used: number; cols: number }) {
+  const clock = formatClock(at)
+  if (!clock || used + clockSuffix(clock).length > cols) return null
+  return <span fg={colors.dim}>{clockSuffix(clock)}</span>
+}
+
+function Row({ label, left, resetsAt, windowMs, fill, cols, children }: {
   label: string
   left: number | null
   resetsAt: number | null
   windowMs?: number | null
   /** 0..1 through the bar fill */
   fill: number
+  /** the columns the row has to fit in */
+  cols: number
   children?: ReactNode
 }) {
   // the colour always comes from the real value, so a bar never changes state as it fills
@@ -78,6 +89,7 @@ function Row({ label, left, resetsAt, windowMs, fill, children }: {
   const behind = even != null && left! < even - PACE_SLACK
   const cells = bar(shown)
   const at = even == null ? null : markCell(even)
+  const used = INDENT.length + Math.max(label.length, LABEL_WIDTH) + BAR_WIDTH + 5 + "  resets ".length + (reset?.length ?? 0)
   return (
     <Line>
       {INDENT + label.padEnd(LABEL_WIDTH)}
@@ -98,6 +110,7 @@ function Row({ label, left, resetsAt, windowMs, fill, children }: {
         <>
           <span fg={colors.muted}>{"  resets "}</span>
           <span fg={brand.papyrus}>{reset}</span>
+          <Clock at={resetsAt} used={used} cols={cols} />
         </>
       ) : null}
     </Line>
@@ -121,11 +134,12 @@ function SpendRow({ spend, fill, cols }: { spend: Spend; fill: number; cols: num
       <span fg={colors.muted}>{`/$${spend.limit.toFixed(0)}`}</span>
       {spend.reached ? <span fg={colors.bad}> cap reached</span> : null}
       {reset ? <span fg={brand.papyrus}>{gap + reset}</span> : null}
+      {reset ? <Clock at={spend.resetsAt} used={used + gap.length + reset.length} cols={cols} /> : null}
     </Line>
   )
 }
 
-function BankedRow({ banked }: { banked: Banked }) {
+function BankedRow({ banked, cols }: { banked: Banked; cols: number }) {
   const label = INDENT + "Banked".padEnd(LABEL_WIDTH)
   if (banked.available === 0) {
     return (
@@ -138,6 +152,12 @@ function BankedRow({ banked }: { banked: Banked }) {
   const expiries = banked.credits.map((c) => c.expiresAt).filter((e): e is number => e != null)
   const soonest = expiries.length ? Math.min(...expiries) : null
   const titles = [...new Set(banked.credits.map((c) => c.title).filter((t): t is string => !!t))].sort()
+  const expires = soonest != null ? formatUntil(soonest)! : null
+  const tail = titles.length ? "  " + titles.join(" · ") : ""
+  // the clock goes after the expiry only if the titles after it still fit too
+  const used =
+    label.length + banked.available + ` ${banked.available}`.length + (banked.available === 1 ? 6 : 7) +
+    (expires ? "  expires ".length + expires.length : 0) + tail.length
   return (
     <Line>
       {label}
@@ -147,10 +167,11 @@ function BankedRow({ banked }: { banked: Banked }) {
       {soonest != null ? (
         <>
           <span fg={colors.muted}>{"  expires "}</span>
-          <span fg={brand.papyrus}>{formatUntil(soonest)}</span>
+          <span fg={brand.papyrus}>{expires}</span>
+          <Clock at={soonest} used={used} cols={cols} />
         </>
       ) : null}
-      {titles.length ? <span fg={colors.dim}>{"  " + titles.join(" · ")}</span> : null}
+      {tail ? <span fg={colors.dim}>{tail}</span> : null}
     </Line>
   )
 }
@@ -194,11 +215,11 @@ function ProfileSection({ profile, section, dots, fillFrom, right }: {
       {snapshot && !snapshot.ok ? <Line fg={colors.bad}>{`${INDENT}✗ ${snapshot.error ?? "unknown"}`}</Line> : null}
       {snapshot?.ok
         ? snapshot.limits.map((l) => (
-            <Row key={l.label} label={l.label} left={l.left} resetsAt={l.resetsAt} windowMs={l.windowMs} fill={fill} />
+            <Row key={l.label} label={l.label} left={l.left} resetsAt={l.resetsAt} windowMs={l.windowMs} fill={fill} cols={right + 1} />
           ))
         : null}
       {snapshot?.ok && snapshot.spend ? <SpendRow spend={snapshot.spend} fill={fill} cols={right + 1} /> : null}
-      {snapshot?.ok && snapshot.banked ? <BankedRow banked={snapshot.banked} /> : null}
+      {snapshot?.ok && snapshot.banked ? <BankedRow banked={snapshot.banked} cols={right + 1} /> : null}
     </box>
   )
 }
