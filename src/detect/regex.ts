@@ -120,7 +120,7 @@ export function translateRustRegex(pattern: string): TranslatedRegex {
     out += c === "." && !dotAll ? "[^\\n]" : c
   }
 
-  return { source: out, flags: `u${[...flags].sort().join("")}` }
+  return { source: out, flags: [...flags, "u"].sort().join("") }
 }
 
 export function compileRustRegex(pattern: string): RegExp {

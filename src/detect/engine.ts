@@ -54,7 +54,8 @@ function gateMatches(g: Gate, text: string, lower: string): boolean {
 
 export const ruleMatches = (rule: Rule, text: string) => gateMatches(rule.gate, text, text.toLowerCase())
 
-function evaluate(agent: Agent, loaded: LoadedManifest, input: DetectionInput, previous: AgentState | null): Explanation {
+/** `explain` against a given manifest instead of the agent's active one. */
+export function explainWith(loaded: LoadedManifest, agent: Agent, input: DetectionInput, previous: AgentState | null = null): Explanation {
   // regions are cheap but rules share them; slice each one once per screen
   const regions = new Map<string, string>()
   const evaluated: EvaluatedRule[] = []
@@ -107,11 +108,11 @@ function evaluate(agent: Agent, loaded: LoadedManifest, input: DetectionInput, p
  * pane; it's kept when the winning rule says `skip_state_update`.
  */
 export function classify(agent: Agent, input: DetectionInput, previous: AgentState | null = null): Detection {
-  const { loaded: _loaded, evaluated: _evaluated, ...detection } = evaluate(agent, loadManifest(agent), input, previous)
+  const { loaded: _loaded, evaluated: _evaluated, ...detection } = explainWith(loadManifest(agent), agent, input, previous)
   return detection
 }
 
 /** `classify` plus every rule's region and verdict, for `senu scout explain`. */
 export function explain(agent: Agent, input: DetectionInput, previous: AgentState | null = null): Explanation {
-  return evaluate(agent, loadManifest(agent), input, previous)
+  return explainWith(loadManifest(agent), agent, input, previous)
 }

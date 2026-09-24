@@ -26,6 +26,9 @@ const BUNDLED: Record<Agent, string> = { claude: claudeToml as string, codex: co
 export const overrideDir = join(configDir, "detection")
 export const overridePath = (agent: Agent) => join(overrideDir, `${agent}.toml`)
 
+/** The vendored manifest, ignoring any override. */
+export const bundledManifest = (agent: Agent): LoadedManifest => ({ manifest: parseManifest(BUNDLED[agent]), source: "bundled", warning: null })
+
 /** A matcher tree. Every matcher present must hold: all of `contains`, `regex`, `line_regex` and `all`, one of `any`, none of `not`. */
 export interface Gate {
   contains: string[]
@@ -252,26 +255,19 @@ const matchesAgent = (m: Manifest, agent: Agent) =>
  * why the override was ignored. Unlike herdr, an override that needs a newer
  * engine is ignored too: it would name regions this port doesn't have.
  */
-function loadUncached(agent: Agent): LoadedManifest {
-  const bundled = (): Manifest => parseManifest(BUNDLED[agent])
-  const path = overridePath(agent)
-  if (!existsSync(path)) return { manifest: bundled(), source: "bundled", warning: null }
+export function resolveManifest(agent: Agent, path = overridePath(agent)): LoadedManifest {
+  if (!existsSync(path)) return bundledManifest(agent)
+  const ignored = (why: string): LoadedManifest => ({ ...bundledManifest(agent), warning: `ignored override ${path}: ${why}` })
 
   let manifest: Manifest
   try {
     manifest = parseManifest(readFileSync(path, "utf8"))
   } catch (err) {
-    return { manifest: bundled(), source: "bundled", warning: `ignored override ${path}: ${err instanceof Error ? err.message : err}` }
+    return ignored(err instanceof Error ? err.message : String(err))
   }
-  if (!matchesAgent(manifest, agent)) {
-    return { manifest: bundled(), source: "bundled", warning: `ignored override ${path} because manifest id ${manifest.id} does not match ${agent}` }
-  }
+  if (!matchesAgent(manifest, agent)) return ignored(`manifest id ${manifest.id} does not match ${agent}`)
   if ((manifest.minEngineVersion ?? 0) > ENGINE_VERSION) {
-    return {
-      manifest: bundled(),
-      source: "bundled",
-      warning: `ignored override ${path}: it requires engine ${manifest.minEngineVersion}, this is engine ${ENGINE_VERSION}`,
-    }
+    return ignored(`it requires engine ${manifest.minEngineVersion}, this is engine ${ENGINE_VERSION}`)
   }
   return { manifest, source: path, warning: null }
 }
@@ -282,7 +278,7 @@ const cache = new Map<Agent, LoadedManifest>()
 export function loadManifest(agent: Agent): LoadedManifest {
   let loaded = cache.get(agent)
   if (!loaded) {
-    loaded = loadUncached(agent)
+    loaded = resolveManifest(agent)
     cache.set(agent, loaded)
   }
   return loaded
