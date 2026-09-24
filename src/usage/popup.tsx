@@ -263,6 +263,7 @@ function UsagePopup({ profiles }: { profiles: UsageProfile[] }) {
     marks: sections.map((s) => s.landedAt).filter((at): at is number => at != null).map((at) => at - openedAt),
     leave: leave.current,
     perched: reducedMotion || noColor,
+    time: "night",
   }
   const flying = !noColor && !flightDone(plan)
 

@@ -1,6 +1,6 @@
 import type { RGBA } from "@opentui/core"
 import { Braille, Quad, type Canvas } from "./canvas.tsx"
-import { SCENE_COLS, SCENE_ROWS, desert, night } from "./desert.ts"
+import { SCENE_COLS, SCENE_ROWS, desert, night, type SceneTime } from "./desert.ts"
 import { clamp, easeInOut, easeOut, phase, pulse, smooth } from "./motion.ts"
 import { brand, hex, mix } from "./theme.ts"
 
@@ -25,6 +25,8 @@ export interface FlightPlan {
   leave: number | null
   /** reduced motion: she is simply on the snag */
   perched: boolean
+  /** the night desert or the day one */
+  time: SceneTime
 }
 
 /** From breaking off the loop to her talons touching the snag. */
@@ -216,22 +218,41 @@ function birdAt(t: number, plan: FlightPlan, perch: { x: number; y: number }): B
 
 // ------------------------------------------------------------------ composite
 
-const WING = hex("#8a6848")
-const TONE = {
-  near: brand.papyrus,
-  far: brand.dusk,
-  trail: brand.gold,
-  trailEnd: hex("#2f3550"),
-  route: hex("#2a2f48"),
-  ringEnd: hex("#2a2e44"),
+/**
+ * Her colours and her trail's. By night she's pale papyrus near and dusk far
+ * with a gold comet; by day, against the bright haze, she's a warm dark brown
+ * with a rust trail that fades into the sky. Over the moon or the sun she's a
+ * dark silhouette either way.
+ */
+const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA; trail: RGBA; trailEnd: RGBA; route: RGBA; routeEnd: RGBA; ringEnd: RGBA }> = {
+  night: {
+    near: brand.papyrus,
+    far: brand.dusk,
+    wing: hex("#8a6848"),
+    glint: brand.gold,
+    trail: brand.gold,
+    trailEnd: hex("#2f3550"),
+    route: hex("#2a2f48"),
+    routeEnd: hex("#1f2335"),
+    ringEnd: hex("#2a2e44"),
+  },
+  day: {
+    near: hex("#5a3822"),
+    far: hex("#5e5058"),
+    wing: hex("#2e1c12"),
+    glint: hex("#c0641e"),
+    trail: hex("#b8582a"),
+    trailEnd: hex("#b9cfdc"),
+    route: hex("#9ab6cc"),
+    routeEnd: hex("#b4cadb"),
+    ringEnd: hex("#c4d4de"),
+  },
 }
 
 const lum = (c: RGBA) => {
   const [r, g, b] = c.toInts()
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
 }
-/** Over anything bright she reads as a silhouette: she goes dark. */
-const ink = (dot: RGBA, under: RGBA) => (lum(under) > 0.55 ? mix(night, dot, 0.12) : dot)
 
 const dist = (a: RGBA | null, b: RGBA | null) => {
   const [ar, ag, ab] = (a ?? night).toInts()
@@ -279,7 +300,10 @@ function putQuads(c: Canvas, x: number, y: number, sub: (RGBA | null)[], bird: b
 /** Paint the desert and Senu for the plan into a `SCENE_COLS × SCENE_ROWS` canvas. */
 export function paintSky(c: Canvas, plan: FlightPlan) {
   const { t } = plan
-  const scene = desert(c, { t, busy: plan.busy })
+  const scene = desert(c, { t, busy: plan.busy, time: plan.time })
+  const tone = TONES[plan.time]
+  // over anything bright by night (the moon), over the sun by day, she goes dark
+  const glare = (x: number, y: number, under: RGBA) => (plan.time === "night" ? lum(under) > 0.55 : scene.orbAt(x, y))
   const perch = { x: scene.perch.x * 2 + 1, y: scene.perch.y * 2 }
   const back = new Quad(SCENE_COLS, SCENE_ROWS)
   const front = new Quad(SCENE_COLS, SCENE_ROWS)
@@ -292,7 +316,7 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
     if (fade > 0)
       for (let u = 0; u < LOOP.lap; u += 34) {
         const p = loopAt(u)
-        trail.dot(p.x, p.y, mix(hex("#1f2335"), TONE.route, fade * (0.55 + 0.45 * p.near)), 1)
+        trail.dot(p.x, p.y, mix(tone.routeEnd, tone.route, fade * (0.55 + 0.45 * p.near)), 1)
       }
 
     // the comet: where she's been, gold at her tail, cooling as she comes in to land
@@ -305,7 +329,7 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
         const p = birdAt(u, plan, perch)
         if (!p.flying) continue
         const f = 1 - k / N
-        const col = mix(TONE.trailEnd, mix(mix(TONE.trailEnd, TONE.trail, 0.5 + 0.5 * p.near), TONE.trail, f), f * cool)
+        const col = mix(tone.trailEnd, mix(mix(tone.trailEnd, tone.trail, 0.5 + 0.5 * p.near), tone.trail, f), f * cool)
         trail.dot(p.x, p.y, col, 5 + f * 10)
         if (f > 0.55) trail.dot(p.x, p.y + 1, col, 5 + f * 10)
       }
@@ -317,22 +341,22 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
       const p = loopAt(at)
       const r = 2 + age / 60
       for (let a = 0; a < Math.PI * 2; a += 0.12)
-        trail.dot(p.x + r * Math.cos(a), p.y + r * Math.sin(a) * 0.55, mix(TONE.trail, TONE.ringEnd, age / 900), 20)
+        trail.dot(p.x + r * Math.cos(a), p.y + r * Math.sin(a) * 0.55, mix(tone.trail, tone.ringEnd, age / 900), 20)
     }
   }
 
   const lastLand = plan.marks.length ? Math.max(...plan.marks) : null
   const glint = plan.perched ? 0 : pulse(t, lastLand, 600)
-  const color = mix(mix(TONE.far, TONE.near, clamp(bird.near * 1.3 - 0.15)), brand.gold, glint)
-  const wing = mix(color, WING, 0.5)
+  const color = mix(mix(tone.far, tone.near, clamp(bird.near * 1.3 - 0.15)), tone.glint, glint)
+  const wing = mix(color, tone.wing, 0.5)
   const layer = bird.onLoop && bird.near < 0.45 ? back : front
   for (const [dx, dy, w] of bird.pixels) layer.set(bird.x + dx, bird.y / 2 + dy, w ? wing : color)
 
   // Only the snag can hide her on the far side of the loop; over the moon
   // nothing does. The trail crosses the distant scene but dies in the moon's
   // glare and behind the snag.
-  const hides = (x: number, y: number) => scene.treeAt(x, y) && !scene.moonAt(x, y)
-  const veils = (x: number, y: number) => scene.treeAt(x, y) || scene.moonAt(x, y)
+  const hides = (x: number, y: number) => scene.treeAt(x, y) && !scene.orbAt(x, y)
+  const veils = (x: number, y: number) => scene.treeAt(x, y) || scene.orbAt(x, y)
   for (let r = 0; r < SCENE_ROWS; r++)
     for (let x = 0; x < SCENE_COLS; x++) {
       const top = scene.px.get(x, r * 2)
@@ -343,7 +367,7 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
         const under = scene.px.get(x, r * 2 + dy)
         const open = !under || !hides(x, r * 2 + dy)
         const her = front.px[r * 2 + dy]?.[x * 2 + dx] ?? (open ? (back.px[r * 2 + dy]?.[x * 2 + dx] ?? null) : null)
-        sub.push(her ? (under ? ink(her, under) : her) : under)
+        sub.push(her ? (under && glare(x, r * 2 + dy, under) ? mix(night, her, 0.12) : her) : under)
         hers.push(!!her)
       }
       if (hers.some(Boolean)) {
