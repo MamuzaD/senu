@@ -16,5 +16,5 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true
   },
-  "include": ["src"]
+  "include": ["src", "test"]
 }

@@ -1,0 +1,57 @@
+╭─────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                 │
+│ directory: ~/sample-project                   │
+╰─────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› update the sample status line
+
+  Would you like to run the following command?
+
+  Reason: Inspect sample output
+
+  $ example-command
+
+› 1. Yes, proceed (y)
+  2. Yes, and remember this choice (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

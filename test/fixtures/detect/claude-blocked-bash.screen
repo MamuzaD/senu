@@ -1,0 +1,57 @@
+  Sample Claude Code pane
+  Earlier conversation omitted.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+❯ inspect the sample pane
+⏺ Bash(example-command)
+  ⎿  Running…
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   example-command
+   Inspect sample output
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and remember this choice for example-command
+   3. No, and tell Claude what to do differently (esc)
+
+ Esc to cancel · Tab to amend · ctrl+e to explain

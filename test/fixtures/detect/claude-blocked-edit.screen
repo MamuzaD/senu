@@ -1,0 +1,57 @@
+  Sample Claude Code pane
+  Earlier conversation omitted.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+❯ inspect the sample pane
+⏺ Update(src/example.ts)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Edit file
+ src/example.ts
+
+  12 -  return oldValue
+  12 +  return newValue
+
+ Do you want to make this edit to example.ts?
+ ❯ 1. Yes
+   2. Yes, allow all edits during this session (shift+tab)
+   3. No, and tell Claude what to do differently (esc)
