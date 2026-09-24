@@ -26,8 +26,13 @@ export function colorFor(left: number | null): RGBA {
   return colors.good
 }
 
+const EIGHTHS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+
+/** A bar of percent left, with an eighth-block on the fill edge for sub-cell precision. */
 export function bar(left: number | null): string {
   if (left == null) return "░".repeat(BAR_WIDTH)
-  const filled = Math.round((Math.max(0, Math.min(100, left)) * BAR_WIDTH) / 100)
-  return "█".repeat(filled) + "░".repeat(BAR_WIDTH - filled)
+  const eighths = Math.round((Math.max(0, Math.min(100, left)) * BAR_WIDTH * 8) / 100)
+  const full = Math.floor(eighths / 8)
+  const edge = EIGHTHS[eighths % 8]!
+  return "█".repeat(full) + edge + "░".repeat(BAR_WIDTH - full - (edge ? 1 : 0))
 }
