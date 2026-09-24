@@ -1,6 +1,6 @@
 import type { RGBA } from "@opentui/core"
 import { Braille, Quad, type Canvas } from "./canvas.tsx"
-import { PERCH, SCENE_COLS, SCENE_ROWS, desert, night, type SceneTime } from "./desert.ts"
+import { PERCH, SCENE_ROWS, desert, night, sceneShift, type SceneTime } from "./desert.ts"
 import { clamp, easeInOut, easeOut, phase, pulse, smooth } from "./motion.ts"
 import { brand, hex, mix } from "./theme.ts"
 
@@ -27,6 +27,8 @@ export interface FlightPlan {
   perched: boolean
   /** the night desert or the day one */
   time: SceneTime
+  /** how wide the scene is drawn, from `sceneCols` */
+  cols: number
 }
 
 /** From touching to folded and still. */
@@ -393,15 +395,21 @@ function putQuads(c: Canvas, x: number, y: number, sub: (RGBA | null)[], bird: b
   else c.put(x, y, QUADS[mask]!, a, b ? { bg: b } : {})
 }
 
-/** Paint the desert and Senu for the plan into a `SCENE_COLS × SCENE_ROWS` canvas. */
+/** Paint the desert and Senu for the plan into a `plan.cols × SCENE_ROWS` canvas. */
 export function paintSky(c: Canvas, plan: FlightPlan) {
-  const { t } = plan
-  const scene = desert(c, { t, busy: plan.busy, time: plan.time })
+  const { t, cols } = plan
+  const scene = desert(c, { t, busy: plan.busy, time: plan.time, cols })
   const tone = TONES[plan.time]
   // she goes dark over anything bright: by day that's only the sun (the whole
   // sky is bright, so she's dark brown there instead); at night, dawn and dusk
   // it's the moon or sun and the bright low sky she's backlit against
-  const bird0 = birdAt(t, plan, { x: scene.perch.x * 2 + 1, y: scene.perch.y * 2 })
+  // she flies in the 72-column composition; `sx` moves her into a wider scene with it, in dots
+  const sx = sceneShift(cols) * 2
+  const at = (u: number) => {
+    const b = birdAt(u, plan, PERCH_DOTS)
+    return { ...b, x: b.x + sx }
+  }
+  const bird0 = at(t)
   // backlit or not is decided for her whole body (the average sky under her), so she never splits in two in the glow
   let sum = 0
   let n = 0
@@ -411,11 +419,10 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
   }
   const backlit = plan.time !== "day" && n > 0 && sum / n > (plan.time === "night" ? 0.55 : 0.5)
   const glare = (x: number, y: number, _under: RGBA) => scene.orbAt(x, y) || backlit
-  const perch = { x: scene.perch.x * 2 + 1, y: scene.perch.y * 2 }
-  const back = new Quad(SCENE_COLS, SCENE_ROWS)
-  const front = new Quad(SCENE_COLS, SCENE_ROWS)
-  const trail = new Braille(SCENE_COLS, SCENE_ROWS)
-  const bird = birdAt(t, plan, perch)
+  const back = new Quad(cols, SCENE_ROWS)
+  const front = new Quad(cols, SCENE_ROWS)
+  const trail = new Braille(cols, SCENE_ROWS)
+  const bird = bird0
 
   if (!plan.perched) {
     // the comet: where she's been, gold at her tail, cooling as she comes in to land
@@ -425,7 +432,7 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
       for (let k = N; k >= 1; k--) {
         const u = t - k * 22
         if (u < 0) continue
-        const p = birdAt(u, plan, perch)
+        const p = at(u)
         if (!p.flying) continue
         const f = 1 - k / N
         const col = mix(tone.trailEnd, mix(mix(tone.trailEnd, tone.trail, 0.5 + 0.5 * p.near), tone.trail, f), f * cool)
@@ -440,7 +447,7 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
       const p = loopAt(at)
       const r = 2 + age / 60
       for (let a = 0; a < Math.PI * 2; a += 0.12)
-        trail.dot(p.x + r * Math.cos(a), p.y + r * Math.sin(a) * 0.55, mix(tone.trail, tone.ringEnd, age / 900), 20)
+        trail.dot(p.x + sx + r * Math.cos(a), p.y + r * Math.sin(a) * 0.55, mix(tone.trail, tone.ringEnd, age / 900), 20)
     }
   }
 
@@ -457,7 +464,7 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
   const hides = (x: number, y: number) => scene.treeAt(x, y) && !scene.orbAt(x, y)
   const veils = (x: number, y: number) => scene.treeAt(x, y) || scene.orbAt(x, y)
   for (let r = 0; r < SCENE_ROWS; r++)
-    for (let x = 0; x < SCENE_COLS; x++) {
+    for (let x = 0; x < cols; x++) {
       const top = scene.px.get(x, r * 2)
       const bot = scene.px.get(x, r * 2 + 1)
       const sub: (RGBA | null)[] = []

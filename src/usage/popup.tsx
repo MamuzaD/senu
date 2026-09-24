@@ -2,7 +2,7 @@ import { TextAttributes, createCliRenderer, type RGBA } from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import type { UsageProfile, UsageScene } from "../config.ts"
-import { SCENE_COLS, type SceneTime } from "../ui/desert.ts"
+import { sceneCols, type SceneTime } from "../ui/desert.ts"
 import { Line } from "../ui/line.tsx"
 import { FPS, easeInOut, easeOut, now, reducedMotion, running, tween, useTicker } from "../ui/motion.ts"
 import { flightDone, leaveAfter, type FlightPlan } from "../ui/senu.ts"
@@ -76,13 +76,13 @@ function Row({ label, left, resetsAt, fill, children }: {
   )
 }
 
-function SpendRow({ spend, fill }: { spend: Spend; fill: number }) {
+function SpendRow({ spend, fill, cols }: { spend: Spend; fill: number; cols: number }) {
   const color = spend.reached ? colors.bad : colorFor(spend.left)
   const reset = formatUntil(spend.resetsAt)
   const text = ` $${spend.used.toFixed(2)}/$${spend.limit.toFixed(0)}${spend.reached ? " cap reached" : ""}`
   // two spaces before the reset when it fits in the scene's width, one when it doesn't
   const used = INDENT.length + LABEL_WIDTH + BAR_WIDTH + 5 + text.length
-  const gap = reset && used + 2 + reset.length <= SCENE_COLS ? "  " : " "
+  const gap = reset && used + 2 + reset.length <= cols ? "  " : " "
   const shown = spend.left == null ? null : spend.left * fill
   return (
     <Line>
@@ -167,7 +167,7 @@ function ProfileSection({ profile, section, dots, fillFrom, right }: {
       {snapshot?.ok
         ? snapshot.limits.map((l) => <Row key={l.label} label={l.label} left={l.left} resetsAt={l.resetsAt} fill={fill} />)
         : null}
-      {snapshot?.ok && snapshot.spend ? <SpendRow spend={snapshot.spend} fill={fill} /> : null}
+      {snapshot?.ok && snapshot.spend ? <SpendRow spend={snapshot.spend} fill={fill} cols={right + 1} /> : null}
       {snapshot?.ok && snapshot.banked ? <BankedRow banked={snapshot.banked} /> : null}
     </box>
   )
@@ -268,6 +268,7 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   useKeyboard(() => renderer.destroy())
 
   const t = now()
+  const cols = sceneCols(width)
   // once nothing is busy she comes round and lands on the snag, once
   if (!busy && leave.current == null) leave.current = leaveAfter(t - openedAt)
   const plan: FlightPlan = {
@@ -277,6 +278,7 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
     leave: leave.current,
     perched: reducedMotion || noColor,
     time,
+    cols,
   }
   const flying = !noColor && !flightDone(plan)
 
@@ -288,7 +290,7 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   useTicker(flying || tweening ? FPS : busy ? 1000 / DOTS_MS : 0)
 
   const dots = reducedMotion ? "..." : ".".repeat((Math.floor((t - openedAt) / DOTS_MS) % 3) + 1)
-  const right = Math.min(SCENE_COLS, width) - 1
+  const right = Math.min(cols, width) - 1
   const note = busy ? "senu is circling" : flightDone(plan) ? "senu keeps watch" : "senu comes in to land"
   const hint = "press any key to close"
 

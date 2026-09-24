@@ -15,9 +15,25 @@ import { brand, hex, mix } from "./theme.ts"
  * sun sinking through haze and the fire freshly lit. Nothing in it
  * belongs to a profile, so it looks the same however many profiles there
  * are. Painted into pixels, so Senu can be layered through it.
+ *
+ * It's composed at 72 columns. A wider popup keeps it in the middle and runs
+ * the sky, dunes and stars on out to both edges; nothing in it moves.
  */
 export const SCENE_COLS = 72
 export const SCENE_ROWS = 11
+
+/** How wide the scene is drawn in a terminal `width` columns wide. */
+export const sceneCols = (width: number) => Math.max(SCENE_COLS, width)
+
+/** How far a scene `cols` wide moves the 72-column composition in from the left. */
+export const sceneShift = (cols: number) => Math.floor((cols - SCENE_COLS) / 2)
+
+/** Stars across a scene `cols` wide: the 72-column pattern, shifted and repeated out to both edges. */
+function tile(stars: [number, number, string][], cols: number) {
+  const n = Math.ceil(sceneShift(cols) / SCENE_COLS)
+  const at = Array.from({ length: 2 * n + 1 }, (_, i) => (i - n) * SCENE_COLS + sceneShift(cols))
+  return stars.flatMap(([x, y, ch]) => at.map((k): [number, number, string] => [x + k, y, ch])).filter(([x]) => x >= 0 && x < cols)
+}
 
 export type SceneTime = "night" | "dawn" | "day" | "dusk"
 
@@ -239,18 +255,21 @@ export const PERCH = (() => {
  * Paint the scene. `busy` keeps the stars twinkling, the fire flickering and
  * the smoke drifting; otherwise it's still.
  */
-export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime }): Desert {
+export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime; cols: number }): Desert {
   const { t, busy } = o
   const pal = PALETTES[o.time]
-  const PW = SCENE_COLS
+  const PW = o.cols
   const PH = SCENE_ROWS * 2
+  // everything below is placed in the 72-column composition, `ox` columns in
+  const ox = sceneShift(PW)
   const px = new Pixels(PW, PH)
   const s = PH / 24
-  const far = (x: number) => PH * 0.7 + s * (1.1 * Math.sin(x / 13 + 1) + 0.7 * Math.sin(x / 6.1))
-  const mid = (x: number) => PH * 0.81 + s * (1.6 * Math.sin(x / 10 + 2.4) + 0.4 * Math.sin(x / 4.1))
+  const far = (x: number) => PH * 0.7 + s * (1.1 * Math.sin((x - ox) / 13 + 1) + 0.7 * Math.sin((x - ox) / 6.1))
+  const mid = (x: number) => PH * 0.81 + s * (1.6 * Math.sin((x - ox) / 10 + 2.4) + 0.4 * Math.sin((x - ox) / 4.1))
+  const nearAt = (x: number) => near(x - ox)
 
   const glyphs: Glyph[] = []
-  const m = { ...ORB, y: pal.orbY }
+  const m = { ...ORB, x: ORB.x + ox, y: pal.orbY }
   const onDisc = (x: number, y: number) => (x - m.x) ** 2 + (y - m.y) ** 2 <= m.r ** 2
 
   if (pal.sky) {
@@ -268,13 +287,13 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
         px.set(x, y, col)
       }
     if (pal.stars === "faint")
-      for (const [x, row, ch] of FAINT_STARS) {
+      for (const [x, row, ch] of tile(FAINT_STARS, PW)) {
         const under = px.get(x, row * 2)!
         const tw = busy ? 0.5 + 0.5 * Math.sin(t / 300 + x * 1.7) : 0.6
         glyphs.push({ x, row, ch, fg: mix(under, brand.papyrus, 0.35 + 0.25 * tw) })
       }
   } else {
-    for (const [x, y, ch] of STARS) {
+    for (const [x, y, ch] of tile(STARS, PW)) {
       const tw = busy ? 0.5 + 0.5 * Math.sin(t / 300 + x * 1.7) : 0.6
       c.put(x, y, ch, mix(hex("#3b3d57"), brand.papyrus, tw * (ch === "·" ? 0.55 : 0.8)))
     }
@@ -294,7 +313,8 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
     }
 
   // the pyramids on the far dunes, their faces toward the light lit
-  for (const { x: x0, size } of PYRAMIDS) {
+  for (const { x: px0, size } of PYRAMIDS) {
+    const x0 = px0 + ox
     const base = Math.round(far(x0)) + 1
     for (let j = 0; j <= size; j++)
       for (let k = -j; k <= j; k++)
@@ -303,7 +323,7 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
 
   // dunes, far to near; the light catches the crests
   for (let x = 0; x < PW; x++) {
-    const tops = [far(x), mid(x), near(x)]
+    const tops = [far(x), mid(x), nearAt(x)]
     tops.forEach((top, i) => {
       const [crest, base] = pal.dunes[i]!
       for (let y = Math.round(top); y < PH; y++) px.set(x, y, mix(crest, base, clamp((y - top) / 2.5)))
@@ -311,36 +331,37 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
   }
 
   // a Medjay campfire on the near dune: flames by night and freshly lit at dusk, embers and a wisp of smoke by dawn and day
-  const fy = Math.round(near(FIRE)) - 1
+  const fire = FIRE + ox
+  const fy = Math.round(nearAt(fire)) - 1
   if (pal.fire === "flame") {
     const flick = busy ? Math.sin(t / 70) * 0.5 + Math.sin(t / 37) * 0.5 : 0.3
-    px.set(FIRE, fy, mix(brand.ember, brand.gold, 0.5 + flick * 0.5))
-    if (flick > -0.2) px.set(FIRE, fy - 1, mix(brand.ember, hex("#ffdd88"), clamp(flick)))
-    px.set(FIRE - 1, fy, hex("#b5553a"))
-    px.set(FIRE + 1, fy, hex("#b5553a"))
+    px.set(fire, fy, mix(brand.ember, brand.gold, 0.5 + flick * 0.5))
+    if (flick > -0.2) px.set(fire, fy - 1, mix(brand.ember, hex("#ffdd88"), clamp(flick)))
+    px.set(fire - 1, fy, hex("#b5553a"))
+    px.set(fire + 1, fy, hex("#b5553a"))
   } else {
     const glow = busy ? 0.5 + 0.5 * Math.sin(t / 240) : 0.4
-    px.set(FIRE, fy, mix(hex("#9a4a2c"), hex("#d8743e"), glow))
-    px.set(FIRE - 1, fy, hex("#7a5a48"))
-    px.set(FIRE + 1, fy, hex("#7a5a48"))
+    px.set(fire, fy, mix(hex("#9a4a2c"), hex("#d8743e"), glow))
+    px.set(fire - 1, fy, hex("#7a5a48"))
+    px.set(fire + 1, fy, hex("#7a5a48"))
     const drift = busy ? t / 900 : 0
     // a short wisp that leans off the fire and breaks up, so it never reads as a straight stripe
     for (let k = 1; k <= 3; k++) {
-      const sx = FIRE + Math.round(Math.sin(drift + k * 1.9) * 0.9 - k * 0.4)
+      const sx = fire + Math.round(Math.sin(drift + k * 1.9) * 0.9 - k * 0.4)
       const under = px.get(sx, fy - k)
       if (under) px.set(sx, fy - k, mix(under, pal.smoke, 0.36 - k * 0.09))
     }
   }
 
   // the snag stands on the near dune
-  const foot = Math.round(near(SNAG_X))
+  const foot = Math.round(nearAt(SNAG_X + ox))
   const f = locate(SNAG, "f")
   const tree = new Set<string>()
   SNAG.forEach((row, j) =>
     [...row].forEach((ch, i) => {
       const bark = pal.bark[ch]
       if (!bark) return
-      const x = SNAG_X + i - f.x
+      const x = SNAG_X + ox + i - f.x
       const y = foot + j - f.y
       px.set(x, y, bark)
       tree.add(`${x},${y}`)
@@ -352,6 +373,6 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
     glyphs,
     orbAt: (x, y) => onDisc(x, y) && y < far(x),
     treeAt: (x, y) => tree.has(`${x},${y}`),
-    perch: PERCH,
+    perch: { x: PERCH.x + ox, y: PERCH.y },
   }
 }
