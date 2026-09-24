@@ -11,13 +11,32 @@ export interface UsageProfile {
   home: string
 }
 
+/** The usage popup's scene: the night desert, the day desert, or by the time of day. */
+export type UsageScene = "night" | "day" | "auto"
+
 export interface Config {
   usage: {
     profiles: UsageProfile[]
+    scene: UsageScene
   }
 }
 
 const KINDS: UsageKind[] = ["codex", "claude"]
+const SCENES: UsageScene[] = ["night", "day", "auto"]
+
+function parseScene(raw: unknown, where: string): UsageScene {
+  if (typeof raw !== "string" || !SCENES.includes(raw as UsageScene)) {
+    throw new ConfigError(`${where}: expected one of ${SCENES.map((s) => `"${s}"`).join(", ")}, got ${JSON.stringify(raw)}`)
+  }
+  return raw as UsageScene
+}
+
+/** SENU_SCENE overrides the config's scene, for quick testing. */
+function sceneOf(fromConfig: unknown): UsageScene {
+  const env = process.env.SENU_SCENE
+  if (env) return parseScene(env, "SENU_SCENE")
+  return fromConfig === undefined ? "night" : parseScene(fromConfig, "usage.scene")
+}
 
 function defaultProfiles(): UsageProfile[] {
   return [
@@ -44,7 +63,7 @@ function parseProfile(raw: unknown, index: number): UsageProfile {
 }
 
 export function loadConfig(path = configPath): Config {
-  if (!existsSync(path)) return { usage: { profiles: defaultProfiles() } }
+  if (!existsSync(path)) return { usage: { profiles: defaultProfiles(), scene: sceneOf(undefined) } }
 
   let data: Record<string, unknown>
   try {
@@ -67,5 +86,5 @@ export function loadConfig(path = configPath): Config {
     seen.add(key)
   }
 
-  return { usage: { profiles } }
+  return { usage: { profiles, scene: sceneOf(usage.scene) } }
 }

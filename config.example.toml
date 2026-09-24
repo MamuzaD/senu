@@ -1,5 +1,11 @@
 # ~/.config/senu/config.toml
 
+# The usage popup's scene: "night" (the default), "day", or "auto" for day
+# from 07:00 to 19:00 local time, chosen when the popup opens. SENU_SCENE
+# overrides it.
+[usage]
+scene = "night"
+
 # Usage popup profiles, shown in this order. `home` is CODEX_HOME for Codex
 # and the Claude config dir for Claude. Without any profiles senu shows
 # Codex at $CODEX_HOME (or ~/.codex) and Claude at ~/.claude.

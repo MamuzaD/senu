@@ -1,8 +1,8 @@
 import { TextAttributes, createCliRenderer, type RGBA } from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import type { UsageProfile } from "../config.ts"
-import { SCENE_COLS } from "../ui/desert.ts"
+import type { UsageProfile, UsageScene } from "../config.ts"
+import { SCENE_COLS, type SceneTime } from "../ui/desert.ts"
 import { Line } from "../ui/line.tsx"
 import { FPS, easeInOut, easeOut, now, reducedMotion, running, tween, useTicker } from "../ui/motion.ts"
 import { flightDone, leaveAfter, type FlightPlan } from "../ui/senu.ts"
@@ -194,7 +194,14 @@ function untilNextMinute(sections: Section[]): number {
   return phases.length ? Math.ceil(Math.min(...phases) * 1000) + 30 : 60_000
 }
 
-function UsagePopup({ profiles }: { profiles: UsageProfile[] }) {
+/** "auto" is day from 07:00 to 19:00 local time, decided once as the popup opens. */
+export function sceneTime(scene: UsageScene, at = new Date()): SceneTime {
+  if (scene !== "auto") return scene
+  const hour = at.getHours()
+  return hour >= 7 && hour < 19 ? "day" : "night"
+}
+
+function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneTime }) {
   const renderer = useRenderer()
   const { width } = useTerminalDimensions()
   const [sections, setSections] = useState<Section[]>(() =>
@@ -263,7 +270,7 @@ function UsagePopup({ profiles }: { profiles: UsageProfile[] }) {
     marks: sections.map((s) => s.landedAt).filter((at): at is number => at != null).map((at) => at - openedAt),
     leave: leave.current,
     perched: reducedMotion || noColor,
-    time: "night",
+    time,
   }
   const flying = !noColor && !flightDone(plan)
 
@@ -302,10 +309,10 @@ function UsagePopup({ profiles }: { profiles: UsageProfile[] }) {
   )
 }
 
-export async function runUsagePopup(profiles: UsageProfile[]): Promise<number> {
+export async function runUsagePopup(profiles: UsageProfile[], scene: UsageScene): Promise<number> {
   const { promise: closed, resolve } = Promise.withResolvers<void>()
   const renderer = await createCliRenderer({ useMouse: false, onDestroy: resolve })
-  createRoot(renderer).render(<UsagePopup profiles={profiles} />)
+  createRoot(renderer).render(<UsagePopup profiles={profiles} time={sceneTime(scene)} />)
   await closed
   // exit now rather than waiting on in-flight fetches, or a tmux popup stays open blank
   process.exit(0)

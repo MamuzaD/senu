@@ -37,5 +37,5 @@ export async function usageCommand(args: string[], config: Config): Promise<numb
   }
 
   const { runUsagePopup } = await import("./popup.tsx")
-  return runUsagePopup(profiles)
+  return runUsagePopup(profiles, config.usage.scene)
 }
