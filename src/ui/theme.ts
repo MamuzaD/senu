@@ -19,8 +19,6 @@ export const colors = {
   dim: indexed(240),
   muted: indexed(245),
   rule: indexed(238),
-  eagle: indexed(179),
-  eagleFar: indexed(137),
 }
 
 // The brand layer (Senu, the desert, Eagle Vision) is truecolor: dusk over the desert.
