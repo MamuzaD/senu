@@ -1,11 +1,15 @@
 import type { Config } from "../config.ts"
 import { claimLock, getSnapshot, profileKey, refreshLocked } from "./cache.ts"
+import { formatTokens } from "./format.ts"
+import { claimTodayLock, refreshTodayLocked, scanToday } from "./today.ts"
 
 const HELP = `usage: senu vision [--json]
        senu vision refresh [profile] [--locked]
+       senu vision today [profile...] [--json]
 
 Opens the usage popup. --json prints each profile's snapshot instead.
 refresh fetches now and updates the cache; profile is a key like codex-work.
+today scans the transcripts now and prints today's estimated spend and tokens.
 `
 
 export async function usageCommand(args: string[], config: Config): Promise<number> {
@@ -26,6 +30,36 @@ export async function usageCommand(args: string[], config: Config): Promise<numb
     }
     // --locked: the parent that spawned us already holds the lock
     await Promise.all(targets.map((p) => (locked || claimLock(p) ? refreshLocked(p) : null)))
+    return 0
+  }
+
+  if (args[0] === "today") {
+    const keys = args.slice(1).filter((a) => !a.startsWith("-"))
+    const targets = keys.length ? profiles.filter((p) => keys.includes(profileKey(p))) : profiles
+    if (!targets.length) {
+      console.error(`senu vision: no profile "${keys.join(", ")}" (have ${profiles.map(profileKey).join(", ")})`)
+      return 2
+    }
+    // --locked: the popup that spawned us already holds the locks; --refresh: only update the cache
+    const locked = args.includes("--locked")
+    const results = await Promise.all(
+      targets.map(async (p) => {
+        const started = performance.now()
+        const today = await (locked || claimTodayLock(p) ? refreshTodayLocked(p) : scanToday(p))
+        return { key: profileKey(p), ms: Math.round(performance.now() - started), ...today }
+      }),
+    )
+    if (args.includes("--refresh")) return 0
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(results, null, 2))
+      return 0
+    }
+    for (const r of results) {
+      const cost = r.costUsd == null ? "no prices" : `$${r.costUsd.toFixed(2)}`
+      const cached = r.tokens ? ` (${Math.round((100 * r.cachedTokens) / r.tokens)}% cached)` : ""
+      const unpriced = r.unpricedTokens ? `, ${formatTokens(r.unpricedTokens)} unpriced` : ""
+      console.log(`${r.key.padEnd(16)} ${r.day}  ${cost.padStart(9)}  ${formatTokens(r.tokens)} tok${cached}${unpriced}  ${r.ms}ms`)
+    }
     return 0
   }
 

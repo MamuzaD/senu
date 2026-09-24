@@ -1,5 +1,5 @@
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import type { UsageProfile } from "../config.ts"
 import { cacheDir, selfCommand } from "../paths.ts"
 import { fetchClaude } from "./claude.ts"
@@ -42,18 +42,18 @@ function writeCache(p: UsageProfile, snapshot: Snapshot) {
   renameSync(tmp, cachePath(p))
 }
 
-/** Atomically claims the refresh lock. False if another refresh holds a live one. */
-export function claimLock(p: UsageProfile): boolean {
-  mkdirSync(usageDir, { recursive: true })
+/** Atomically claims a lock file. False if another process holds one younger than `ttlSeconds`. */
+export function claimLockFile(path: string, ttlSeconds = LOCK_TTL_SECONDS): boolean {
+  mkdirSync(dirname(path), { recursive: true })
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      closeSync(openSync(lockPath(p), "wx"))
+      closeSync(openSync(path, "wx"))
       return true
     } catch {
       try {
-        const ageMs = Date.now() - statSync(lockPath(p)).mtimeMs
-        if (ageMs < LOCK_TTL_SECONDS * 1000) return false
-        unlinkSync(lockPath(p))
+        const ageMs = Date.now() - statSync(path).mtimeMs
+        if (ageMs < ttlSeconds * 1000) return false
+        unlinkSync(path)
       } catch {
         // lock vanished between open and stat; retry
       }
@@ -62,11 +62,15 @@ export function claimLock(p: UsageProfile): boolean {
   return false
 }
 
-export function releaseLock(p: UsageProfile) {
+export function releaseLockFile(path: string) {
   try {
-    unlinkSync(lockPath(p))
+    unlinkSync(path)
   } catch {}
 }
+
+/** Atomically claims the refresh lock. False if another refresh holds a live one. */
+export const claimLock = (p: UsageProfile) => claimLockFile(lockPath(p))
+export const releaseLock = (p: UsageProfile) => releaseLockFile(lockPath(p))
 
 function fetchProfile(p: UsageProfile): Promise<Snapshot> {
   return p.kind === "codex" ? fetchCodex(p.home) : fetchClaude(p.home)
