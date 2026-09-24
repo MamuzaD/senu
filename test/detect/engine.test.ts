@@ -127,8 +127,9 @@ const FIXTURES = join(import.meta.dir, "../fixtures/detect")
 const cases: { name: string; agent: Agent; state: AgentState; rule: string; python?: AgentState; previous?: AgentState }[] = [
   { name: "live-claude-idle", agent: "claude", state: "idle", rule: "live_prompt_box" },
   { name: "live-claude-idle-draft", agent: "claude", state: "idle", rule: "live_prompt_box" },
-  { name: "live-codex-idle", agent: "codex", state: "idle", rule: "osc_title_idle" },
-  { name: "live-codex-idle-draft", agent: "codex", state: "idle", rule: "osc_title_idle" },
+  // herdr 9c96f7d dropped codex's osc_title_idle: an idle Codex is ambiguous, not idle
+  { name: "live-codex-idle", agent: "codex", state: "unknown", rule: "codex_state_ambiguous", python: "idle" },
+  { name: "live-codex-idle-draft", agent: "codex", state: "unknown", rule: "codex_state_ambiguous", python: "idle" },
 
   { name: "claude-working-title", agent: "claude", state: "working", rule: "osc_title_working" },
   { name: "claude-working-screen", agent: "claude", state: "working", rule: "live_turn_working" },
@@ -148,8 +149,7 @@ const cases: { name: string; agent: Agent; state: AgentState; rule: string; pyth
   { name: "codex-blocked-title", agent: "codex", state: "blocked", rule: "osc_title_blocked" },
   // whole_recent_without_current_prompt_marker was "" in the python too
   { name: "codex-weak-blocker", agent: "codex", state: "blocked", rule: "weak_blocker", python: "idle" },
-  { name: "codex-no-title", agent: "codex", state: "unknown", rule: "codex_state_ambiguous" },
-]
+  { name: "codex-no-title", agent: "codex", state: "unknown", rule: "codex_state_ambiguous" },]
 
 describe("pane fixtures", () => {
   const manifests = { claude: bundledManifest("claude"), codex: bundledManifest("codex") }
