@@ -1,0 +1,151 @@
+import type { RGBA } from "@opentui/core"
+import { Pixels, type Canvas } from "./canvas.tsx"
+import { clamp } from "./motion.ts"
+import { brand, hex, mix } from "./theme.ts"
+
+/**
+ * The night over Giza behind the usage popup: stars, a small moon low on the
+ * horizon, three pyramids on the far dunes lit from the moon's side, three
+ * dune bands, a Medjay campfire, and a lightning-struck snag on the right
+ * for Senu to perch on. Nothing in it belongs to a profile, so it looks the
+ * same however many profiles there are. Painted into pixels, so Senu can be
+ * layered through it.
+ */
+export const SCENE_COLS = 72
+export const SCENE_ROWS = 11
+
+export const night = hex("#1a1b26")
+
+const MOON = { x: 56, y: 8, r: 6 }
+/** centre column and height in pixels, left to right */
+const PYRAMIDS = [
+  { x: 10, size: 5 },
+  { x: 18, size: 7 },
+  { x: 25, size: 4 },
+]
+const FIRE = 8
+
+const STARS: [number, number, string][] = [
+  [3, 1, "·"], [9, 4, "✦"], [15, 0, "·"], [21, 2, "·"], [27, 5, "⋆"], [31, 1, "·"], [36, 3, "·"],
+  [42, 0, "✦"], [46, 2, "·"], [66, 1, "·"], [69, 4, "⋆"], [62, 6, "·"], [12, 7, "·"], [4, 6, "·"], [39, 6, "·"],
+]
+
+/**
+ * The snag, lit from the moon on its left: `#` bark, `+` moonlit bark, `:` a
+ * thin limb, `f` its foot on the near dune, `p` where her talons go.
+ */
+const SNAG = [
+  ".....p.:...",
+  ".....+#:...",
+  ".::..+#....",
+  "..::.+#..:.",
+  "....:+#..:.",
+  ".....+#.:..",
+  "......+#...",
+  "......+#...",
+  "...:..+#...",
+  "....:.+#...",
+  "......+#...",
+  "......+#...",
+  "......+#...",
+  "....+#f##..",
+]
+const SNAG_X = 67
+const BARK: Record<string, RGBA> = { "#": hex("#2b2430"), "+": hex("#6a5a5c"), ":": hex("#54484f"), f: hex("#2b2430") }
+
+export interface Desert {
+  px: Pixels
+  /** the moon's disc, in front of the far dunes */
+  moonAt: (x: number, y: number) => boolean
+  treeAt: (x: number, y: number) => boolean
+  /** where her talons go on the snag, in pixels */
+  perch: { x: number; y: number }
+}
+
+function locate(map: string[], ch: string) {
+  for (let j = 0; j < map.length; j++) {
+    const i = map[j]!.indexOf(ch)
+    if (i >= 0) return { x: i, y: j }
+  }
+  return { x: 0, y: 0 }
+}
+
+/** Paint the scene. `busy` keeps the stars twinkling and the fire flickering; otherwise it's still. */
+export function desert(c: Canvas, o: { t: number; busy: boolean }): Desert {
+  const { t, busy } = o
+  const PW = SCENE_COLS
+  const PH = SCENE_ROWS * 2
+  const px = new Pixels(PW, PH)
+  const s = PH / 24
+  const far = (x: number) => PH * 0.7 + s * (1.1 * Math.sin(x / 13 + 1) + 0.7 * Math.sin(x / 6.1))
+  const mid = (x: number) => PH * 0.81 + s * (1.6 * Math.sin(x / 10 + 2.4) + 0.4 * Math.sin(x / 4.1))
+  const near = (x: number) => PH * 0.9 + s * (1.3 * Math.sin(x / 8 + 0.3) + 0.3 * Math.sin(x / 3.3 + 1))
+
+  for (const [x, y, ch] of STARS) {
+    const tw = busy ? 0.5 + 0.5 * Math.sin(t / 300 + x * 1.7) : 0.6
+    c.put(x, y, ch, mix(hex("#3b3d57"), brand.papyrus, tw * (ch === "·" ? 0.55 : 0.8)))
+  }
+
+  const m = MOON
+  const onDisc = (x: number, y: number) => (x - m.x) ** 2 + (y - m.y) ** 2 <= m.r ** 2 + 2
+  for (let y = m.y - m.r - 1; y <= m.y + m.r + 1; y++)
+    for (let x = m.x - m.r - 1; x <= m.x + m.r + 1; x++) {
+      if (!onDisc(x, y)) continue
+      const lx = (x - m.x) / m.r
+      const ly = (y - m.y) / m.r
+      let col = mix(hex("#b9a582"), hex("#f4ead0"), clamp(0.75 + 0.25 * (lx * 0.6 - ly * 0.8)))
+      // soft maria, low contrast and low on the face, so her silhouette up top reads cleanly
+      for (const [mx, my, mr] of [[-4, 1, 2.6], [3, 3, 2.4], [-1, 6, 1.9]] as const)
+        if ((x - m.x - mx) ** 2 + (y - m.y - my) ** 2 < mr * mr) col = mix(col, hex("#a8977a"), 0.28)
+      px.set(x, y, col)
+    }
+
+  // the pyramids on the far dunes, their moonward faces lit
+  for (const { x: x0, size } of PYRAMIDS) {
+    const base = Math.round(far(x0)) + 1
+    for (let j = 0; j <= size; j++)
+      for (let k = -j; k <= j; k++) px.set(x0 + k, base - size + j, k >= 0 ? hex("#4a4156") : hex("#2f2a3d"))
+  }
+
+  // dunes, far to near; moonlight catches the crests
+  for (let x = 0; x < PW; x++) {
+    const layers = [
+      [far(x), hex("#4a4160"), hex("#2a2638")],
+      [mid(x), hex("#6b5446"), hex("#3a302f")],
+      [near(x), hex("#9a7a58"), hex("#4d3d34")],
+    ] as const
+    for (const [top, crest, base] of layers)
+      for (let y = Math.round(top); y < PH; y++) px.set(x, y, mix(crest, base, clamp((y - top) / 2.5)))
+  }
+
+  // a Medjay campfire on the near dune, flickering while she's out
+  const fy = Math.round(near(FIRE)) - 1
+  const flick = busy ? Math.sin(t / 70) * 0.5 + Math.sin(t / 37) * 0.5 : 0.3
+  px.set(FIRE, fy, mix(brand.ember, brand.gold, 0.5 + flick * 0.5))
+  if (flick > -0.2) px.set(FIRE, fy - 1, mix(brand.ember, hex("#ffdd88"), clamp(flick)))
+  px.set(FIRE - 1, fy, hex("#b5553a"))
+  px.set(FIRE + 1, fy, hex("#b5553a"))
+
+  // the snag stands on the near dune
+  const foot = Math.round(near(SNAG_X))
+  const f = locate(SNAG, "f")
+  const p = locate(SNAG, "p")
+  const tree = new Set<string>()
+  SNAG.forEach((row, j) =>
+    [...row].forEach((ch, i) => {
+      const bark = BARK[ch]
+      if (!bark) return
+      const x = SNAG_X + i - f.x
+      const y = foot + j - f.y
+      px.set(x, y, bark)
+      tree.add(`${x},${y}`)
+    }),
+  )
+
+  return {
+    px,
+    moonAt: (x, y) => onDisc(x, y) && y < far(x),
+    treeAt: (x, y) => tree.has(`${x},${y}`),
+    perch: { x: SNAG_X + p.x - f.x, y: foot + p.y - f.y },
+  }
+}
