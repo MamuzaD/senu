@@ -11,8 +11,8 @@ export interface UsageProfile {
   home: string
 }
 
-/** The usage popup's scene: the night desert, the day desert, or by the time of day. */
-export type UsageScene = "night" | "day" | "auto"
+/** The usage popup's scene: the desert at night, dawn, day or dusk, or by the time of day. */
+export type UsageScene = "night" | "dawn" | "day" | "dusk" | "auto"
 
 export interface Config {
   usage: {
@@ -22,7 +22,7 @@ export interface Config {
 }
 
 const KINDS: UsageKind[] = ["codex", "claude"]
-const SCENES: UsageScene[] = ["night", "day", "auto"]
+const SCENES: UsageScene[] = ["night", "dawn", "day", "dusk", "auto"]
 
 function parseScene(raw: unknown, where: string): UsageScene {
   if (typeof raw !== "string" || !SCENES.includes(raw as UsageScene)) {

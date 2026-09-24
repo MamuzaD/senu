@@ -4,24 +4,26 @@ import { clamp } from "./motion.ts"
 import { brand, hex, mix } from "./theme.ts"
 
 /**
- * Giza behind the usage popup, by night or by day, in one composition:
+ * Giza behind the usage popup, at night, dawn, day or dusk, in one composition:
  * three pyramids on the far dunes lit from the moon's (or sun's) side, three
  * dune bands, a Medjay campfire on the left, a lightning-struck snag on the
  * right for Senu to perch on, and the moon or sun low on the horizon between
- * them. By night the sky is the terminal's own and the stars are glyphs; by
- * day the sky is a painted panel of hot haze, the sun burns where the moon
- * was and the fire is down to embers and a wisp of smoke. Nothing in it
+ * them. By night the sky is the terminal's own and the stars are glyphs. The
+ * other three paint the sky: dawn goes indigo through rose to pale gold with
+ * the sun just rising and the fire down to embers; day is hot haze with the
+ * sun where the moon was; dusk burns orange and magenta into purple with the
+ * sun sinking through haze and the fire freshly lit. Nothing in it
  * belongs to a profile, so it looks the same however many profiles there
  * are. Painted into pixels, so Senu can be layered through it.
  */
 export const SCENE_COLS = 72
 export const SCENE_ROWS = 11
 
-export type SceneTime = "night" | "day"
+export type SceneTime = "night" | "dawn" | "day" | "dusk"
 
 export const night = hex("#1a1b26")
 
-/** The moon by night, the sun by day: the same spot, the same size. */
+/** The moon by night, the sun by day: the same spot, the same size (dawn and dusk sit it lower). */
 const ORB = { x: 56, y: 8, r: 4.8 }
 /** centre column and height in pixels, left to right */
 const PYRAMIDS = [
@@ -59,43 +61,90 @@ const SNAG = [
 const SNAG_X = 67
 
 interface Palette {
-  /** the painted sky, zenith to horizon, or null for the terminal's own */
-  sky: [RGBA, RGBA] | null
+  /** the painted sky's stops, zenith to horizon, or null for the terminal's own */
+  sky: RGBA[] | null
+  /** how far down the orb sits (dawn and dusk sit it low on the horizon) */
+  orbY: number
   /** the orb's dim and bright ends, its maria (the moon's) and its glow into the sky (the sun's) */
   orb: [RGBA, RGBA]
   maria: RGBA | null
   glow: RGBA | null
-  /** pyramid faces: toward the light, away from it */
+  glowR: number
+  /** streaks of haze across a low sun */
+  haze: RGBA | null
+  /** pyramid faces: toward the light, away from it, and the rim the light catches */
   lit: RGBA
   shade: RGBA
+  rim: RGBA | null
   /** crest and base of the far, mid and near dunes */
   dunes: [RGBA, RGBA][]
   bark: Record<string, RGBA>
+  /** stars: glyphs on the terminal's sky, or a few faint pixels high on a painted one */
+  stars: "glyphs" | "faint" | null
+  /** the campfire burning, or down to embers with a wisp of smoke */
+  fire: "flame" | "embers"
+  smoke: RGBA
 }
+
+const NIGHT_BARK = { "#": hex("#2b2430"), "+": hex("#6a5a5c"), ":": hex("#54484f"), f: hex("#2b2430") }
 
 const PALETTES: Record<SceneTime, Palette> = {
   night: {
     sky: null,
+    orbY: 8,
     orb: [hex("#b9a582"), hex("#f4ead0")],
     maria: hex("#a8977a"),
     glow: null,
+    glowR: 0,
+    haze: null,
     lit: hex("#4a4156"),
     shade: hex("#2f2a3d"),
+    rim: null,
     dunes: [
       [hex("#4a4160"), hex("#2a2638")],
       [hex("#6b5446"), hex("#3a302f")],
       [hex("#9a7a58"), hex("#4d3d34")],
     ],
-    bark: { "#": hex("#2b2430"), "+": hex("#6a5a5c"), ":": hex("#54484f"), f: hex("#2b2430") },
+    bark: NIGHT_BARK,
+    stars: "glyphs",
+    fire: "flame",
+    smoke: hex("#8d8a86"),
+  },
+  dawn: {
+    // deep indigo, through rose and peach, to a pale gold horizon
+    sky: [hex("#252a58"), hex("#6a4f86"), hex("#d98a8e"), hex("#f6c79a"), hex("#f8e2ae")],
+    orbY: 12,
+    orb: [hex("#ffc98a"), hex("#fff2cc")],
+    maria: null,
+    glow: hex("#ffe0a8"),
+    glowR: 6,
+    haze: null,
+    // the light comes low from the right: pink-gold faces, long cool shadows
+    lit: hex("#d9a08a"),
+    shade: hex("#4a4670"),
+    rim: hex("#ffd2a0"),
+    dunes: [
+      [hex("#a8849a"), hex("#6a5a80")],
+      [hex("#c89078"), hex("#6e5670")],
+      [hex("#e0a67e"), hex("#7a5a66")],
+    ],
+    bark: { "#": hex("#3a2c3c"), "+": hex("#b8807a"), ":": hex("#5e4658"), f: hex("#3a2c3c") },
+    stars: "faint",
+    fire: "embers",
+    smoke: hex("#9a92a6"),
   },
   day: {
     // a hot, washed-out blue that goes to white haze at the horizon
     sky: [hex("#7fb0d6"), hex("#e6e2d2")],
+    orbY: 8,
     orb: [hex("#ffe9a8"), hex("#fffbea")],
     maria: null,
     glow: hex("#fff3c4"),
+    glowR: 5,
+    haze: null,
     lit: hex("#f2d49a"),
     shade: hex("#a47a4e"),
+    rim: null,
     // the far dunes fade into the haze; the near ones are hot sand
     dunes: [
       [hex("#d9d0ba"), hex("#c7b598")],
@@ -103,11 +152,59 @@ const PALETTES: Record<SceneTime, Palette> = {
       [hex("#f0cc8c"), hex("#c89a62")],
     ],
     bark: { "#": hex("#5a4232"), "+": hex("#a07e5a"), ":": hex("#7a5e48"), f: hex("#5a4232") },
+    stars: null,
+    fire: "embers",
+    smoke: hex("#8d8a86"),
   },
+  dusk: {
+    // purple overhead, through magenta, to a hot orange horizon
+    sky: [hex("#2e1f4a"), hex("#6a2c62"), hex("#c24a64"), hex("#f0803e"), hex("#f9b25a")],
+    orbY: 12,
+    orb: [hex("#ff8a3a"), hex("#ffd27a")],
+    maria: null,
+    glow: hex("#ffa24a"),
+    glowR: 9,
+    haze: hex("#e0603e"),
+    // the pyramids stand as silhouettes, rimmed in orange on the sun's side
+    lit: hex("#4a2a3e"),
+    shade: hex("#2c1a2e"),
+    rim: hex("#ff9a4a"),
+    dunes: [
+      [hex("#7a3a52"), hex("#3e2440")],
+      [hex("#8a4a4a"), hex("#3a2234")],
+      [hex("#a8603e"), hex("#40262e")],
+    ],
+    bark: { "#": hex("#26161e"), "+": hex("#7a3e36"), ":": hex("#3e2430"), f: hex("#26161e") },
+    stars: "faint",
+    fire: "flame",
+    smoke: hex("#6a5060"),
+  },
+}
+
+/** A few faint stars high on a painted dawn or dusk sky: column, row, glyph. */
+const FAINT_STARS: [number, number, string][] = [
+  [6, 0, "·"], [21, 1, "·"], [38, 0, "⋆"], [47, 1, "·"], [64, 0, "·"],
+]
+
+/** A colour at `k` (0..1) along evenly spaced stops. */
+function along(stops: RGBA[], k: number): RGBA {
+  const at = clamp(k) * (stops.length - 1)
+  const i = Math.min(Math.floor(at), stops.length - 2)
+  return mix(stops[i]!, stops[i + 1]!, at - i)
+}
+
+/** A glyph laid over a painted cell of sky, on that cell's colour. */
+export interface Glyph {
+  x: number
+  row: number
+  ch: string
+  fg: RGBA
 }
 
 export interface Desert {
   px: Pixels
+  /** faint stars over a painted sky */
+  glyphs: Glyph[]
   /** the moon's or sun's disc, in front of the far dunes */
   orbAt: (x: number, y: number) => boolean
   treeAt: (x: number, y: number) => boolean
@@ -128,8 +225,8 @@ function locate(map: string[], ch: string) {
  * the smoke drifting; otherwise it's still.
  */
 export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime }): Desert {
-  const { t, busy, time } = o
-  const pal = PALETTES[time]
+  const { t, busy } = o
+  const pal = PALETTES[o.time]
   const PW = SCENE_COLS
   const PH = SCENE_ROWS * 2
   const px = new Pixels(PW, PH)
@@ -138,20 +235,29 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
   const mid = (x: number) => PH * 0.81 + s * (1.6 * Math.sin(x / 10 + 2.4) + 0.4 * Math.sin(x / 4.1))
   const near = (x: number) => PH * 0.9 + s * (1.3 * Math.sin(x / 8 + 0.3) + 0.3 * Math.sin(x / 3.3 + 1))
 
-  const m = ORB
+  const glyphs: Glyph[] = []
+  const m = { ...ORB, y: pal.orbY }
   const onDisc = (x: number, y: number) => (x - m.x) ** 2 + (y - m.y) ** 2 <= m.r ** 2
 
   if (pal.sky) {
-    // the day sky, with the sun's heat glowing into it
-    const [zenith, haze] = pal.sky
+    // a painted sky, with the sun's heat glowing into it
+    const sky = pal.sky
     for (let y = 0; y < PH; y++)
       for (let x = 0; x < PW; x++) {
-        let col = mix(zenith, haze, (y / (PH * 0.72)) ** 1.4)
+        // dawn and dusk keep the sky dark where she flies and bright only low down,
+        // so she's pale against it up high and a silhouette against the glow
+        let col = along(sky, (y / (PH * 0.72)) ** (sky.length > 2 ? 1.6 : 1.4))
         if (pal.glow) {
-          const d = Math.sqrt((x - m.x) ** 2 + (y - m.y) ** 2) - m.r
-          if (d < 5) col = mix(col, pal.glow, 0.55 * (1 - Math.max(0, d) / 5) ** 1.5)
+          const d = Math.sqrt((x - m.x) ** 2 + ((y - m.y) * 1.3) ** 2) - m.r
+          if (d < pal.glowR) col = mix(col, pal.glow, 0.6 * (1 - Math.max(0, d) / pal.glowR) ** 1.5)
         }
         px.set(x, y, col)
+      }
+    if (pal.stars === "faint")
+      for (const [x, row, ch] of FAINT_STARS) {
+        const under = px.get(x, row * 2)!
+        const tw = busy ? 0.5 + 0.5 * Math.sin(t / 300 + x * 1.7) : 0.6
+        glyphs.push({ x, row, ch, fg: mix(under, brand.papyrus, 0.35 + 0.25 * tw) })
       }
   } else {
     for (const [x, y, ch] of STARS) {
@@ -170,6 +276,8 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
       if (pal.maria)
         for (const [mx, my, mr] of [[-3.2, 0.8, 2.1], [2.4, 2.4, 1.9], [-0.8, 4.8, 1.5]] as const)
           if ((x - m.x - mx) ** 2 + (y - m.y - my) ** 2 < mr * mr) col = mix(col, pal.maria, 0.28)
+      // a low sun sinks through streaks of haze
+      if (pal.haze && (y === Math.round(m.y) || y === Math.round(m.y) + 2)) col = mix(col, pal.haze, 0.45)
       px.set(x, y, col)
     }
 
@@ -177,7 +285,8 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
   for (const { x: x0, size } of PYRAMIDS) {
     const base = Math.round(far(x0)) + 1
     for (let j = 0; j <= size; j++)
-      for (let k = -j; k <= j; k++) px.set(x0 + k, base - size + j, k >= 0 ? pal.lit : pal.shade)
+      for (let k = -j; k <= j; k++)
+        px.set(x0 + k, base - size + j, pal.rim && k === j ? pal.rim : k >= 0 ? pal.lit : pal.shade)
   }
 
   // dunes, far to near; the light catches the crests
@@ -189,9 +298,9 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
     })
   }
 
-  // a Medjay campfire on the near dune: flames by night, embers and a wisp of smoke by day
+  // a Medjay campfire on the near dune: flames by night and freshly lit at dusk, embers and a wisp of smoke by dawn and day
   const fy = Math.round(near(FIRE)) - 1
-  if (time === "night") {
+  if (pal.fire === "flame") {
     const flick = busy ? Math.sin(t / 70) * 0.5 + Math.sin(t / 37) * 0.5 : 0.3
     px.set(FIRE, fy, mix(brand.ember, brand.gold, 0.5 + flick * 0.5))
     if (flick > -0.2) px.set(FIRE, fy - 1, mix(brand.ember, hex("#ffdd88"), clamp(flick)))
@@ -206,7 +315,7 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
     for (let k = 1; k <= 4; k++) {
       const sx = FIRE + Math.round(Math.sin(drift + k * 0.9) * 0.8 + k * 0.25)
       const under = px.get(sx, fy - k)
-      if (under) px.set(sx, fy - k, mix(under, hex("#8d8a86"), 0.5 - k * 0.09))
+      if (under) px.set(sx, fy - k, mix(under, pal.smoke, 0.5 - k * 0.09))
     }
   }
 
@@ -228,6 +337,7 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
 
   return {
     px,
+    glyphs,
     orbAt: (x, y) => onDisc(x, y) && y < far(x),
     treeAt: (x, y) => tree.has(`${x},${y}`),
     perch: { x: SNAG_X + p.x - f.x, y: foot + p.y - f.y },

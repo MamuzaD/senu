@@ -194,11 +194,17 @@ function untilNextMinute(sections: Section[]): number {
   return phases.length ? Math.ceil(Math.min(...phases) * 1000) + 30 : 60_000
 }
 
-/** "auto" is day from 07:00 to 19:00 local time, decided once as the popup opens. */
+/**
+ * "auto" follows local time, decided once as the popup opens: dawn from 05:30,
+ * day from 07:00, dusk from 17:30, night from 19:30.
+ */
 export function sceneTime(scene: UsageScene, at = new Date()): SceneTime {
   if (scene !== "auto") return scene
-  const hour = at.getHours()
-  return hour >= 7 && hour < 19 ? "day" : "night"
+  const minutes = at.getHours() * 60 + at.getMinutes()
+  if (minutes >= 5 * 60 + 30 && minutes < 7 * 60) return "dawn"
+  if (minutes >= 7 * 60 && minutes < 17 * 60 + 30) return "day"
+  if (minutes >= 17 * 60 + 30 && minutes < 19 * 60 + 30) return "dusk"
+  return "night"
 }
 
 function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneTime }) {

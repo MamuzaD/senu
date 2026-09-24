@@ -1,8 +1,8 @@
 # ~/.config/senu/config.toml
 
-# The usage popup's scene: "night" (the default), "day", or "auto" for day
-# from 07:00 to 19:00 local time, chosen when the popup opens. SENU_SCENE
-# overrides it.
+# The usage popup's scene: "night" (the default), "dawn", "day", "dusk", or
+# "auto" to follow local time when the popup opens (dawn 05:30–07:00, day
+# 07:00–17:30, dusk 17:30–19:30, night otherwise). SENU_SCENE overrides it.
 [usage]
 scene = "night"
 

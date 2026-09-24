@@ -236,6 +236,29 @@ const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA;
     routeEnd: hex("#1f2335"),
     ringEnd: hex("#2a2e44"),
   },
+  // backlit against the low sun: pale up in the dark sky, a silhouette against the bright
+  dawn: {
+    near: hex("#f4e4cc"),
+    far: hex("#e8cfd8"),
+    wing: hex("#8a6a70"),
+    glint: brand.gold,
+    trail: hex("#ffe0a0"),
+    trailEnd: hex("#6a4f86"),
+    route: hex("#8a6a9a"),
+    routeEnd: hex("#5a4a7a"),
+    ringEnd: hex("#7a5a8a"),
+  },
+  dusk: {
+    near: hex("#f6dcc0"),
+    far: hex("#e6c4d0"),
+    wing: hex("#8a5a5a"),
+    glint: brand.gold,
+    trail: brand.gold,
+    trailEnd: hex("#6a2c62"),
+    route: hex("#8a4a7a"),
+    routeEnd: hex("#5a2a58"),
+    ringEnd: hex("#7a3a6a"),
+  },
   day: {
     near: hex("#5a3822"),
     far: hex("#5e5058"),
@@ -302,8 +325,11 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
   const { t } = plan
   const scene = desert(c, { t, busy: plan.busy, time: plan.time })
   const tone = TONES[plan.time]
-  // over anything bright by night (the moon), over the sun by day, she goes dark
-  const glare = (x: number, y: number, under: RGBA) => (plan.time === "night" ? lum(under) > 0.55 : scene.orbAt(x, y))
+  // she goes dark over anything bright: by day that's only the sun (the whole
+  // sky is bright, so she's dark brown there instead); at night, dawn and dusk
+  // it's the moon or sun and the bright low sky she's backlit against
+  const glare = (x: number, y: number, under: RGBA) =>
+    plan.time === "day" ? scene.orbAt(x, y) : scene.orbAt(x, y) || lum(under) > (plan.time === "night" ? 0.55 : 0.5)
   const perch = { x: scene.perch.x * 2 + 1, y: scene.perch.y * 2 }
   const back = new Quad(SCENE_COLS, SCENE_ROWS)
   const front = new Quad(SCENE_COLS, SCENE_ROWS)
@@ -379,7 +405,9 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
       const ground = top && bot ? mix(top, bot, 0.5) : (top ?? bot)
       if (tb) c.put(x, r, String.fromCharCode(0x2800 + tb), trail.color[r]![x]!, ground ? { bg: ground } : {})
       else if (top && bot) {
-        if (top.equals(bot)) c.put(x, r, "█", top)
+        const star = scene.glyphs.find((g) => g.x === x && g.row === r)
+        if (star) c.put(x, r, star.ch, star.fg, { bg: mix(top, bot, 0.5) })
+        else if (top.equals(bot)) c.put(x, r, "█", top)
         else c.put(x, r, "▀", top, { bg: bot })
       } else if (top) c.put(x, r, "▀", top)
       else if (bot) c.put(x, r, "▄", bot)
