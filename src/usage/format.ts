@@ -26,7 +26,24 @@ export function colorFor(left: number | null): RGBA {
   return colors.good
 }
 
-const EIGHTHS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+/**
+ * Where even spending would leave the bar: the percent of the window still to
+ * run. Null when the window's length or reset is unknown, or it has already reset.
+ */
+export function evenLeft(resetsAt: number | null, windowMs: number | null | undefined): number | null {
+  if (resetsAt == null || !windowMs) return null
+  const remaining = resetsAt - nowSeconds()
+  if (remaining <= 0) return null
+  return Math.min(100, (remaining * 1000 * 100) / windowMs)
+}
+
+/** More than this many points below even means it's being used faster than time passes. */
+export const PACE_SLACK = 5
+
+/** The bar cell that holds the even-pace marker. */
+export const markCell = (even: number) => Math.min(BAR_WIDTH - 1, Math.floor((even * BAR_WIDTH) / 100))
+
+const EIGHTHS =["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
 
 /** A bar of percent left, with an eighth-block on the fill edge for sub-cell precision. */
 export function bar(left: number | null): string {

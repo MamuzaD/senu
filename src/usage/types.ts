@@ -1,8 +1,12 @@
-/** A rate-limit window. `left` is percent remaining; `resetsAt` is epoch seconds. */
+/**
+ * A rate-limit window. `left` is percent remaining; `resetsAt` is epoch seconds;
+ * `windowMs` is the window's length (missing from snapshots cached before it existed).
+ */
 export interface Limit {
   label: string
   left: number | null
   resetsAt: number | null
+  windowMs?: number | null
 }
 
 /** Codex's per-user spend cap, in dollars. */

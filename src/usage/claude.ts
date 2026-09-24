@@ -5,6 +5,7 @@ import { errorSnapshot, nowSeconds, type Limit, type Snapshot } from "./types.ts
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage"
 const TIMEOUT_MS = 5000
+const HOUR_MS = 3_600_000
 
 type TokenResult = { token: string } | { error: string }
 
@@ -45,13 +46,14 @@ function loadToken(configDir: string): TokenResult {
   return { error: "No Claude credentials" }
 }
 
-function toLimit(label: string, window: any): Limit {
+function toLimit(label: string, window: any, windowMs: number): Limit {
   const utilization = window?.utilization
   const resetsAt = window?.resets_at ? Date.parse(window.resets_at) : NaN
   return {
     label,
     left: utilization == null ? null : 100 - utilization,
     resetsAt: Number.isNaN(resetsAt) ? null : Math.floor(resetsAt / 1000),
+    windowMs,
   }
 }
 
@@ -67,7 +69,7 @@ const MAX_MODEL_ROWS = 2
 function modelWeeks(data: any): Limit[] {
   const present = Object.entries(MODEL_WEEKS)
     .filter(([key]) => typeof data?.[key]?.utilization === "number")
-    .map(([key, label]) => toLimit(label, data[key]))
+    .map(([key, label]) => toLimit(label, data[key], 7 * 24 * HOUR_MS))
   const kept = [...present].sort((a, b) => a.left! - b.left!).slice(0, MAX_MODEL_ROWS)
   return present.filter((l) => kept.includes(l))
 }
@@ -92,7 +94,11 @@ export async function fetchClaude(configDir: string): Promise<Snapshot> {
       error: null,
       updatedAt: nowSeconds(),
       planType: null,
-      limits: [toLimit("Session", data.five_hour), toLimit("Week", data.seven_day), ...modelWeeks(data)],
+      limits: [
+        toLimit("Session", data.five_hour, 5 * HOUR_MS),
+        toLimit("Week", data.seven_day, 7 * 24 * HOUR_MS),
+        ...modelWeeks(data),
+      ],
       spend: null,
       banked: null,
     }

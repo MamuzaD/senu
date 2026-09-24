@@ -9,7 +9,17 @@ import { flightDone, leaveAfter, type FlightPlan } from "../ui/senu.ts"
 import { Sky } from "../ui/sky.tsx"
 import { brand, colors, icons, mix, noColor } from "../ui/theme.ts"
 import { getSnapshot, readCache } from "./cache.ts"
-import { BAR_WIDTH, LABEL_WIDTH, bar, colorFor, formatDuration, formatUntil } from "./format.ts"
+import {
+  BAR_WIDTH,
+  LABEL_WIDTH,
+  PACE_SLACK,
+  bar,
+  colorFor,
+  evenLeft,
+  formatDuration,
+  formatUntil,
+  markCell,
+} from "./format.ts"
 import { errorSnapshot, nowSeconds, type Banked, type Snapshot, type Spend } from "./types.ts"
 
 /** Older than this, a section says it's refreshing and watches for a newer snapshot. */
@@ -26,6 +36,8 @@ const VISION_MS = 600
 /** A snapshot that takes longer than this to arrive was fetched, not read from cache. */
 const FETCHED_AFTER_MS = 250
 const DOTS_MS = 400
+/** The even-pace tick on a limit bar, and the behind-pace caret by its percent. */
+const PACE_MARK = brand.papyrus
 
 /** Headers and rows sit on the scene's columns: headers at 1, labels at 3, bars at 11. */
 const HEADER = " "
@@ -47,10 +59,11 @@ function vision(landedAt: number | null) {
   return 1 - tween(landedAt + VISION_HOLD_MS, VISION_MS - VISION_HOLD_MS, easeInOut)
 }
 
-function Row({ label, left, resetsAt, fill, children }: {
+function Row({ label, left, resetsAt, windowMs, fill, children }: {
   label: string
   left: number | null
   resetsAt: number | null
+  windowMs?: number | null
   /** 0..1 through the bar fill */
   fill: number
   children?: ReactNode
@@ -60,11 +73,26 @@ function Row({ label, left, resetsAt, fill, children }: {
   const shown = left == null ? null : left * fill
   const pct = shown == null ? "n/a" : `${Math.round(shown)}%`
   const reset = formatUntil(resetsAt)
+  const even = left == null ? null : evenLeft(resetsAt, windowMs)
+  // behind pace (using faster than time passes) takes the percent's spare leading column
+  const behind = even != null && left! < even - PACE_SLACK
+  const cells = bar(shown)
+  const at = even == null ? null : markCell(even)
   return (
     <Line>
       {INDENT + label.padEnd(LABEL_WIDTH)}
-      <span fg={color}>{bar(shown)}</span>
-      <span fg={color}>{" " + pct.padStart(4)}</span>
+      {at == null ? (
+        <span fg={color}>{cells}</span>
+      ) : (
+        <>
+          <span fg={color}>{cells.slice(0, at)}</span>
+          <span fg={PACE_MARK}>{"│"}</span>
+          <span fg={color}>{cells.slice(at + 1)}</span>
+        </>
+      )}
+      {" ".repeat(5 - pct.length - (behind ? 1 : 0))}
+      {behind ? <span fg={PACE_MARK}>{"▾"}</span> : null}
+      <span fg={color}>{pct}</span>
       {children}
       {reset ? (
         <>
@@ -165,7 +193,9 @@ function ProfileSection({ profile, section, dots, fillFrom, right }: {
       </Line>
       {snapshot && !snapshot.ok ? <Line fg={colors.bad}>{`${INDENT}✗ ${snapshot.error ?? "unknown"}`}</Line> : null}
       {snapshot?.ok
-        ? snapshot.limits.map((l) => <Row key={l.label} label={l.label} left={l.left} resetsAt={l.resetsAt} fill={fill} />)
+        ? snapshot.limits.map((l) => (
+            <Row key={l.label} label={l.label} left={l.left} resetsAt={l.resetsAt} windowMs={l.windowMs} fill={fill} />
+          ))
         : null}
       {snapshot?.ok && snapshot.spend ? <SpendRow spend={snapshot.spend} fill={fill} cols={right + 1} /> : null}
       {snapshot?.ok && snapshot.banked ? <BankedRow banked={snapshot.banked} /> : null}

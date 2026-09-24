@@ -23,6 +23,7 @@ function toLimit(bucket: RpcBucket | null | undefined): Limit | null {
     label: windowLabel(bucket.windowDurationMins),
     left: bucket.usedPercent == null ? null : 100 - bucket.usedPercent,
     resetsAt: bucket.resetsAt ?? null,
+    windowMs: bucket.windowDurationMins == null ? null : bucket.windowDurationMins * 60_000,
   }
 }
 
