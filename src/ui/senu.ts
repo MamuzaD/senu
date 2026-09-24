@@ -297,7 +297,7 @@ function birdAt(t: number, plan: FlightPlan, perch: { x: number; y: number }): B
  * with a rust trail that fades into the sky. Over the moon or the sun she's a
  * dark silhouette either way.
  */
-const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA; trail: RGBA; trailEnd: RGBA; route: RGBA; routeEnd: RGBA; ringEnd: RGBA }> = {
+const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA; trail: RGBA; trailEnd: RGBA; ringEnd: RGBA }> = {
   night: {
     near: brand.papyrus,
     far: brand.dusk,
@@ -305,8 +305,6 @@ const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA;
     glint: brand.gold,
     trail: brand.gold,
     trailEnd: hex("#2f3550"),
-    route: hex("#2a2f48"),
-    routeEnd: hex("#1f2335"),
     ringEnd: hex("#2a2e44"),
   },
   // backlit against the low sun: pale up in the dark sky, a silhouette against the bright
@@ -317,8 +315,6 @@ const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA;
     glint: brand.gold,
     trail: hex("#ffe0a0"),
     trailEnd: hex("#6a4f86"),
-    route: hex("#8a6a9a"),
-    routeEnd: hex("#5a4a7a"),
     ringEnd: hex("#7a5a8a"),
   },
   dusk: {
@@ -328,8 +324,6 @@ const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA;
     glint: brand.gold,
     trail: brand.gold,
     trailEnd: hex("#6a2c62"),
-    route: hex("#8a4a7a"),
-    routeEnd: hex("#5a2a58"),
     ringEnd: hex("#7a3a6a"),
   },
   day: {
@@ -339,8 +333,6 @@ const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA;
     glint: hex("#c0641e"),
     trail: hex("#b8582a"),
     trailEnd: hex("#b9cfdc"),
-    route: hex("#9ab6cc"),
-    routeEnd: hex("#b4cadb"),
     ringEnd: hex("#c4d4de"),
   },
 }
@@ -362,6 +354,14 @@ const QUAD_AT = [
   [0, 1, 4],
   [1, 1, 8],
 ] as const
+
+/** Braille dot bits in the top two rows of a cell. */
+const TOP_DOTS = 0x01 | 0x08 | 0x02 | 0x10
+const popcount = (b: number) => {
+  let n = 0
+  for (; b; b &= b - 1) n++
+  return n
+}
 
 /**
  * Put one cell from four quadrant pixels, choosing the two colours that lose
@@ -415,19 +415,9 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
   const back = new Quad(SCENE_COLS, SCENE_ROWS)
   const front = new Quad(SCENE_COLS, SCENE_ROWS)
   const trail = new Braille(SCENE_COLS, SCENE_ROWS)
-  const route = new Braille(SCENE_COLS, SCENE_ROWS)
-  const routeFade = plan.leave == null ? 1 : 1 - phase(t, plan.leave - 150, 900)
   const bird = birdAt(t, plan, perch)
 
   if (!plan.perched) {
-    // the dotted route of the loop while she's on it
-    const fade = plan.leave == null ? 1 : 1 - phase(t, plan.leave - 150, 900)
-    if (fade > 0)
-      for (let u = 0; u < LOOP.lap; u += 34) {
-        const p = loopAt(u)
-        route.dot(p.x, p.y, mix(tone.routeEnd, tone.route, fade * (0.55 + 0.45 * p.near)), 1)
-      }
-
     // the comet: where she's been, gold at her tail, cooling as she comes in to land
     const cool = plan.leave == null ? 1 : 1 - smooth(phase(t, plan.leave, arcMs(plan.leave)))
     const N = 60
@@ -484,13 +474,21 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
         continue
       }
       const veiled = (top && veils(x, r * 2)) || (bot && veils(x, r * 2 + 1))
-      const own = veiled ? 0 : (trail.bits[r]?.[x] ?? 0)
-      const rb = veiled ? 0 : (route.bits[r]?.[x] ?? 0)
-      const tb = own | rb
+      const tb = veiled ? 0 : (trail.bits[r]?.[x] ?? 0)
       const ground = top && bot ? mix(top, bot, 0.5) : (top ?? bot)
-      // on a painted sky the dotted route is a faint lift of the sky itself, not a fixed grey
-      const fg = own ? trail.color[r]![x]! : plan.time !== "night" && ground ? mix(ground, tone.near, 0.22 * routeFade) : route.color[r]![x]!
-      if (tb) c.put(x, r, String.fromCharCode(0x2800 + tb), fg, ground ? { bg: ground } : {})
+      const fg = tb ? trail.color[r]![x]! : null
+      if (tb && top && bot && dist(top, bot) > 64) {
+        // an outline (a peak, the sun's rim) splits this cell: flattening it would
+        // chip the shape, so the line slips behind it here
+        if (top.equals(bot)) c.put(x, r, "█", top)
+        else c.put(x, r, "▀", top, { bg: bot })
+      } else if (tb && top && bot) {
+        // a cell holds two scene pixels but only one background: give it to the
+        // half the dots leave bare, so the flattened half is the one under them
+        const nt = popcount(tb & TOP_DOTS)
+        const k = nt / popcount(tb)
+        c.put(x, r, String.fromCharCode(0x2800 + tb), fg!, { bg: mix(top, bot, k) })
+      } else if (tb) c.put(x, r, String.fromCharCode(0x2800 + tb), fg!, ground ? { bg: ground } : {})
       else if (top && bot) {
         const star = scene.glyphs.find((g) => g.x === x && g.row === r)
         if (star) c.put(x, r, star.ch, star.fg, { bg: mix(top, bot, 0.5) })

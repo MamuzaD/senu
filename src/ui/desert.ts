@@ -70,8 +70,6 @@ interface Palette {
   maria: RGBA | null
   glow: RGBA | null
   glowR: number
-  /** streaks of haze across a low sun */
-  haze: RGBA | null
   /** pyramid faces: toward the light, away from it, and the rim the light catches */
   lit: RGBA
   shade: RGBA
@@ -96,7 +94,6 @@ const PALETTES: Record<SceneTime, Palette> = {
     maria: hex("#a8977a"),
     glow: null,
     glowR: 0,
-    haze: null,
     lit: hex("#4a4156"),
     shade: hex("#2f2a3d"),
     rim: null,
@@ -118,7 +115,6 @@ const PALETTES: Record<SceneTime, Palette> = {
     maria: null,
     glow: hex("#ffe6c0"),
     glowR: 5,
-    haze: null,
     // the light comes low from the right: soft rose faces, always darker than the sky behind them
     lit: hex("#a8788a"),
     shade: hex("#3c3a66"),
@@ -141,7 +137,6 @@ const PALETTES: Record<SceneTime, Palette> = {
     maria: null,
     glow: hex("#fff3c4"),
     glowR: 5,
-    haze: null,
     lit: hex("#f2d49a"),
     shade: hex("#a47a4e"),
     rim: null,
@@ -164,7 +159,6 @@ const PALETTES: Record<SceneTime, Palette> = {
     maria: null,
     glow: hex("#ff9a5a"),
     glowR: 9,
-    haze: hex("#e0603e"),
     // the pyramids stand as silhouettes, rimmed in orange on the sun's side
     lit: hex("#4a2a3e"),
     shade: hex("#2c1a2e"),
@@ -296,8 +290,6 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
       if (pal.maria)
         for (const [mx, my, mr] of [[-3.2, 0.8, 2.1], [2.4, 2.4, 1.9], [-0.8, 4.8, 1.5]] as const)
           if ((x - m.x - mx) ** 2 + (y - m.y - my) ** 2 < mr * mr) col = mix(col, pal.maria, 0.28)
-      // a low sun sinks through streaks of haze
-      if (pal.haze && (y === Math.round(m.y) || y === Math.round(m.y) + 2)) col = mix(col, pal.haze, 0.45)
       px.set(x, y, col)
     }
 
