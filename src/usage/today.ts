@@ -31,6 +31,16 @@ export interface Today {
   costUsd: number | null
   /** tokens from models the price table doesn't know, left out of the cost */
   unpricedTokens: number
+  /** the same, per model, costliest first (missing in totals cached before it was added) */
+  models?: ModelDay[]
+}
+
+export interface ModelDay {
+  model: string
+  tokens: number
+  cachedTokens: number
+  /** null when the price table doesn't know the model */
+  costUsd: number | null
 }
 
 /** Serve without rescanning while younger than this. */
@@ -497,18 +507,24 @@ export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today
   let cachedTokens = 0
   let cost = 0
   let unpricedTokens = 0
+  const models: ModelDay[] = []
   for (const [model, [uncached, cached, creation, output]] of byModel) {
     const total = uncached + cached + creation + output
+    if (!total) continue
     tokens += total
     cachedTokens += cached
     const rate = rates ? lookupRate(rates, model) : null
     if (!rate) {
       unpricedTokens += total
+      models.push({ model, tokens: total, cachedTokens: cached, costUsd: null })
       continue
     }
-    cost += uncached * rate[0] + cached * rate[2] + creation * rate[3] + output * rate[1]
+    const spent = uncached * rate[0] + cached * rate[2] + creation * rate[3] + output * rate[1]
+    cost += spent
+    models.push({ model, tokens: total, cachedTokens: cached, costUsd: spent })
   }
-  return { day, updatedAt: nowSeconds(), tokens, cachedTokens, costUsd: rates ? cost : null, unpricedTokens }
+  models.sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0) || b.tokens - a.tokens)
+  return { day, updatedAt: nowSeconds(), tokens, cachedTokens, costUsd: rates ? cost : null, unpricedTokens, models }
 }
 
 /* ----------------------------------------------------------------------------
@@ -521,7 +537,8 @@ export function readToday(p: UsageProfile, at = new Date()): Today | null {
   return today && today.day === localDay(at).day ? today : null
 }
 
-export const todayIsFresh = (t: Today | null) => t != null && nowSeconds() - t.updatedAt <= FRESH_TTL_SECONDS
+// totals cached before the per-model breakdown existed are rescanned once
+export const todayIsFresh = (t: Today | null) => t?.models != null && nowSeconds() - t.updatedAt <= FRESH_TTL_SECONDS
 
 export const claimTodayLock = (p: UsageProfile) => claimLockFile(lockPath(p), LOCK_TTL_SECONDS)
 

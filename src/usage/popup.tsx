@@ -19,9 +19,11 @@ import {
   evenLeft,
   formatClock,
   formatDuration,
+  formatTokens,
   formatUntil,
   markCell,
 } from "./format.ts"
+import { readToday, spawnTodayRefresh, todayIsFresh, type Today } from "./today.ts"
 import { errorSnapshot, nowSeconds, type Banked, type Snapshot, type Spend } from "./types.ts"
 
 /** Older than this, a section says it's refreshing and watches for a newer snapshot. */
@@ -40,6 +42,8 @@ const FETCHED_AFTER_MS = 250
 const DOTS_MS = 400
 /** The even-pace tick on a limit bar, and the behind-pace caret by its percent. */
 const PACE_MARK = brand.papyrus
+/** How long the popup watches for a background scan of today's transcripts to land. */
+const TODAY_WATCH_SECONDS = 30
 
 /** Headers and rows sit on the scene's columns: headers at 1, labels at 3, bars at 11. */
 const HEADER = " "
@@ -261,6 +265,82 @@ export function sceneTime(scene: UsageScene, at = new Date()): SceneTime {
   return "night"
 }
 
+/** The model column in the cost view, wide enough for a model's name without its date. */
+const MODEL_WIDTH = 22
+/** At most this many models under a profile's total, costliest first. */
+const TOP_MODELS = 3
+
+const usd = (v: number | null) => (v == null ? "—" : `$${v.toFixed(2)}`)
+/** `claude-opus-4-1-20250805` reads as `claude-opus-4-1`. */
+const modelName = (m: string) => m.replace(/-\d{8}$/, "")
+
+/**
+ * A profile in the cost view: today's estimated spend and tokens, from its own
+ * transcripts, then its costliest models. `+` marks a total that leaves out
+ * models the price table doesn't know.
+ */
+function CostSection({ profile, plan, today, watching, dots, right }: {
+  profile: UsageProfile
+  plan: string | null
+  today: Today | null
+  watching: boolean
+  dots: string
+  right: number
+}) {
+  const codex = profile.kind === "codex"
+  const title = `${codex ? icons.codex : icons.claude} ${codex ? "Codex" : "Claude"} · ${profile.name}`
+  const planText = plan ? ` · ${plan}` : ""
+  const age = today ? nowSeconds() - today.updatedAt : null
+  const fresh = watching
+    ? { text: `scanning${dots}`, fg: colors.warn }
+    : { text: age == null ? "no transcripts today" : `✓ scanned ${age < 60 ? "just now" : `${formatDuration(age)} ago`}`, fg: colors.muted }
+  const pad = Math.max(2, right - HEADER.length - [...title].length - planText.length - [...fresh.text].length)
+  const models = (today?.models ?? []).slice(0, TOP_MODELS)
+  const row = (name: string, cost: string, tokens: number, cached: number) => ({
+    name: (INDENT + name).padEnd(INDENT.length + MODEL_WIDTH).slice(0, INDENT.length + MODEL_WIDTH),
+    cost: cost.padStart(9),
+    tokens: `${formatTokens(tokens)}`.padStart(8) + " tok",
+    cached: tokens ? `  ${Math.round((100 * cached) / tokens)}% cached` : "",
+  })
+  const total = today
+    ? row("Today", `${usd(today.costUsd)}${today.unpricedTokens && today.costUsd != null ? "+" : ""}`, today.tokens, today.cachedTokens)
+    : null
+  return (
+    <box flexDirection="column" flexShrink={0}>
+      <Line>
+        {HEADER}
+        <span fg={codex ? colors.codex : colors.claude} attributes={TextAttributes.BOLD}>{title}</span>
+        {planText ? <span fg={colors.muted}>{planText}</span> : null}
+        {" ".repeat(pad)}
+        <span fg={fresh.fg}>{fresh.text}</span>
+      </Line>
+      {today && !today.tokens ? (
+        <Line fg={colors.dim}>{`${INDENT}nothing yet today`}</Line>
+      ) : total ? (
+        <Line>
+          {total.name}
+          <span fg={brand.papyrus} attributes={TextAttributes.BOLD}>{total.cost}</span>
+          <span fg={colors.fg}>{total.tokens}</span>
+          <span fg={colors.muted}>{total.cached}</span>
+        </Line>
+      ) : null}
+      {models.map((m) => {
+        const r = row(`  ${modelName(m.model)}`, usd(m.costUsd), m.tokens, m.cachedTokens)
+        return (
+          <Line key={m.model}>
+            <span fg={colors.muted}>{r.name}</span>
+            <span fg={colors.muted}>{r.cost}</span>
+            <span fg={colors.dim}>{r.tokens}</span>
+            <span fg={colors.dim}>{r.cached}</span>
+          </Line>
+        )
+      })}
+    </box>
+  )
+}
+
+type View = "limits" | "cost"
+
 function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneTime }) {
   const renderer = useRenderer()
   const { width } = useTerminalDimensions()
@@ -288,6 +368,30 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
         landedAt: t - openedAt > FETCHED_AFTER_MS ? t : null,
       })
     })
+  }, [])
+
+  // today's spend: cached totals on the first frame, a detached rescan if they're stale, watched quietly
+  const [todays, setTodays] = useState(() => profiles.map((p) => readToday(p)))
+  const [watchingToday, setWatchingToday] = useState(() => profiles.map(() => false))
+  useEffect(() => {
+    const watching = profiles.map((_, i) => !todayIsFresh(todays[i] ?? null))
+    if (!watching.some(Boolean)) return
+    spawnTodayRefresh(profiles.filter((_, i) => watching[i]))
+    setWatchingToday([...watching])
+    const since = todays.map((t) => t?.updatedAt ?? 0)
+    const started = Date.now()
+    const id = setInterval(() => {
+      const landed = profiles.map((p, i) => {
+        const t = watching[i] ? readToday(p) : null
+        return t && t.updatedAt > since[i]! ? t : null
+      })
+      if (landed.some(Boolean)) setTodays((prev) => prev.map((t, i) => landed[i] ?? t))
+      landed.forEach((t, i) => t && (watching[i] = false))
+      if (Date.now() - started >= TODAY_WATCH_SECONDS * 1000) watching.fill(false)
+      setWatchingToday([...watching])
+      if (!watching.some(Boolean)) clearInterval(id)
+    }, POLL_MS)
+    return () => clearInterval(id)
   }, [])
 
   const refreshing = sections.some((s) => s.refreshing)
@@ -319,7 +423,14 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
     })
   }, [tick])
 
-  useKeyboard(() => renderer.destroy())
+  const [view, setView] = useState<View>("limits")
+  // c or t: cost and tokens; l: back to the limits; tab flips; anything else closes
+  useKeyboard((key) => {
+    if (key.name === "c" || key.name === "t") setView("cost")
+    else if (key.name === "l") setView("limits")
+    else if (key.name === "tab") setView((v) => (v === "limits" ? "cost" : "limits"))
+    else renderer.destroy()
+  })
 
   const t = now()
   const cols = sceneCols(width)
@@ -346,21 +457,33 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   const dots = reducedMotion ? "..." : ".".repeat((Math.floor((t - openedAt) / DOTS_MS) % 3) + 1)
   const right = Math.min(cols, width) - 1
   const note = busy ? "senu is circling" : flightDone(plan) ? "senu keeps watch" : "senu comes in to land"
-  const hint = "press any key to close"
+  const hint = view === "limits" ? "c cost · any other key closes" : "l limits · any other key closes"
 
   return (
     <box flexDirection="column" gap={1}>
       {noColor ? null : <Sky plan={plan} width={width} />}
-      {profiles.map((profile, i) => (
-        <ProfileSection
-          key={`${profile.kind}:${profile.name}`}
-          profile={profile}
-          section={sections[i]!}
-          dots={dots}
-          fillFrom={fillFrom[i]!}
-          right={right}
-        />
-      ))}
+      {profiles.map((profile, i) =>
+        view === "limits" ? (
+          <ProfileSection
+            key={`${profile.kind}:${profile.name}`}
+            profile={profile}
+            section={sections[i]!}
+            dots={dots}
+            fillFrom={fillFrom[i]!}
+            right={right}
+          />
+        ) : (
+          <CostSection
+            key={`${profile.kind}:${profile.name}`}
+            profile={profile}
+            plan={sections[i]!.snapshot?.planType ?? null}
+            today={todays[i] ?? null}
+            watching={watchingToday[i]!}
+            dots={dots}
+            right={right}
+          />
+        ),
+      )}
       <Line>
         {HEADER}
         <span fg={colors.muted} attributes={TextAttributes.DIM}>{hint}</span>
