@@ -61,22 +61,25 @@ function vision(landedAt: number | null) {
   return 1 - tween(landedAt + VISION_HOLD_MS, VISION_MS - VISION_HOLD_MS, easeInOut)
 }
 
-/** The dimmed clock after a countdown, when a row `used` columns long still fits in `cols` with it. */
-function Clock({ at, used, cols }: { at: number | null; used: number; cols: number }) {
+/**
+ * The dimmed clock after a countdown, shown only when a row `used` columns
+ * long still ends by `right`, the column the freshness ends at.
+ */
+function Clock({ at, used, right }: { at: number | null; used: number; right: number }) {
   const clock = formatClock(at)
-  if (!clock || used + clockSuffix(clock).length > cols) return null
+  if (!clock || used + clockSuffix(clock).length > right) return null
   return <span fg={colors.dim}>{clockSuffix(clock)}</span>
 }
 
-function Row({ label, left, resetsAt, windowMs, fill, cols, children }: {
+function Row({ label, left, resetsAt, windowMs, fill, right, children }: {
   label: string
   left: number | null
   resetsAt: number | null
   windowMs?: number | null
   /** 0..1 through the bar fill */
   fill: number
-  /** the columns the row has to fit in */
-  cols: number
+  /** the column the freshness ends at */
+  right: number
   children?: ReactNode
 }) {
   // the colour always comes from the real value, so a bar never changes state as it fills
@@ -110,7 +113,7 @@ function Row({ label, left, resetsAt, windowMs, fill, cols, children }: {
         <>
           <span fg={colors.muted}>{"  resets "}</span>
           <span fg={brand.papyrus}>{reset}</span>
-          <Clock at={resetsAt} used={used} cols={cols} />
+          <Clock at={resetsAt} used={used} right={right} />
         </>
       ) : null}
     </Line>
@@ -134,12 +137,12 @@ function SpendRow({ spend, fill, cols }: { spend: Spend; fill: number; cols: num
       <span fg={colors.muted}>{`/$${spend.limit.toFixed(0)}`}</span>
       {spend.reached ? <span fg={colors.bad}> cap reached</span> : null}
       {reset ? <span fg={brand.papyrus}>{gap + reset}</span> : null}
-      {reset ? <Clock at={spend.resetsAt} used={used + gap.length + reset.length} cols={cols} /> : null}
+      {reset ? <Clock at={spend.resetsAt} used={used + gap.length + reset.length} right={cols - 1} /> : null}
     </Line>
   )
 }
 
-function BankedRow({ banked, cols }: { banked: Banked; cols: number }) {
+function BankedRow({ banked, right }: { banked: Banked; right: number }) {
   const label = INDENT + "Banked".padEnd(LABEL_WIDTH)
   if (banked.available === 0) {
     return (
@@ -168,7 +171,7 @@ function BankedRow({ banked, cols }: { banked: Banked; cols: number }) {
         <>
           <span fg={colors.muted}>{"  expires "}</span>
           <span fg={brand.papyrus}>{expires}</span>
-          <Clock at={soonest} used={used} cols={cols} />
+          <Clock at={soonest} used={used} right={right} />
         </>
       ) : null}
       {tail ? <span fg={colors.dim}>{tail}</span> : null}
@@ -215,11 +218,11 @@ function ProfileSection({ profile, section, dots, fillFrom, right }: {
       {snapshot && !snapshot.ok ? <Line fg={colors.bad}>{`${INDENT}✗ ${snapshot.error ?? "unknown"}`}</Line> : null}
       {snapshot?.ok
         ? snapshot.limits.map((l) => (
-            <Row key={l.label} label={l.label} left={l.left} resetsAt={l.resetsAt} windowMs={l.windowMs} fill={fill} cols={right + 1} />
+            <Row key={l.label} label={l.label} left={l.left} resetsAt={l.resetsAt} windowMs={l.windowMs} fill={fill} right={right} />
           ))
         : null}
       {snapshot?.ok && snapshot.spend ? <SpendRow spend={snapshot.spend} fill={fill} cols={right + 1} /> : null}
-      {snapshot?.ok && snapshot.banked ? <BankedRow banked={snapshot.banked} cols={right + 1} /> : null}
+      {snapshot?.ok && snapshot.banked ? <BankedRow banked={snapshot.banked} right={right} /> : null}
     </box>
   )
 }
