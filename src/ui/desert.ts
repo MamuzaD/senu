@@ -1,4 +1,4 @@
-import type { RGBA } from "@opentui/core"
+import { RGBA } from "@opentui/core"
 import { Pixels, type Canvas } from "./canvas.tsx"
 import { clamp } from "./motion.ts"
 import { brand, hex, mix } from "./theme.ts"
@@ -43,7 +43,7 @@ const STARS: [number, number, string][] = [
  * a thin limb, `f` its foot on the near dune, `p` where her talons go.
  */
 const SNAG = [
-  ".....p.:...",
+  ".....p#:...",
   ".....+#:...",
   ".::..+#....",
   "..::.+#..:.",
@@ -111,31 +111,31 @@ const PALETTES: Record<SceneTime, Palette> = {
     smoke: hex("#8d8a86"),
   },
   dawn: {
-    // deep indigo, through rose and peach, to a pale gold horizon
-    sky: [hex("#252a58"), hex("#6a4f86"), hex("#d98a8e"), hex("#f6c79a"), hex("#f8e2ae")],
-    orbY: 12,
-    orb: [hex("#ffc98a"), hex("#fff2cc")],
+    // cool and pastel: slate-blue overhead, a thin rose band, pale gold only at the sun; mist in the far dunes
+    sky: [hex("#1e2850"), hex("#3e4a7c"), hex("#8c7fa6"), hex("#e3a9a2"), hex("#fbe6bc")],
+    orbY: 14,
+    orb: [hex("#ffd9a6"), hex("#fff7e2")],
     maria: null,
-    glow: hex("#ffe0a8"),
-    glowR: 6,
+    glow: hex("#ffe6c0"),
+    glowR: 5,
     haze: null,
-    // the light comes low from the right: pink-gold faces, long cool shadows
-    lit: hex("#d9a08a"),
-    shade: hex("#4a4670"),
-    rim: hex("#ffd2a0"),
+    // the light comes low from the right: soft rose faces, always darker than the sky behind them
+    lit: hex("#a8788a"),
+    shade: hex("#3c3a66"),
+    rim: hex("#ffdcb0"),
     dunes: [
-      [hex("#a8849a"), hex("#6a5a80")],
-      [hex("#c89078"), hex("#6e5670")],
-      [hex("#e0a67e"), hex("#7a5a66")],
+      [hex("#cfb0b4"), hex("#9a88a4")],
+      [hex("#c49080"), hex("#6a5674")],
+      [hex("#dca47e"), hex("#735462")],
     ],
-    bark: { "#": hex("#3a2c3c"), "+": hex("#b8807a"), ":": hex("#5e4658"), f: hex("#3a2c3c") },
+    bark: { "#": hex("#33263a"), "+": hex("#6e4c5e"), ":": hex("#4c3a4e"), f: hex("#33263a") },
     stars: "faint",
     fire: "embers",
-    smoke: hex("#9a92a6"),
+    smoke: hex("#c8c0d4"),
   },
   day: {
     // a hot, washed-out blue that goes to white haze at the horizon
-    sky: [hex("#7fb0d6"), hex("#e6e2d2")],
+    sky: [hex("#6c9ec9"), hex("#dcd9cb")],
     orbY: 8,
     orb: [hex("#ffe9a8"), hex("#fffbea")],
     maria: null,
@@ -151,24 +151,24 @@ const PALETTES: Record<SceneTime, Palette> = {
       [hex("#e2b878"), hex("#c49660")],
       [hex("#f0cc8c"), hex("#c89a62")],
     ],
-    bark: { "#": hex("#5a4232"), "+": hex("#a07e5a"), ":": hex("#7a5e48"), f: hex("#5a4232") },
+    bark: { "#": hex("#76624e"), "+": hex("#c4ac8c"), ":": hex("#96806a"), f: hex("#76624e") },
     stars: null,
     fire: "embers",
-    smoke: hex("#8d8a86"),
+    smoke: hex("#f4f0e8"),
   },
   dusk: {
     // purple overhead, through magenta, to a hot orange horizon
-    sky: [hex("#2e1f4a"), hex("#6a2c62"), hex("#c24a64"), hex("#f0803e"), hex("#f9b25a")],
+    sky: [hex("#2e1f4a"), hex("#6a2c62"), hex("#c24a64"), hex("#f0803e"), hex("#f4b070")],
     orbY: 12,
     orb: [hex("#ff8a3a"), hex("#ffd27a")],
     maria: null,
-    glow: hex("#ffa24a"),
+    glow: hex("#ff9a5a"),
     glowR: 9,
     haze: hex("#e0603e"),
     // the pyramids stand as silhouettes, rimmed in orange on the sun's side
     lit: hex("#4a2a3e"),
     shade: hex("#2c1a2e"),
-    rim: hex("#ff9a4a"),
+    rim: hex("#ffb070"),
     dunes: [
       [hex("#7a3a52"), hex("#3e2440")],
       [hex("#8a4a4a"), hex("#3a2234")],
@@ -185,6 +185,14 @@ const PALETTES: Record<SceneTime, Palette> = {
 const FAINT_STARS: [number, number, string][] = [
   [6, 0, "·"], [21, 1, "·"], [38, 0, "⋆"], [47, 1, "·"], [64, 0, "·"],
 ]
+
+/** Light added over a colour (screen blend), so a warm glow over indigo brightens it instead of greying it. */
+function screen(a: RGBA, b: RGBA, k: number): RGBA {
+  const [ar, ag, ab] = a.toInts()
+  const [br, bg, bb] = b.toInts()
+  const sc = (x: number, y: number) => Math.round(x + (255 - x) * (y / 255) * k)
+  return RGBA.fromInts(sc(ar, br), sc(ag, bg), sc(ab, bb))
+}
 
 /** A colour at `k` (0..1) along evenly spaced stops. */
 function along(stops: RGBA[], k: number): RGBA {
@@ -249,7 +257,7 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
         let col = along(sky, (y / (PH * 0.72)) ** (sky.length > 2 ? 1.6 : 1.4))
         if (pal.glow) {
           const d = Math.sqrt((x - m.x) ** 2 + ((y - m.y) * 1.3) ** 2) - m.r
-          if (d < pal.glowR) col = mix(col, pal.glow, 0.6 * (1 - Math.max(0, d) / pal.glowR) ** 1.5)
+          if (d < pal.glowR) col = screen(col, pal.glow, 0.6 * (1 - Math.max(0, d) / pal.glowR) ** 1.5)
         }
         px.set(x, y, col)
       }
@@ -312,10 +320,11 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
     px.set(FIRE - 1, fy, hex("#7a5a48"))
     px.set(FIRE + 1, fy, hex("#7a5a48"))
     const drift = busy ? t / 900 : 0
-    for (let k = 1; k <= 4; k++) {
-      const sx = FIRE + Math.round(Math.sin(drift + k * 0.9) * 0.8 + k * 0.25)
+    // a short wisp that leans off the fire and breaks up, so it never reads as a straight stripe
+    for (let k = 1; k <= 3; k++) {
+      const sx = FIRE + Math.round(Math.sin(drift + k * 1.9) * 0.9 - k * 0.4)
       const under = px.get(sx, fy - k)
-      if (under) px.set(sx, fy - k, mix(under, pal.smoke, 0.5 - k * 0.09))
+      if (under) px.set(sx, fy - k, mix(under, pal.smoke, 0.36 - k * 0.09))
     }
   }
 

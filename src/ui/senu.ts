@@ -328,12 +328,22 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
   // she goes dark over anything bright: by day that's only the sun (the whole
   // sky is bright, so she's dark brown there instead); at night, dawn and dusk
   // it's the moon or sun and the bright low sky she's backlit against
-  const glare = (x: number, y: number, under: RGBA) =>
-    plan.time === "day" ? scene.orbAt(x, y) : scene.orbAt(x, y) || lum(under) > (plan.time === "night" ? 0.55 : 0.5)
+  const bird0 = birdAt(t, plan, { x: scene.perch.x * 2 + 1, y: scene.perch.y * 2 })
+  // backlit or not is decided for her whole body (the average sky under her), so she never splits in two in the glow
+  let sum = 0
+  let n = 0
+  for (const [dx, dy] of bird0.pixels) {
+    const u = scene.px.get(Math.floor((bird0.x + dx) / 2), Math.round(bird0.y / 2 + dy))
+    if (u) (sum += lum(u)), n++
+  }
+  const backlit = plan.time !== "day" && n > 0 && sum / n > (plan.time === "night" ? 0.55 : 0.5)
+  const glare = (x: number, y: number, _under: RGBA) => scene.orbAt(x, y) || backlit
   const perch = { x: scene.perch.x * 2 + 1, y: scene.perch.y * 2 }
   const back = new Quad(SCENE_COLS, SCENE_ROWS)
   const front = new Quad(SCENE_COLS, SCENE_ROWS)
   const trail = new Braille(SCENE_COLS, SCENE_ROWS)
+  const route = new Braille(SCENE_COLS, SCENE_ROWS)
+  const routeFade = plan.leave == null ? 1 : 1 - phase(t, plan.leave - 150, 900)
   const bird = birdAt(t, plan, perch)
 
   if (!plan.perched) {
@@ -342,7 +352,7 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
     if (fade > 0)
       for (let u = 0; u < LOOP.lap; u += 34) {
         const p = loopAt(u)
-        trail.dot(p.x, p.y, mix(tone.routeEnd, tone.route, fade * (0.55 + 0.45 * p.near)), 1)
+        route.dot(p.x, p.y, mix(tone.routeEnd, tone.route, fade * (0.55 + 0.45 * p.near)), 1)
       }
 
     // the comet: where she's been, gold at her tail, cooling as she comes in to land
@@ -401,9 +411,13 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
         continue
       }
       const veiled = (top && veils(x, r * 2)) || (bot && veils(x, r * 2 + 1))
-      const tb = veiled ? 0 : (trail.bits[r]?.[x] ?? 0)
+      const own = veiled ? 0 : (trail.bits[r]?.[x] ?? 0)
+      const rb = veiled ? 0 : (route.bits[r]?.[x] ?? 0)
+      const tb = own | rb
       const ground = top && bot ? mix(top, bot, 0.5) : (top ?? bot)
-      if (tb) c.put(x, r, String.fromCharCode(0x2800 + tb), trail.color[r]![x]!, ground ? { bg: ground } : {})
+      // on a painted sky the dotted route is a faint lift of the sky itself, not a fixed grey
+      const fg = own ? trail.color[r]![x]! : plan.time !== "night" && ground ? mix(ground, tone.near, 0.22 * routeFade) : route.color[r]![x]!
+      if (tb) c.put(x, r, String.fromCharCode(0x2800 + tb), fg, ground ? { bg: ground } : {})
       else if (top && bot) {
         const star = scene.glyphs.find((g) => g.x === x && g.row === r)
         if (star) c.put(x, r, star.ch, star.fg, { bg: mix(top, bot, 0.5) })
