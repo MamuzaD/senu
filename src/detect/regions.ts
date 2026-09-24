@@ -15,6 +15,10 @@ export interface DetectionInput {
   oscProgress?: string
 }
 
+/** Rust's `str::trim()`: Unicode White_Space, which (unlike JS `trim`) includes U+0085 and leaves out U+FEFF. */
+const trim = (s: string) => s.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "")
+const trimStart = (s: string) => s.replace(/^\p{White_Space}+/u, "")
+
 const FIXED = new Set([
   "whole_recent",
   "after_last_prompt_marker",
@@ -30,15 +34,26 @@ const FIXED = new Set([
   "osc_progress",
 ])
 
-/** Rust's `str::lines()`: split on `\n`, drop one `\r` per line, no empty line after a final `\n`. */
+/**
+ * Rust's `str::lines()`: split on `\n` or `\r\n`, no empty line after a final
+ * newline. A bare `\r` isn't a line ending, so one at the very end stays.
+ */
 export function lines(content: string): string[] {
   if (!content) return []
   const out = content.split("\n")
-  if (out[out.length - 1] === "") out.pop()
-  return out.map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l))
+  const last = out.pop()!
+  const ls = out.map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l))
+  if (last !== "") ls.push(last)
+  return ls
 }
 
-/** Offset where line `index` starts, counting each line plus its newline, clamped to the text. */
+/**
+ * Offset where line `index` starts, counting each line plus its newline, clamped
+ * to the text. Like herdr, a `\r\n` line counts one short. herdr counts bytes and
+ * this counts UTF-16 units, so the two land on different characters once CRLF and
+ * non-ASCII text mix (herdr can even panic mid-character). tmux captures never
+ * contain `\r`, so this doesn't arise here.
+ */
 function lineStart(content: string, ls: string[], index: number): number {
   let offset = 0
   for (let i = 0; i < Math.min(index, ls.length); i++) offset += ls[i]!.length + 1
@@ -65,12 +80,12 @@ function topCount(spec: string): number | null {
 }
 
 export function isValidRegion(spec: string): boolean {
-  const s = spec.trim()
+  const s = trim(spec)
   return FIXED.has(s) || count(s, "bottom_lines") !== null || count(s, "bottom_non_empty_lines") !== null || topCount(s) !== null
 }
 
 export function region(input: DetectionInput, spec: string): string {
-  const s = spec.trim()
+  const s = trim(spec)
   if (s === "osc_title") return input.oscTitle
   if (s === "osc_progress") return input.oscProgress ?? ""
 
@@ -116,7 +131,7 @@ function bottomNonEmptyLines(c: string, n: number): string {
   const ls = lines(c)
   let start = -1
   for (let i = ls.length - 1, seen = 0; i >= 0 && seen < n; i--) {
-    if (ls[i]!.trim()) {
+    if (trim(ls[i]!)) {
       start = i
       seen++
     }
@@ -128,7 +143,7 @@ function topNonEmptyLines(c: string, n: number): string {
   const ls = lines(c)
   let end = -1
   for (let i = 0, seen = 0; i < ls.length && seen < n; i++) {
-    if (ls[i]!.trim()) {
+    if (trim(ls[i]!)) {
       end = i
       seen++
     }
@@ -187,12 +202,12 @@ function afterCurrentPromptBlockMarker(c: string): string {
  * label (Claude titles some rules). Box corners like `╭` don't count.
  */
 export function isHorizontalRule(line: string): boolean {
-  const t = line.trim()
+  const t = trim(line)
   if (!t) return false
   let run = 0
   while (t[run] === "─") run++
   if (run === 0) return false
-  return !t.slice(run).trimStart() || run >= 3
+  return !trimStart(t.slice(run)) || run >= 3
 }
 
 /** The prompt box is the last two rules; its top is the second-to-last rule on screen. */
@@ -232,6 +247,6 @@ function afterLastHorizontalRule(c: string): string {
 
 function lastNonEmptyLine(c: string): string {
   const ls = lines(c)
-  const i = lastIndexWhere(ls, (l) => !!l.trim())
+  const i = lastIndexWhere(ls, (l) => !!trim(l))
   return i < 0 ? "" : ls[i]!
 }

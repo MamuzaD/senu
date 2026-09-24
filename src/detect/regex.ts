@@ -5,24 +5,30 @@
  *
  * What changes:
  * - `\x{HHHH}` becomes `\u{HHHH}`; `\pL` becomes `\p{L}`.
- * - `\A` and `\z` (start and end of text) become lookarounds, so they keep
- *   meaning "of text" even under `(?m)`, where JS `^`/`$` would mean "of line".
- * - Leading `(?ims)` groups become JS flags.
+ * - `\A` and `\z` (start and end of text) become lookarounds.
+ * - Leading `(?i)` and `(?s)` become JS flags. `(?m)` instead rewrites `^` and
+ *   `$` to lookarounds on `\n`: JS's `m` also breaks lines at `\r`, U+2028 and
+ *   U+2029, Rust's only at `\n`.
  * - `.` becomes `[^\n]` without `(?s)`: Rust's dot only stops at `\n`, JS's
  *   also stops at `\r`, U+2028 and U+2029.
- * - `\d` / `\D` become `\p{Nd}` / `\P{Nd}`: Rust's classes are Unicode by default.
+ * - `\d`, `\s`, `\w` and `\b` (and their negations) become Unicode property
+ *   classes: Rust's are Unicode by default, JS's `\w`/`\b` are ASCII and its
+ *   `\s` also matches U+FEFF.
  * - `(?P<name>` becomes `(?<name>`.
  * - Escaped punctuation JS rejects under `u` (`\#`, `\&`, `\~`, `\-` outside a
  *   class) becomes the literal character.
  *
- * `\w`, `\s` and `\b` stay as they are: `\s` is Unicode in both, and `\w`/`\b`
- * are ASCII in JS. No shipped manifest leans on a non-ASCII word boundary.
  * Nested classes, class set operations, mid-pattern flag groups, other flags,
  * lookaround and backreferences throw (the last two aren't Rust syntax, so herdr
  * rejects them too), so such a manifest is rejected rather than silently misread.
  */
 
 const FLAG_GROUP = /^\(\?([a-zA-Z]+)\)/
+
+/** Rust's Unicode `\w`, as class members. */
+const WORD = "\\p{Alphabetic}\\p{M}\\p{Nd}\\p{Pc}\\p{Join_Control}"
+const WORD_EDGE = `(?:(?<=[${WORD}])(?![${WORD}])|(?<![${WORD}])(?=[${WORD}]))`
+const NOT_WORD_EDGE = `(?:(?<=[${WORD}])(?=[${WORD}])|(?<![${WORD}])(?![${WORD}]))`
 
 /** Characters JS accepts after a backslash under the `u` flag, outside a class. */
 const JS_SYNTAX = new Set("^$\\.*+?()[]{}|/")
@@ -43,6 +49,7 @@ export function translateRustRegex(pattern: string): TranslatedRegex {
     rest = rest.slice(m[0].length)
   }
   const dotAll = flags.has("s")
+  const multiline = flags.has("m")
 
   let out = ""
   let inClass = false
@@ -69,6 +76,15 @@ export function translateRustRegex(pattern: string): TranslatedRegex {
         out += "\\p{Nd}"
       } else if (n === "D") {
         out += "\\P{Nd}"
+      } else if (n === "s") {
+        out += "\\p{White_Space}"
+      } else if (n === "S") {
+        out += "\\P{White_Space}"
+      } else if (n === "w") {
+        out += inClass ? WORD : `[${WORD}]`
+      } else if (n === "W" || n === "b" || n === "B") {
+        if (inClass) throw new Error(`"\\${n}" inside a character class is not supported: ${JSON.stringify(pattern)}`)
+        out += n === "W" ? `[^${WORD}]` : n === "b" ? WORD_EDGE : NOT_WORD_EDGE
       } else if (/[0-9<>]/.test(n)) {
         // backreferences aren't Rust syntax; Rust's `\<` / `\>` word edges have no JS spelling
         throw new Error(`unsupported escape "\\${n}" in ${JSON.stringify(pattern)}`)
@@ -117,9 +133,14 @@ export function translateRustRegex(pattern: string): TranslatedRegex {
       }
     }
 
-    out += c === "." && !dotAll ? "[^\\n]" : c
+    if (c === "." && !dotAll) out += "[^\\n]"
+    else if (c === "^" && multiline) out += "(?<![^\\n])"
+    else if (c === "$" && multiline) out += "(?![^\\n])"
+    else out += c
   }
 
+  // `(?m)` is spelled out above: JS's `m` would also break lines at \r, U+2028 and U+2029
+  flags.delete("m")
   return { source: out, flags: [...flags, "u"].sort().join("") }
 }
 

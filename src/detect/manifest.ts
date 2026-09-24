@@ -99,6 +99,28 @@ type Table = Record<string, unknown>
 
 const isTable = (v: unknown): v is Table => typeof v === "object" && v !== null && !Array.isArray(v)
 
+const I32_MIN = -(2 ** 31)
+const I32_MAX = 2 ** 31 - 1
+const U32_MAX = 2 ** 32 - 1
+
+/**
+ * An integer in range, as serde checks i32 and u32. TOML's `1.0` parses to the
+ * same number as `1`, so a whole float slips through here where herdr rejects it.
+ */
+const isInt = (v: unknown, min: number, max: number): v is number => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max
+
+/** herdr's ManifestVersion: a string of dot-separated digits, each segment fitting a u64. */
+function parseVersion(v: unknown): string {
+  if (typeof v !== "string") throw new ManifestError("manifest: version must be a string")
+  const t = v.trim()
+  if (!t) throw new ManifestError("manifest: version must not be empty")
+  for (const seg of t.split(".")) {
+    if (!/^[0-9]+$/.test(seg)) throw new ManifestError(`manifest: version ${JSON.stringify(t)} must be dotted numeric`)
+    if (BigInt(seg) > 2n ** 64n - 1n) throw new ManifestError(`manifest: version ${JSON.stringify(t)} contains an oversized segment`)
+  }
+  return t
+}
+
 function denyUnknown(t: Table, allowed: Set<string>, where: string) {
   for (const k of Object.keys(t)) if (!allowed.has(k)) throw new ManifestError(`${where}: unknown field "${k}"`)
 }
@@ -189,9 +211,11 @@ export function parseManifest(text: string): Manifest {
   denyUnknown(data, MANIFEST_KEYS, "manifest")
 
   if (typeof data.id !== "string") throw new ManifestError("manifest: id must be a string")
+  const version = data.version === undefined ? null : parseVersion(data.version)
+  if (data.updated_at !== undefined && typeof data.updated_at !== "string") throw new ManifestError("manifest: updated_at must be a string")
   const minEngine = data.min_engine_version
-  if (minEngine !== undefined && (typeof minEngine !== "number" || !Number.isInteger(minEngine) || minEngine < 0)) {
-    throw new ManifestError("manifest: min_engine_version must be a non-negative integer")
+  if (minEngine !== undefined && !isInt(minEngine, 0, U32_MAX)) {
+    throw new ManifestError("manifest: min_engine_version must be an integer from 0 to 2^32-1")
   }
   const rawRules = data.rules ?? []
   if (!Array.isArray(rawRules) || !rawRules.every(isTable)) throw new ManifestError("manifest: rules must be [[rules]] tables")
@@ -209,7 +233,7 @@ export function parseManifest(text: string): Manifest {
     const state = r.state === undefined ? "unknown" : r.state
     if (typeof state !== "string" || !STATES.includes(state as AgentState)) throw new ManifestError(`${where}: invalid state`)
     const priority = r.priority ?? 0
-    if (typeof priority !== "number" || !Number.isInteger(priority)) throw new ManifestError(`${where}: priority must be an integer`)
+    if (!isInt(priority, I32_MIN, I32_MAX)) throw new ManifestError(`${where}: priority must be a 32-bit integer`)
     const region = r.region ?? "whole_recent"
     if (typeof region !== "string" || !isValidRegion(region)) throw new ManifestError(`${where} uses invalid region: ${region}`)
     if (region.trim().startsWith("top_non_empty_lines(") && typeof minEngine === "number" && minEngine < TOP_NON_EMPTY_LINES_ENGINE_VERSION) {
@@ -229,8 +253,8 @@ export function parseManifest(text: string): Manifest {
       raw: r,
     }
     if (rule.skipStateUpdate) {
-      // a rule that says "leave the state alone" must not also claim a state
-      if (rule.state !== "unknown") throw new ManifestError(`${where} uses skip_state_update without state = "unknown"`)
+      // a rule that says "leave the state alone" must say state = "unknown", and nothing visible
+      if (r.state !== "unknown") throw new ManifestError(`${where} uses skip_state_update without state = "unknown"`)
       if (rule.visibleIdle || rule.visibleBlocker || rule.visibleWorking) {
         throw new ManifestError(`${where} uses skip_state_update with visible state evidence`)
       }
@@ -240,15 +264,14 @@ export function parseManifest(text: string): Manifest {
 
   return {
     id: data.id,
-    version: data.version === undefined ? null : String(data.version),
+    version,
     minEngineVersion: typeof minEngine === "number" ? minEngine : null,
     aliases: strings(data.aliases, "manifest.aliases"),
     rules,
   }
 }
 
-const matchesAgent = (m: Manifest, agent: Agent) =>
-  m.id === agent || m.aliases.includes(agent) || (agent === "claude" && m.id === "claude-code")
+const matchesAgent = (m: Manifest, agent: Agent) => [m.id, ...m.aliases].some((name) => parseAgent(name) === agent)
 
 /**
  * The override if it's usable, else the bundled manifest with a warning saying
@@ -288,8 +311,10 @@ export function reloadManifests() {
   cache.clear()
 }
 
+/** herdr's `parse_agent_label`: a name, path or alias, any case, `.exe`/`.js`-style suffix allowed. */
 export function parseAgent(name: string): Agent | null {
-  const n = name.trim().toLowerCase()
+  const base = name.trim().split(/[/\\]/).filter(Boolean).pop() ?? ""
+  const n = base.toLowerCase().replace(/\.(exe|cmd|bat|ps1|js)$/, "")
   if (n === "claude" || n === "claude-code") return "claude"
   if (n === "codex") return "codex"
   return null

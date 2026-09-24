@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { isHorizontalRule, isValidRegion, region } from "../../src/detect/regions.ts"
+import { isHorizontalRule, isValidRegion, lines, region } from "../../src/detect/regions.ts"
 
 const at = (screen: string, spec: string) => region({ screen, oscTitle: "title", oscProgress: "4;0" }, spec)
 
@@ -45,6 +45,19 @@ describe("region", () => {
 
   test("after_last_prompt_marker is the whole screen when there's no marker", () => {
     expect(at("no prompt\n", "after_last_prompt_marker")).toBe("no prompt\n")
+  })
+
+  test("lines split like Rust's str::lines(): \\r\\n is a line ending, a bare final \\r isn't", () => {
+    expect(lines("a\r\nb\n")).toEqual(["a", "b"])
+    expect(lines("a\nb\r")).toEqual(["a", "b\r"])
+    expect(lines("a\rb\n")).toEqual(["a\rb"])
+    expect(lines("\n")).toEqual([""])
+    expect(lines("")).toEqual([])
+  })
+
+  test("blank means Rust's whitespace: U+0085 is blank, U+FEFF isn't", () => {
+    expect(at("x\n\u0085\n", "bottom_non_empty_lines(1)")).toBe("x\n\u0085\n")
+    expect(at("x\n﻿\n", "bottom_non_empty_lines(1)")).toBe("﻿\n")
   })
 
   test("the codex prompt marker must be at column zero", () => {

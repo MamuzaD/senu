@@ -9,8 +9,18 @@ describe("translateRustRegex", () => {
 
   test("leading flag groups become flags", () => {
     expect(translateRustRegex("(?i)esc to close").flags).toBe("iu")
-    expect(translateRustRegex("(?ms)a").flags).toBe("msu")
-    expect(translateRustRegex("(?m)(?s)a").flags).toBe("msu")
+    expect(translateRustRegex("(?is)a").flags).toBe("isu")
+    expect(translateRustRegex("(?m)(?s)a").flags).toBe("su")
+  })
+
+  test("(?m) ^ and $ break lines only at \\n, as in Rust", () => {
+    const re = compileRustRegex("(?m)^\\s*❯\\s*$")
+    expect(re.test("foo\n❯\nbar")).toBe(true)
+    expect(re.test("❯")).toBe(true)
+    expect(re.test("foo\r❯x")).toBe(false)
+    expect(compileRustRegex("(?m)running[ \\t]*$").test("still running\r\n")).toBe(false)
+    expect(compileRustRegex("(?m)running[ \\t]*$").test("still running\nnext")).toBe(true)
+    expect(compileRustRegex("(?m)[$^]").test("^")).toBe(true)
   })
 
   test("\\z is the end of the text even under (?m)", () => {
@@ -36,6 +46,19 @@ describe("translateRustRegex", () => {
     expect(compileRustRegex("^\\d$").test("٣")).toBe(true)
   })
 
+  test("\\s is Unicode White_Space, which leaves out U+FEFF", () => {
+    expect(compileRustRegex("^\\s$").test("　")).toBe(true)
+    expect(compileRustRegex("^\\s$").test("﻿")).toBe(false)
+    expect(compileRustRegex("^[^\\s›]+$").test("ab")).toBe(true)
+  })
+
+  test("\\w and \\b are Unicode, as in Rust", () => {
+    expect(compileRustRegex("^\\w+$").test("café")).toBe(true)
+    expect(compileRustRegex("(?i)^\\s*❯?\\s*yes\\b").test("❯ Yes, and")).toBe(true)
+    expect(compileRustRegex("(?i)yes\\b").test("yesé")).toBe(false)
+    expect(compileRustRegex("a\\Bb").test("ab")).toBe(true)
+  })
+
   test("escaped punctuation JS rejects under u becomes literal", () => {
     expect(compileRustRegex("a\\#b\\-c").test("a#b-c")).toBe(true)
     expect(compileRustRegex("[a\\-z]").test("-")).toBe(true)
@@ -52,7 +75,7 @@ describe("translateRustRegex", () => {
   })
 
   test("syntax Rust doesn't have, or JS can't mirror, is rejected", () => {
-    for (const p of ["(?=x)", "(?<!x)y", "(x)\\1", "a(?i)b", "(?x)a", "[a[b]]", "[a&&b]", "\\<word"]) {
+    for (const p of ["(?=x)", "(?<!x)y", "(x)\\1", "a(?i)b", "(?x)a", "[a[b]]", "[a&&b]", "\\<word", "[\\b]", "[\\W]"]) {
       expect(() => translateRustRegex(p)).toThrow()
     }
   })

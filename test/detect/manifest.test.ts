@@ -26,11 +26,18 @@ describe("parseManifest", () => {
     ["invalid regex", rule(`regex = ["("]`)],
     ["no positive matcher", rule(`not = [{ contains = ["x"] }]`)],
     ["empty rule id", `id = "codex"\n[[rules]]\nid = " "\ncontains = ["x"]`],
+    ["skip rule with no state", rule(`skip_state_update = true\ncontains = ["x"]`)],
     ["skip rule with a state", rule(`state = "idle"\nskip_state_update = true\ncontains = ["x"]`)],
     ["skip rule with visible evidence", rule(`state = "unknown"\nskip_state_update = true\nvisible_idle = true\ncontains = ["x"]`)],
     ["top_non_empty_lines below engine 3", `id = "codex"\nmin_engine_version = 2\n[[rules]]\nid = "r"\nregion = "top_non_empty_lines(3)"\ncontains = ["x"]`],
     ["too many rules", `id = "codex"\n${Array.from({ length: 129 }, (_, i) => `[[rules]]\nid = "r${i}"\ncontains = ["x"]`).join("\n")}`],
     ["gates too deep", rule(`contains = ["x"]\nall = [{ all = [{ all = [{ all = [{ all = [{ all = [{ all = [{ all = [{ all = [{ contains = ["x"] }] }] }] }] }] }] }] }] }]`)],
+    ["a non-numeric version", `id = "codex"\nversion = "2026.09.x"\n[[rules]]\nid = "r"\ncontains = ["x"]`],
+    ["a numeric (not string) version", `id = "codex"\nversion = 3\n[[rules]]\nid = "r"\ncontains = ["x"]`],
+    ["an empty version segment", `id = "codex"\nversion = "2026..1"\n[[rules]]\nid = "r"\ncontains = ["x"]`],
+    ["a non-string updated_at", `id = "codex"\nupdated_at = 5\n[[rules]]\nid = "r"\ncontains = ["x"]`],
+    ["a priority outside i32", rule(`priority = 2147483648\ncontains = ["x"]`)],
+    ["a negative min_engine_version", `id = "codex"\nmin_engine_version = -1\n[[rules]]\nid = "r"\ncontains = ["x"]`],
     ["too many matchers in a gate", rule(`contains = [${Array.from({ length: 33 }, () => `"x"`).join(", ")}]`)],
   ]
   for (const [name, text] of invalid) {
@@ -62,6 +69,11 @@ describe("resolveManifest", () => {
     const m = resolveManifest("codex", path)
     expect(m.source).toBe(path)
     expect(m.manifest.rules.map((r) => r.id)).toEqual(["r"])
+  })
+
+  test("the id matches the way herdr parses agent labels", () => {
+    const path = write("claude-label.toml", `id = "Claude"\n[[rules]]\nid = "r"\ncontains = ["x"]`)
+    expect(resolveManifest("claude", path).source).toBe(path)
   })
 
   test("an alias counts as the agent's id", () => {
