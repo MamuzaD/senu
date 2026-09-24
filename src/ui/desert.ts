@@ -1,6 +1,6 @@
 import { RGBA } from "@opentui/core"
 import { Pixels, type Canvas } from "./canvas.tsx"
-import { clamp } from "./motion.ts"
+import { clamp, smooth } from "./motion.ts"
 import { brand, hex, mix } from "./theme.ts"
 
 /**
@@ -156,9 +156,9 @@ const PALETTES: Record<SceneTime, Palette> = {
     lit: hex("#f2d49a"),
     shade: hex("#a47a4e"),
     rim: null,
-    // the far dunes fade into the haze; the near ones are hot sand
+    // the far dunes are paler sand in the haze, but still sand, so the pyramids stand on ground; the near ones are hot sand
     dunes: [
-      [hex("#d9d0ba"), hex("#c7b598")],
+      [hex("#e4c898"), hex("#cfae7c")],
       [hex("#e2b878"), hex("#c49660")],
       [hex("#f0cc8c"), hex("#c89a62")],
     ],
@@ -264,7 +264,18 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
   const ox = sceneShift(PW)
   const px = new Pixels(PW, PH)
   const s = PH / 24
-  const far = (x: number) => PH * 0.7 + s * (1.1 * Math.sin((x - ox) / 13 + 1) + 0.7 * Math.sin((x - ox) / 6.1))
+  const rolling = (x: number) => PH * 0.7 + s * (1.1 * Math.sin((x - ox) / 13 + 1) + 0.7 * Math.sin((x - ox) / 6.1))
+  // each pyramid stands on its own level ground, a pixel below where the dune would
+  // roll, so the sand only just covers its base; the dune rolls on again past its corners
+  const plateaus = PYRAMIDS.map(({ x, size }) => ({ x: x + ox, size, y: Math.round(rolling(x + ox)) + 1 }))
+  const far = (x: number) => {
+    let at = { w: 0, y: 0 }
+    for (const p of plateaus) {
+      const w = 1 - smooth((Math.abs(x - p.x) - p.size - 1) / 3)
+      if (w > at.w || (w === at.w && p.y > at.y)) at = { w, y: p.y }
+    }
+    return rolling(x) + (at.y - rolling(x)) * at.w
+  }
   const mid = (x: number) => PH * 0.81 + s * (1.6 * Math.sin((x - ox) / 10 + 2.4) + 0.4 * Math.sin((x - ox) / 4.1))
   const nearAt = (x: number) => near(x - ox)
 
@@ -315,7 +326,7 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
   // the pyramids on the far dunes, their faces toward the light lit
   for (const { x: px0, size } of PYRAMIDS) {
     const x0 = px0 + ox
-    const base = Math.round(far(x0)) + 1
+    const base = Math.round(rolling(x0)) + 1
     for (let j = 0; j <= size; j++)
       for (let k = -j; k <= j; k++)
         px.set(x0 + k, base - size + j, pal.rim && k === j ? pal.rim : k >= 0 ? pal.lit : pal.shade)
