@@ -22,7 +22,7 @@ export type SceneTime = "night" | "day"
 export const night = hex("#1a1b26")
 
 /** The moon by night, the sun by day: the same spot, the same size. */
-const ORB = { x: 56, y: 8, r: 6 }
+const ORB = { x: 56, y: 8, r: 4.8 }
 /** centre column and height in pixels, left to right */
 const PYRAMIDS = [
   { x: 10, size: 5 },
@@ -139,7 +139,7 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
   const near = (x: number) => PH * 0.9 + s * (1.3 * Math.sin(x / 8 + 0.3) + 0.3 * Math.sin(x / 3.3 + 1))
 
   const m = ORB
-  const onDisc = (x: number, y: number) => (x - m.x) ** 2 + (y - m.y) ** 2 <= m.r ** 2 + 2
+  const onDisc = (x: number, y: number) => (x - m.x) ** 2 + (y - m.y) ** 2 <= m.r ** 2
 
   if (pal.sky) {
     // the day sky, with the sun's heat glowing into it
@@ -160,15 +160,15 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
     }
   }
 
-  for (let y = m.y - m.r - 1; y <= m.y + m.r + 1; y++)
-    for (let x = m.x - m.r - 1; x <= m.x + m.r + 1; x++) {
+  for (let y = Math.floor(m.y - m.r - 1); y <= Math.ceil(m.y + m.r + 1); y++)
+    for (let x = Math.floor(m.x - m.r - 1); x <= Math.ceil(m.x + m.r + 1); x++) {
       if (!onDisc(x, y)) continue
       const lx = (x - m.x) / m.r
       const ly = (y - m.y) / m.r
       let col = mix(pal.orb[0], pal.orb[1], clamp(0.75 + 0.25 * (lx * 0.6 - ly * 0.8)))
       // soft maria, low contrast and low on the face, so her silhouette up top reads cleanly
       if (pal.maria)
-        for (const [mx, my, mr] of [[-4, 1, 2.6], [3, 3, 2.4], [-1, 6, 1.9]] as const)
+        for (const [mx, my, mr] of [[-3.2, 0.8, 2.1], [2.4, 2.4, 1.9], [-0.8, 4.8, 1.5]] as const)
           if ((x - m.x - mx) ** 2 + (y - m.y - my) ** 2 < mr * mr) col = mix(col, pal.maria, 0.28)
       px.set(x, y, col)
     }
