@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { ConfigError, loadConfig, type Config } from "./config.ts"
+import { classifyCommand, explainCommand, scoutCommand } from "./detect/command.ts"
 import { usageCommand } from "./usage/command.ts"
 
 const HELP = `senu: watches AI coding agents in tmux
@@ -10,6 +11,7 @@ commands:
   vision    show Codex and Claude usage limits and today's cost
   watch     classify agent panes in the background (not ported yet)
   agents    pick an agent to jump to (not ported yet)
+  scout     scan agent panes or explain a state
   help      show this help
 `
 
@@ -24,6 +26,9 @@ const COMMANDS: Record<string, Command> = {
   usage: usageCommand,
   watch: notPorted("watch"),
   agents: notPorted("agents"),
+  scout: scoutCommand,
+  classify: classifyCommand,
+  explain: explainCommand,
 }
 
 async function main(argv: string[]): Promise<number> {
