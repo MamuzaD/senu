@@ -55,6 +55,23 @@ function toLimit(label: string, window: any): Limit {
   }
 }
 
+/** Weekly limits scoped to one model, as the endpoint names them; each shows under "Week". */
+const MODEL_WEEKS: Record<string, string> = { seven_day_opus: "Opus", seven_day_sonnet: "Sonnet" }
+/** At most this many model rows, so three profiles still fit the popup. */
+const MAX_MODEL_ROWS = 2
+
+/**
+ * The model weeklies the endpoint reports with a utilization: the ones closest
+ * to running out when there are more than fit, kept in `MODEL_WEEKS` order.
+ */
+function modelWeeks(data: any): Limit[] {
+  const present = Object.entries(MODEL_WEEKS)
+    .filter(([key]) => typeof data?.[key]?.utilization === "number")
+    .map(([key, label]) => toLimit(label, data[key]))
+  const kept = [...present].sort((a, b) => a.left! - b.left!).slice(0, MAX_MODEL_ROWS)
+  return present.filter((l) => kept.includes(l))
+}
+
 export async function fetchClaude(configDir: string): Promise<Snapshot> {
   const auth = loadToken(configDir)
   if ("error" in auth) return errorSnapshot(auth.error)
@@ -75,7 +92,7 @@ export async function fetchClaude(configDir: string): Promise<Snapshot> {
       error: null,
       updatedAt: nowSeconds(),
       planType: null,
-      limits: [toLimit("Session", data.five_hour), toLimit("Week", data.seven_day)],
+      limits: [toLimit("Session", data.five_hour), toLimit("Week", data.seven_day), ...modelWeeks(data)],
       spend: null,
       banked: null,
     }
