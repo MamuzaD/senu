@@ -1,5 +1,5 @@
 import type { Config } from "../config.ts"
-import { tmux, useTmuxSocket } from "../detect/panes.ts"
+import { useTmuxSocket } from "../detect/panes.ts"
 import { runDaemon, Watcher } from "./daemon.ts"
 import { play, resolveSound } from "./sounds.ts"
 import type { SoundKind } from "./state.ts"
@@ -20,7 +20,7 @@ test plays the done and request sounds (or just the one named).
 
 const KINDS: SoundKind[] = ["done", "request"]
 
-async function testSounds(args: string[]): Promise<number> {
+async function testSounds(args: string[], config: Config): Promise<number> {
   const kinds = args.length ? args : ["request", "done"]
   for (const k of kinds) {
     if (!KINDS.includes(k as SoundKind)) {
@@ -29,8 +29,7 @@ async function testSounds(args: string[]): Promise<number> {
     }
   }
   for (const kind of kinds as SoundKind[]) {
-    const option = (await tmux("show-option", "-gqv", `@ai_sound_${kind}`)).out.trim()
-    const path = await resolveSound(kind, option)
+    const path = resolveSound(kind, config.sound[kind])
     console.log(`${kind.padEnd(8)} -> ${path ?? "none"}`)
     if (path) await play(path)?.exited
   }
@@ -51,7 +50,7 @@ async function once(): Promise<number> {
   return 0
 }
 
-export async function watchCommand(argv: string[], _config: Config): Promise<number> {
+export async function watchCommand(argv: string[], config: Config): Promise<number> {
   const args = [...argv]
   if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(HELP)
@@ -70,7 +69,7 @@ export async function watchCommand(argv: string[], _config: Config): Promise<num
   }
 
   const [sub, ...rest] = args
-  if (sub === "test") return testSounds(rest)
+  if (sub === "test") return testSounds(rest, config)
   if (sub === "once" && !rest.length) return once()
   if (sub === undefined) return runDaemon()
   process.stderr.write(HELP)

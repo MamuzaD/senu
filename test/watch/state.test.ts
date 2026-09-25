@@ -172,9 +172,9 @@ describe("shouldPlay", () => {
   const bg = { kind: "done" as const, window: "@1", focused: false }
   const fg = { ...bg, focused: true }
   test("background windows chime", () => expect(shouldPlay(bg, { enabled: true, always: false })).toBe(true))
-  test("the focused window only with @ai_sound_always", () => {
+  test("the focused window only with sound.always", () => {
     expect(shouldPlay(fg, { enabled: true, always: false })).toBe(false)
     expect(shouldPlay(fg, { enabled: true, always: true })).toBe(true)
   })
-  test("@ai_sound_enabled off silences everything", () => expect(shouldPlay(fg, { enabled: false, always: true })).toBe(false))
+  test("sound.enabled off silences everything", () => expect(shouldPlay(fg, { enabled: false, always: true })).toBe(false))
 })

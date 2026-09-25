@@ -1,15 +1,15 @@
 import { statSync } from "node:fs"
 import { join } from "node:path"
+import { loadConfig } from "../config.ts"
 import { classify } from "../detect/engine.ts"
 import { AGENTS, overridePath, reloadManifests, type Agent } from "../detect/manifest.ts"
 import { capturePanes, identifyAgents, listPanes, tmux, type AgentPane, type Pane } from "../detect/panes.ts"
 import { stateDir } from "../paths.ts"
 import { claimPidFile, releasePidFile } from "./lock.ts"
+import { effectiveSoundEnabled } from "./sound-state.ts"
 import { play, resolveSound } from "./sounds.ts"
 import {
   IDLE_RECHECK_MS,
-  isOff,
-  isOn,
   isPending,
   newPaneTrack,
   observe,
@@ -54,8 +54,6 @@ export async function tmuxBatch(cmds: string[][]) {
 
 /** Each window's `@ai_state` as tmux has it now. */
 const currentStates = (panes: Pane[]) => new Map(panes.map((p) => [p.windowId, p.aiState]))
-
-const globalOption = async (name: string) => (await tmux("show-option", "-gqv", name)).out.trim()
 
 /** A signature of the override files, so the loop notices an edit or a refresh. */
 function manifestStamp(): string {
@@ -150,13 +148,13 @@ export class Watcher {
   }
 }
 
-/** Plays at most one of each kind per tick, reading the sound options only when something chimes. */
+/** Plays at most one of each kind per tick, reading sound preferences only when something chimes. */
 async function chime(events: SoundEvent[]) {
-  const [enabled, always] = await Promise.all([globalOption("@ai_sound_enabled"), globalOption("@ai_sound_always")])
-  const opts = { enabled: !isOff(enabled), always: isOn(always) }
+  const sound = loadConfig().sound
+  const opts = { enabled: effectiveSoundEnabled(sound.enabled), always: sound.always }
   const kinds = new Set<SoundKind>(events.filter((e) => shouldPlay(e, opts)).map((e) => e.kind))
   for (const kind of kinds) {
-    const path = await resolveSound(kind, await globalOption(`@ai_sound_${kind}`))
+    const path = resolveSound(kind, sound[kind])
     if (path) play(path)
   }
 }

@@ -33,3 +33,12 @@ home = "~/.claude"
 # Ghostty on macOS.
 [agents]
 raise_ghostty_tab = true
+
+# Senu's chimes. `enabled` is the default; `senu sound toggle` stores a runtime
+# override in Senu's state directory. `always` also chimes for the focused
+# window. Empty or missing paths use macOS system sounds on macOS.
+[sound]
+enabled = true
+always = true
+# done = "~/path/to/done.aiff"
+# request = "~/path/to/request.aiff"

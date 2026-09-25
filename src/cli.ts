@@ -10,6 +10,7 @@ commands:
   watch     classify agent panes in the background, for the status bar
   agents    pick an agent to jump to
   scout     scan agent panes, explain a state, or refresh detection manifests
+  sound     show or change Senu's chimes
   help      show this help
 `
 
@@ -21,6 +22,7 @@ const COMMANDS: Record<string, Command> = {
   watch: async (a, c) => (await import("./watch/command.ts")).watchCommand(a, c),
   agents: async (a, c) => (await import("./agents/command.ts")).agentsCommand(a, c),
   scout: async (a, c) => (await import("./detect/command.ts")).scoutCommand(a, c),
+  sound: async (a, c) => (await import("./watch/sound-command.ts")).soundCommand(a, c),
   // The live tmux config still invokes manifests refresh; keep old spellings working.
   classify: async (a, c) => (await import("./detect/command.ts")).classifyCommand(a, c),
   explain: async (a, c) => (await import("./detect/command.ts")).explainCommand(a, c),

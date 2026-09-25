@@ -5,7 +5,6 @@ import { join } from "node:path"
 import { optionCommands } from "../../src/watch/daemon.ts"
 import { claimPidFile, releasePidFile } from "../../src/watch/lock.ts"
 import { pickSound, SYSTEM_SOUNDS } from "../../src/watch/sounds.ts"
-import { isOff, isOn } from "../../src/watch/state.ts"
 
 describe("optionCommands", () => {
   test("sets what differs and unsets windows without agents", () => {
@@ -30,18 +29,9 @@ describe("optionCommands", () => {
 
 describe("pickSound", () => {
   const exists = (have: string[]) => (p: string) => have.includes(p)
-  test("the option wins when its file exists", () => expect(pickSound("/a.aiff", "/b.m4a", "/sys", exists(["/a.aiff", "/b.m4a"]))).toBe("/a.aiff"))
-  test("a missing option file falls to the bundled sound", () => expect(pickSound("/gone", "/b.m4a", "/sys", exists(["/b.m4a"]))).toBe("/b.m4a"))
-  test("then the system sound", () => expect(pickSound("", null, SYSTEM_SOUNDS.done, exists([SYSTEM_SOUNDS.done]))).toBe(SYSTEM_SOUNDS.done))
-  test("none at all", () => expect(pickSound("", null, "/sys", exists([]))).toBeNull())
-})
-
-describe("tmux booleans", () => {
-  test("on and off", () => {
-    expect(isOn("on") && isOn("1") && isOn("yes")).toBe(true)
-    expect(isOff("off") && isOff("0") && isOff(" No ")).toBe(true)
-    expect(isOff("") || isOn("")).toBe(false) // unset: enabled, not always
-  })
+  test("the custom file wins when it exists", () => expect(pickSound("/a.aiff", "/sys", exists(["/a.aiff", "/sys"]))).toBe("/a.aiff"))
+  test("a missing custom file falls to the system sound", () => expect(pickSound("/gone", SYSTEM_SOUNDS.done, exists([SYSTEM_SOUNDS.done]))).toBe(SYSTEM_SOUNDS.done))
+  test("none at all", () => expect(pickSound("", "/sys", exists([]))).toBeNull())
 })
 
 describe("claimPidFile", () => {

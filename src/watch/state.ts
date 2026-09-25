@@ -100,7 +100,7 @@ export type SoundKind = "done" | "request"
 export interface SoundEvent {
   kind: SoundKind
   window: string
-  /** Whether the window was in front; only `@ai_sound_always` chimes then. */
+  /** Whether the window was in front; `[sound].always` controls these chimes. */
   focused: boolean
 }
 
@@ -146,14 +146,9 @@ export function step(windows: Map<string, WindowTrack>, inputs: WindowInput[]): 
 }
 
 export interface SoundOptions {
-  /** `@ai_sound_enabled`: anything but off. */
   enabled: boolean
-  /** `@ai_sound_always`: chime for the focused window too. */
+  /** Chime for the focused window too. */
   always: boolean
 }
 
 export const shouldPlay = (e: SoundEvent, o: SoundOptions) => o.enabled && (o.always || !e.focused)
-
-/** tmux-style booleans, as the Python read them. */
-export const isOff = (v: string) => ["0", "off", "false", "no"].includes(v.trim().toLowerCase())
-export const isOn = (v: string) => ["1", "on", "true", "yes"].includes(v.trim().toLowerCase())

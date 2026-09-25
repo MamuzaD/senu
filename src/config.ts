@@ -23,9 +23,38 @@ export interface Config {
     /** macOS: jumping to a session shown in another Ghostty tab raises that tab instead of pulling the session into this one. */
     raiseGhosttyTab: boolean
   }
+  sound: SoundConfig
+}
+
+export interface SoundConfig {
+  enabled: boolean
+  always: boolean
+  /** Optional files; an empty path uses a macOS system sound on macOS. */
+  done: string
+  request: string
 }
 
 const defaultAgents = (): Config["agents"] => ({ raiseGhosttyTab: true })
+const defaultSound = (): SoundConfig => ({ enabled: true, always: false, done: "", request: "" })
+
+function parseSound(raw: unknown): SoundConfig {
+  const defaults = defaultSound()
+  if (raw === undefined) return defaults
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new ConfigError("sound: expected a table ([sound])")
+  const values = raw as Record<string, unknown>
+  for (const key of ["enabled", "always"] as const) {
+    if (values[key] !== undefined && typeof values[key] !== "boolean") throw new ConfigError(`sound.${key}: expected true or false`)
+  }
+  for (const key of ["done", "request"] as const) {
+    if (values[key] !== undefined && typeof values[key] !== "string") throw new ConfigError(`sound.${key}: expected a path string`)
+  }
+  return {
+    enabled: (values.enabled as boolean | undefined) ?? defaults.enabled,
+    always: (values.always as boolean | undefined) ?? defaults.always,
+    done: expandHome((values.done as string | undefined) ?? defaults.done),
+    request: expandHome((values.request as string | undefined) ?? defaults.request),
+  }
+}
 
 function parseAgents(raw: unknown): Config["agents"] {
   if (raw === undefined) return defaultAgents()
@@ -77,7 +106,7 @@ function parseProfile(raw: unknown, index: number): UsageProfile {
 }
 
 export function loadConfig(path = configPath): Config {
-  if (!existsSync(path)) return { usage: { profiles: defaultProfiles(), scene: sceneOf(undefined) }, agents: defaultAgents() }
+  if (!existsSync(path)) return { usage: { profiles: defaultProfiles(), scene: sceneOf(undefined) }, agents: defaultAgents(), sound: defaultSound() }
 
   let data: Record<string, unknown>
   try {
@@ -100,5 +129,5 @@ export function loadConfig(path = configPath): Config {
     seen.add(key)
   }
 
-  return { usage: { profiles, scene: sceneOf(usage.scene) }, agents: parseAgents(data.agents) }
+  return { usage: { profiles, scene: sceneOf(usage.scene) }, agents: parseAgents(data.agents), sound: parseSound(data.sound) }
 }
