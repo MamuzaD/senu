@@ -65,7 +65,20 @@ async function run(argv: string[]): Promise<{ ok: boolean; out: string }> {
   }
 }
 
-export const tmux = (...args: string[]) => run(["tmux", ...args])
+let socketArgs: string[] = []
+
+/**
+ * Points every tmux call at another server: `["-L", name]` or `["-S", path]`.
+ * Without one, tmux picks the server from `$TMUX`, as `run-shell` sets it.
+ */
+export function useTmuxSocket(args: string[]) {
+  socketArgs = args
+}
+
+/** The picker's name for the same thing. */
+export const setTmuxServer = useTmuxSocket
+
+export const tmux = (...args: string[]) => run(["tmux", ...socketArgs, ...args])
 
 /** Every pane in every session, in one `list-panes`. */
 export async function listPanes(): Promise<Pane[]> {
