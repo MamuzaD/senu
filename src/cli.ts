@@ -8,7 +8,7 @@ usage: senu <command> [args]
 commands:
   vision    show Codex and Claude usage limits and today's cost
   watch     classify agent panes in the background, for the status bar
-  agents    pick an agent to jump to (not ported yet)
+  agents    pick an agent to jump to
   scout     scan agent panes, explain a state, or refresh detection manifests
   help      show this help
 `
@@ -24,7 +24,7 @@ const notPorted = (name: string): Command => async () => {
 const COMMANDS: Record<string, Command> = {
   vision: async (a, c) => (await import("./usage/command.ts")).usageCommand(a, c),
   watch: async (a, c) => (await import("./watch/command.ts")).watchCommand(a, c),
-  agents: notPorted("agents"),
+  agents: async (a, c) => (await import("./agents/command.ts")).agentsCommand(a, c),
   scout: async (a, c) => (await import("./detect/command.ts")).scoutCommand(a, c),
   // The live tmux config still invokes manifests refresh; keep old spellings working.
   classify: async (a, c) => (await import("./detect/command.ts")).classifyCommand(a, c),
