@@ -46,7 +46,8 @@ export const liveAttention = (s: AgentState): Attention => (s === "unknown" ? "i
  * A stamp older than `HEARTBEAT_STALE_SECONDS` means the daemon died, and the
  * `@ai_state` it left behind is frozen, so the picker classifies live.
  */
-export const HEARTBEAT_OPTION = "@ai_watch_heartbeat"
+import { HEARTBEAT_OPTION } from "../watch/daemon.ts"
+export { HEARTBEAT_OPTION }
 export const HEARTBEAT_STALE_SECONDS = 10
 
 export type Daemon = "alive" | "dead" | "unknown"

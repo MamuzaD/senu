@@ -35,6 +35,8 @@ import {
 export const POLL_MS = 1000
 /** Give up on a tmux server that's been gone this long; its successor starts its own daemon. */
 const SERVER_GONE_MS = 30_000
+/** Stamped (epoch seconds) with every write, so `senu agents` can tell a live daemon from a dead one's leftovers. */
+export const HEARTBEAT_OPTION = "@ai_watch_heartbeat"
 
 /** tmux commands that bring each window's `@ai_state` from `current` to `wanted`. */
 export function optionCommands(current: Map<string, string>, wanted: Map<string, WindowState>): string[][] {
@@ -134,7 +136,10 @@ export class Watcher {
 
     const { display, sounds } = step(this.windows, [...byWindow.values()])
     if (dry) return true
-    await tmuxBatch(optionCommands(currentStates(all), display))
+    await tmuxBatch([
+      ...optionCommands(currentStates(all), display),
+      ["set-option", "-g", HEARTBEAT_OPTION, String(Math.floor(Date.now() / 1000))],
+    ])
     if (sounds.length) await chime(sounds)
     return true
   }
@@ -156,9 +161,9 @@ async function chime(events: SoundEvent[]) {
   }
 }
 
-/** Unsets every `@ai_state`, so a stopped daemon leaves no stale dots behind. */
+/** Unsets every `@ai_state` and the heartbeat, so a stopped daemon leaves no stale dots behind. */
 export async function clearStates() {
-  await tmuxBatch(optionCommands(currentStates(await listPanes()), new Map()))
+  await tmuxBatch([...optionCommands(currentStates(await listPanes()), new Map()), ["set-option", "-gu", HEARTBEAT_OPTION]])
 }
 
 export const pidPath = (socket: string) => join(stateDir, "watch", `${socket.replace(/[^\w.-]/g, "_")}.pid`)

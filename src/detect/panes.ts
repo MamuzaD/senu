@@ -75,9 +75,6 @@ export function useTmuxSocket(args: string[]) {
   socketArgs = args
 }
 
-/** The picker's name for the same thing. */
-export const setTmuxServer = useTmuxSocket
-
 export const tmux = (...args: string[]) => run(["tmux", ...socketArgs, ...args])
 
 /** Every pane in every session, in one `list-panes`. */

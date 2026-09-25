@@ -15,11 +15,6 @@ commands:
 
 type Command = (args: string[], config: Config) => Promise<number>
 
-const notPorted = (name: string): Command => async () => {
-  console.error(`senu ${name}: not ported yet`)
-  return 1
-}
-
 // loaded on demand: the watch daemon runs all day and shouldn't carry the popups' OpenTUI
 const COMMANDS: Record<string, Command> = {
   vision: async (a, c) => (await import("./usage/command.ts")).usageCommand(a, c),
