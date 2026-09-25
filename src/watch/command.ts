@@ -28,12 +28,17 @@ async function testSounds(args: string[], config: Config): Promise<number> {
       return 2
     }
   }
+  let failed = false
   for (const kind of kinds as SoundKind[]) {
     const path = resolveSound(kind, config.sound[kind])
     console.log(`${kind.padEnd(8)} -> ${path ?? "none"}`)
-    if (path) await play(path)?.exited
+    const proc = path ? play(path) : null
+    if (!proc || await proc.exited !== 0) {
+      console.error(`senu watch test: could not play ${kind} (check the sound file and installed audio player)`)
+      failed = true
+    }
   }
-  return 0
+  return failed ? 1 : 0
 }
 
 async function once(): Promise<number> {

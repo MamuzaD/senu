@@ -36,9 +36,10 @@ raise_ghostty_tab = true
 
 # Senu's chimes. `enabled` is the default; `senu sound toggle` stores a runtime
 # override in Senu's state directory. `always` also chimes for the focused
-# window. Empty or missing paths use macOS system sounds on macOS.
+# window. Empty or missing paths use macOS system sounds on macOS and generated
+# WAV chimes elsewhere.
 [sound]
 enabled = true
 always = true
-# done = "~/path/to/done.aiff"
-# request = "~/path/to/request.aiff"
+# done = "~/path/to/done.wav"
+# request = "~/path/to/request.wav"

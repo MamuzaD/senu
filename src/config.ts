@@ -29,7 +29,7 @@ export interface Config {
 export interface SoundConfig {
   enabled: boolean
   always: boolean
-  /** Optional files; an empty path uses a macOS system sound on macOS. */
+  /** Optional files; an empty path uses a system sound or a generated WAV chime. */
   done: string
   request: string
 }
