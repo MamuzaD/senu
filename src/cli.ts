@@ -2,6 +2,7 @@
 import { ConfigError, loadConfig, type Config } from "./config.ts"
 import { classifyCommand, explainCommand, scoutCommand } from "./detect/command.ts"
 import { usageCommand } from "./usage/command.ts"
+import { watchCommand } from "./watch/command.ts"
 
 const HELP = `senu: watches AI coding agents in tmux
 
@@ -9,7 +10,7 @@ usage: senu <command> [args]
 
 commands:
   vision    show Codex and Claude usage limits and today's cost
-  watch     classify agent panes in the background (not ported yet)
+  watch     classify agent panes in the background, for the status bar
   agents    pick an agent to jump to (not ported yet)
   scout     scan agent panes or explain a state
   help      show this help
@@ -24,7 +25,7 @@ const notPorted = (name: string): Command => async () => {
 
 const COMMANDS: Record<string, Command> = {
   usage: usageCommand,
-  watch: notPorted("watch"),
+  watch: watchCommand,
   agents: notPorted("agents"),
   scout: scoutCommand,
   classify: classifyCommand,
