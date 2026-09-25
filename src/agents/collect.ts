@@ -1,6 +1,6 @@
 import { classify } from "../detect/engine.ts"
 import type { Agent, AgentState } from "../detect/manifest.ts"
-import { capturePanes, identifyAgents, listPanes, tmux, type AgentPane } from "../detect/panes.ts"
+import { capturePanes, identifyAgents, listPanes, tmux, type AgentPane, type Pane } from "../detect/panes.ts"
 
 /**
  * What the picker lists: one row per agent window across every session, with
@@ -146,37 +146,58 @@ export interface Collected {
 }
 
 /**
- * Collects the rows, remembering each pane's last live state so a rule that
- * says "leave the state alone" (a transcript viewer, a menu) can.
+ * Collects the rows once a second, doing as little as it can: a pane's agent
+ * is looked up once (the `ps` behind it only reruns when its process
+ * changes), and a pane is only captured again once its window has done
+ * something since. It remembers each pane's last live state, too, so a rule
+ * that says "leave the state alone" (a transcript viewer, a menu) can.
  */
 export class Collector {
-  private previous = new Map<string, AgentState>()
+  /** pane → its agent, for the process it was running */
+  private agents = new Map<string, { proc: string; agent: Agent | null }>()
+  /** pane → its last live state, and the window activity and title it was read at */
+  private live = new Map<string, { seen: string; state: AgentState }>()
+  /** pane → its Codex label, and the window activity it was read at */
+  private labels = new Map<string, { seen: string; label: string }>()
+
+  private async identify(panes: Pane[]): Promise<AgentPane[]> {
+    const proc = (p: Pane) => `${p.pid}\x1f${p.command}`
+    const fresh = panes.filter((p) => this.agents.get(p.id)?.proc !== proc(p))
+    if (fresh.length) {
+      const found = new Map((await identifyAgents(fresh)).map((p) => [p.id, p.agent]))
+      for (const p of fresh) this.agents.set(p.id, { proc: proc(p), agent: found.get(p.id) ?? null })
+    }
+    const live = new Set(panes.map((p) => p.id))
+    for (const id of this.agents.keys()) if (!live.has(id)) this.agents.delete(id)
+    return panes.flatMap((p) => {
+      const agent = this.agents.get(p.id)!.agent
+      return agent ? [{ ...p, agent }] : []
+    })
+  }
 
   async collect(): Promise<Collected> {
     const [panes, beat] = await Promise.all([listPanes(), tmux("show-options", "-gqv", HEARTBEAT_OPTION)])
     const daemon = daemonFrom(beat.out, Date.now() / 1000)
-    const agents = await identifyAgents(panes)
+    const agents = await this.identify(panes)
+    const seen = (p: AgentPane) => `${p.windowActivity}\x1f${p.oscTitle}`
 
-    const live = agents.filter((p) => !trustsState(p.aiState, daemon))
-    const codex = agents.filter((p) => p.agent === "codex")
+    const classifying = agents.filter((p) => !trustsState(p.aiState, daemon))
+    const reading = classifying.filter((p) => this.live.get(p.id)?.seen !== seen(p))
+    const relabel = agents.filter((p) => p.agent === "codex" && this.labels.get(p.id)?.seen !== seen(p))
     const [screens, scrollback] = await Promise.all([
-      capturePanes(live.map((p) => p.id)),
-      capturePanes(codex.map((p) => p.id), LABEL_HISTORY),
+      capturePanes(reading.map((p) => p.id)),
+      capturePanes(relabel.map((p) => p.id), LABEL_HISTORY),
     ])
 
-    const seen = new Set<string>()
+    for (const p of reading) {
+      const screen = screens.get(p.id) ?? ""
+      const d = classify(p.agent, { screen, oscTitle: p.oscTitle }, this.live.get(p.id)?.state ?? null)
+      this.live.set(p.id, { seen: seen(p), state: d.state })
+    }
+    for (const p of relabel) this.labels.set(p.id, { seen: seen(p), label: labelFor(p, scrollback.get(p.id) ?? null) })
+
     const rows = agents.map((p) => {
-      seen.add(p.id)
-      let state: Attention
-      let source: AgentRow["source"] = "watch"
-      if (trustsState(p.aiState, daemon)) state = attentionOf(p.aiState)!
-      else {
-        const screen = screens.get(p.id) ?? ""
-        const d = classify(p.agent, { screen, oscTitle: p.oscTitle }, this.previous.get(p.id) ?? null)
-        this.previous.set(p.id, d.state)
-        state = liveAttention(d.state)
-        source = "live"
-      }
+      const watched = trustsState(p.aiState, daemon)
       return {
         windowId: p.windowId,
         session: p.session,
@@ -184,14 +205,16 @@ export class Collector {
         windowName: p.windowName,
         paneId: p.id,
         agent: p.agent,
-        state,
+        state: watched ? attentionOf(p.aiState)! : liveAttention(this.live.get(p.id)!.state),
         activity: p.windowActivity || 0,
-        label: labelFor(p, scrollback.get(p.id) ?? null),
-        source,
+        label: p.agent === "codex" ? this.labels.get(p.id)!.label : labelFor(p, null),
+        source: watched ? ("watch" as const) : ("live" as const),
         active: p.active,
       }
     })
-    for (const id of this.previous.keys()) if (!seen.has(id)) this.previous.delete(id)
+
+    const ids = new Set(agents.map((p) => p.id))
+    for (const m of [this.live, this.labels]) for (const id of m.keys()) if (!ids.has(id)) m.delete(id)
     return { rows: foldWindows(rows), daemon }
   }
 }
