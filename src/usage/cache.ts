@@ -87,14 +87,14 @@ export async function refreshLocked(p: UsageProfile): Promise<Snapshot> {
 }
 
 /**
- * Spawns a detached `senu usage refresh` that outlives the popup. The lock is
+ * Spawns a detached `senu vision refresh` that outlives the popup. The lock is
  * claimed here and handed to the child with --locked, so the child doesn't
  * try to re-claim a lock its parent already holds.
  */
 function spawnBackgroundRefresh(p: UsageProfile) {
   if (!claimLock(p)) return
   try {
-    const child = Bun.spawn([...selfCommand(), "usage", "refresh", profileKey(p), "--locked"], {
+    const child = Bun.spawn([...selfCommand(), "vision", "refresh", profileKey(p), "--locked"], {
       stdio: ["ignore", "ignore", "ignore"],
       detached: true,
     })

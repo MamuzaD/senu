@@ -7,7 +7,7 @@ const HELP = `senu: watches AI coding agents in tmux
 usage: senu <command> [args]
 
 commands:
-  usage     show Codex and Claude usage limits
+  vision    show Codex and Claude usage limits and today's cost
   watch     classify agent panes in the background (not ported yet)
   agents    pick an agent to jump to (not ported yet)
   help      show this help
