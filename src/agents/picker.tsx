@@ -20,7 +20,7 @@ const PER_ROW = 3
 /** Columns: the selection bar, the state glyph, the text. */
 const BAR_X = 1
 const DOT_X = 3
-const TEXT_X = 5
+const TEXT_X = 6
 
 const BOLD = TextAttributes.BOLD
 const faint = hex("#3b3d57")
@@ -72,7 +72,8 @@ function paint(v: View): Canvas {
   for (const s of ["blocked", "working", "done", "idle"] as Attention[]) {
     const n = rows.filter((r) => r.state === s).length
     if (!n) continue
-    x = c.text(x + 1, RULE_ROW - 1, states[s].glyph, states[s].fg, { attrs: states[s].bold ? BOLD : 0 })
+    // ◯ draws wider than its cell in most fonts, so it gets a column of its own
+    x = c.text(x + 1, RULE_ROW - 1, states[s].glyph, states[s].fg, { attrs: states[s].bold ? BOLD : 0 }) + (s === "idle" ? 1 : 0)
     x = c.text(x + 1, RULE_ROW - 1, String(n), colors.muted)
   }
   for (let i = 1; i < W - 1; i++) c.put(i, RULE_ROW, "─", colors.rule)

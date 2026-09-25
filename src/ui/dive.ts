@@ -85,7 +85,9 @@ export function rowGlow(plan: DivePlan): { from: number; k: number } {
   const at = path(plan, k)
   const onRow = at.y >= plan.target.y * 2 - 1
   if (!onRow) return { from: Infinity, k: 0 }
-  return { from: Math.floor(at.x / 2), k: plan.t >= LAUNCH_MS + STOOP_MS ? 1 : 0.85 }
+  // once she strikes, the whole row, dot and all, is lit
+  if (plan.t >= LAUNCH_MS + STOOP_MS) return { from: 0, k: 1 }
+  return { from: Math.floor(at.x / 2), k: 0.85 }
 }
 
 export const diveDone = (plan: DivePlan) => plan.t != null && plan.t >= DIVE_MS
@@ -94,7 +96,6 @@ export const diveDone = (plan: DivePlan) => plan.t != null && plan.t >= DIVE_MS
 export function paintSenu(c: Canvas, plan: DivePlan) {
   const tone = TONES.night
   const body = tone.near
-  const wing = mix(body, tone.wing, 0.5)
   const quad = new Quad(c.width, c.height)
   const trail = new Braille(c.width, c.height)
   const t = plan.t
@@ -143,7 +144,6 @@ export function paintSenu(c: Canvas, plan: DivePlan) {
   const glint = t == null ? 0 : clamp(t / (LAUNCH_MS + STOOP_MS))
   const color = mix(body, brand.gold, glint * 0.6)
   if (pixels) for (const [dx, dy, w] of pixels) quad.set(at.x + dx, at.y + dy, w ? mix(color, tone.wing, 0.5) : color)
-  void wing
 
   for (let r = 0; r < c.height; r++)
     for (let x = 0; x < c.width; x++) {
@@ -159,6 +159,8 @@ export function paintSenu(c: Canvas, plan: DivePlan) {
         continue
       }
       const bits = trail.bits[r]?.[x] ?? 0
-      if (bits) c.put(x, r, String.fromCharCode(0x2800 + bits), trail.color[r]![x]!)
+      // the trail and the ring pass behind the text: they only take empty cells
+      const under = c.cells[r]![x]
+      if (bits && (!under || under.ch === " ")) c.put(x, r, String.fromCharCode(0x2800 + bits), trail.color[r]![x]!)
     }
 }
