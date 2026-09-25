@@ -31,6 +31,15 @@ export const brand = {
   shadow: hex("#5c5346"),
 }
 
+/** The agent states exactly as the tmux status bar draws them (`window-status-format`). */
+export const states = {
+  blocked: { glyph: "!", fg: hex("#ff9e64"), bold: true },
+  working: { glyph: "●", fg: hex("#e0c060"), bold: false },
+  // without colour, done and working would both be ●
+  done: { glyph: noColor ? "✓" : "●", fg: hex("#7aa2f7"), bold: true },
+  idle: { glyph: "◯", fg: hex("#9ece6a"), bold: false },
+}
+
 export const icons = {
   codex: "\u{EC81}", // nerd font cod-openai
   claude: "\u{EC82}", // nerd font cod-claude

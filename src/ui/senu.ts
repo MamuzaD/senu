@@ -193,7 +193,7 @@ const FLYING = {
 } as const
 const ORIGIN = { glide: 2, up: 3, level: 1, down: 1 } as const
 
-function flyingPixels(span: number, flap: number): [number, number, boolean][] {
+export function flyingPixels(span: number, flap: number): [number, number, boolean][] {
   const size = span >= 6 ? "near" : span >= 4 ? "mid" : "far"
   const pose = flap < -0.4 ? "up" : flap > 0.4 ? "down" : Math.abs(flap) > 0.16 ? "level" : "glide"
   const rows = FLYING[size][pose]
@@ -217,9 +217,9 @@ const LANDING = {
   fold: ["w.....hh.", ".w...hhhh", "..wwwwhh.", "..wwwwww.", "..wwwwww.", ".wwwww...", "www..O..."],
   perch: ["......hh.", ".....hhhh", "....wwhh.", "...wwwwh.", "..wwwwww.", ".wwwww...", "www..O..."],
 } as const
-type LandingPose = keyof typeof LANDING
+export type LandingPose = keyof typeof LANDING
 
-function landingPixels(pose: LandingPose, facing: 1 | -1): [number, number, boolean][] {
+export function landingPixels(pose: LandingPose, facing: 1 | -1): [number, number, boolean][] {
   const rows = LANDING[pose]
   let ox = 0
   let oy = 0
@@ -299,7 +299,7 @@ function birdAt(t: number, plan: FlightPlan, perch: { x: number; y: number }): B
  * with a rust trail that fades into the sky. Over the moon or the sun she's a
  * dark silhouette either way.
  */
-const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA; trail: RGBA; trailEnd: RGBA; ringEnd: RGBA }> = {
+export const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA; trail: RGBA; trailEnd: RGBA; ringEnd: RGBA }> = {
   night: {
     near: brand.papyrus,
     far: brand.dusk,
@@ -350,7 +350,7 @@ const dist = (a: RGBA | null, b: RGBA | null) => {
   return Math.abs(ar - br) + Math.abs(ag - bg) + Math.abs(ab - bb)
 }
 const QUADS = [" ", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█"]
-const QUAD_AT = [
+export const QUAD_AT = [
   [0, 0, 1],
   [1, 0, 2],
   [0, 1, 4],
@@ -369,7 +369,7 @@ const popcount = (b: number) => {
  * Put one cell from four quadrant pixels, choosing the two colours that lose
  * the least (her pixels weigh most). Null is the terminal's own background.
  */
-function putQuads(c: Canvas, x: number, y: number, sub: (RGBA | null)[], bird: boolean[]) {
+export function putQuads(c: Canvas, x: number, y: number, sub: (RGBA | null)[], bird: boolean[]) {
   const keys: (RGBA | null)[] = []
   for (const s of sub) if (!keys.some((k) => k === s || (k && s && k.equals(s)))) keys.push(s)
   let a = keys[0] ?? null

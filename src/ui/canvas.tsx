@@ -11,6 +11,8 @@ export interface Cell {
   ch: string
   fg: RGBA
   bg: RGBA | null
+  /** TextAttributes bits (bold, dim); 0 for none */
+  attrs?: number
 }
 
 export class Canvas {
@@ -23,13 +25,33 @@ export class Canvas {
     this.cells = Array.from({ length: height }, () => Array<Cell | null>(width).fill(null))
   }
 
-  put(x: number, y: number, ch: string, fg: RGBA, opts: { bg?: RGBA | null } = {}) {
+  put(x: number, y: number, ch: string, fg: RGBA, opts: { bg?: RGBA | null; attrs?: number } = {}) {
     x = Math.round(x)
     y = Math.round(y)
     if (x < 0 || y < 0 || x >= this.width || y >= this.height) return
-    this.cells[y]![x] = { ch, fg, bg: opts.bg ?? null }
+    this.cells[y]![x] = { ch, fg, bg: opts.bg ?? null, attrs: opts.attrs ?? 0 }
+  }
+
+  /**
+   * Write text from column `x`, clipped at `max` (the canvas's width by
+   * default). A wide character takes two cells, the second left empty so
+   * the row keeps its width. Returns the column after the text.
+   */
+  text(x: number, y: number, s: string, fg: RGBA, opts: { attrs?: number; max?: number } = {}): number {
+    const max = Math.min(opts.max ?? this.width, this.width)
+    for (const { segment } of graphemes.segment(s)) {
+      const w = Bun.stringWidth(segment)
+      if (w === 0) continue
+      if (x + w > max) break
+      this.put(x, y, segment, fg, { attrs: opts.attrs })
+      if (w === 2) this.put(x + 1, y, "", fg, { attrs: opts.attrs })
+      x += w
+    }
+    return x
   }
 }
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
 
 const same = (a: RGBA | null, b: RGBA | null) => a === b || (!!a && !!b && a.equals(b))
 
@@ -38,13 +60,14 @@ export function CanvasView({ canvas, from = 0 }: { canvas: Canvas; from?: number
   return (
     <box flexDirection="column" height={canvas.height} flexShrink={0}>
       {canvas.cells.map((row, y) => {
-        const runs: { text: string; fg: RGBA | null; bg: RGBA | null }[] = []
+        const runs: { text: string; fg: RGBA | null; bg: RGBA | null; attrs: number }[] = []
         for (const cell of row.slice(from)) {
           const fg = cell?.fg ?? null
           const bg = cell?.bg ?? null
+          const attrs = cell?.attrs ?? 0
           const last = runs.at(-1)
-          if (last && same(last.fg, fg) && same(last.bg, bg)) last.text += cell?.ch ?? " "
-          else runs.push({ text: cell?.ch ?? " ", fg, bg })
+          if (last && same(last.fg, fg) && same(last.bg, bg) && last.attrs === attrs) last.text += cell?.ch ?? " "
+          else runs.push({ text: cell?.ch ?? " ", fg, bg, attrs })
         }
         while (runs.length && !runs.at(-1)!.fg && !runs.at(-1)!.bg) runs.pop()
         return (
@@ -53,7 +76,7 @@ export function CanvasView({ canvas, from = 0 }: { canvas: Canvas; from?: number
               ? " "
               : runs.map((r, i) =>
                   r.fg || r.bg ? (
-                    <span key={i} fg={r.fg ?? undefined} bg={r.bg ?? undefined}>
+                    <span key={i} fg={r.fg ?? undefined} bg={r.bg ?? undefined} attributes={r.attrs || undefined}>
                       {r.text}
                     </span>
                   ) : (
