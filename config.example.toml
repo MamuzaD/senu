@@ -24,3 +24,12 @@ home = "~/.codex-work"
 kind = "claude"
 name = "work"
 home = "~/.claude"
+
+# The agent picker (senu agents). On macOS, when the agent you jump to is in
+# a session already showing in another Ghostty tab, senu raises that tab
+# (through Ghostty's AppleScript dictionary; macOS asks once for Automation
+# permission) instead of pulling the session into the tab you're in. Set it
+# to false to always switch the current tab's client. It does nothing outside
+# Ghostty on macOS.
+[agents]
+raise_ghostty_tab = true

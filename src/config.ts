@@ -19,6 +19,20 @@ export interface Config {
     profiles: UsageProfile[]
     scene: UsageScene
   }
+  agents: {
+    /** macOS: jumping to a session shown in another Ghostty tab raises that tab instead of pulling the session into this one. */
+    raiseGhosttyTab: boolean
+  }
+}
+
+const defaultAgents = (): Config["agents"] => ({ raiseGhosttyTab: true })
+
+function parseAgents(raw: unknown): Config["agents"] {
+  if (raw === undefined) return defaultAgents()
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new ConfigError("agents: expected a table ([agents])")
+  const { raise_ghostty_tab: raise } = raw as Record<string, unknown>
+  if (raise !== undefined && typeof raise !== "boolean") throw new ConfigError("agents.raise_ghostty_tab: expected true or false")
+  return { raiseGhosttyTab: raise ?? defaultAgents().raiseGhosttyTab }
 }
 
 const KINDS: UsageKind[] = ["codex", "claude"]
@@ -63,7 +77,7 @@ function parseProfile(raw: unknown, index: number): UsageProfile {
 }
 
 export function loadConfig(path = configPath): Config {
-  if (!existsSync(path)) return { usage: { profiles: defaultProfiles(), scene: sceneOf(undefined) } }
+  if (!existsSync(path)) return { usage: { profiles: defaultProfiles(), scene: sceneOf(undefined) }, agents: defaultAgents() }
 
   let data: Record<string, unknown>
   try {
@@ -86,5 +100,5 @@ export function loadConfig(path = configPath): Config {
     seen.add(key)
   }
 
-  return { usage: { profiles, scene: sceneOf(usage.scene) } }
+  return { usage: { profiles, scene: sceneOf(usage.scene) }, agents: parseAgents(data.agents) }
 }
