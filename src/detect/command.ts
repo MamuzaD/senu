@@ -6,6 +6,7 @@ import type { DetectionInput } from "./regions.ts"
 
 const HELP = `usage: senu scout [pane] [agent]
        senu scout explain <pane> [agent]
+       senu scout manifest refresh [--check] [--daily]
 
 Without a pane, scout lists every agent pane and its state.
 With a pane, it prints that pane's state: working, blocked, idle or unknown.
@@ -132,6 +133,7 @@ export async function scoutCommand(args: string[], config: Config): Promise<numb
     return 0
   }
   if (sub === "explain") return explainCommand(rest, config)
+  if (sub === "manifest") return (await import("./refresh.ts")).manifestsCommand(rest, config)
   if (!sub) return scanCommand()
   return classifyCommand(args, config)
 }

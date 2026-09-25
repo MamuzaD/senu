@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { ConfigError, loadConfig, type Config } from "./config.ts"
 import { classifyCommand, explainCommand, scoutCommand } from "./detect/command.ts"
+import { manifestsCommand } from "./detect/refresh.ts"
 import { usageCommand } from "./usage/command.ts"
 import { watchCommand } from "./watch/command.ts"
 
@@ -12,7 +13,7 @@ commands:
   vision    show Codex and Claude usage limits and today's cost
   watch     classify agent panes in the background, for the status bar
   agents    pick an agent to jump to (not ported yet)
-  scout     scan agent panes or explain a state
+  scout     scan agent panes, explain a state, or refresh detection manifests
   help      show this help
 `
 
@@ -28,8 +29,10 @@ const COMMANDS: Record<string, Command> = {
   watch: watchCommand,
   agents: notPorted("agents"),
   scout: scoutCommand,
+  // The live tmux config still invokes manifests refresh; keep old spellings working.
   classify: classifyCommand,
   explain: explainCommand,
+  manifests: (args, config) => manifestsCommand(args, config),
 }
 
 async function main(argv: string[]): Promise<number> {

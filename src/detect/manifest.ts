@@ -271,7 +271,7 @@ export function parseManifest(text: string): Manifest {
   }
 }
 
-const matchesAgent = (m: Manifest, agent: Agent) => [m.id, ...m.aliases].some((name) => parseAgent(name) === agent)
+export const matchesAgent = (m: Manifest, agent: Agent) => [m.id, ...m.aliases].some((name) => parseAgent(name) === agent)
 
 /**
  * The override if it's usable, else the bundled manifest with a warning saying
