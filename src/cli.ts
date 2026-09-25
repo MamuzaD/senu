@@ -1,9 +1,5 @@
 #!/usr/bin/env bun
 import { ConfigError, loadConfig, type Config } from "./config.ts"
-import { classifyCommand, explainCommand, scoutCommand } from "./detect/command.ts"
-import { manifestsCommand } from "./detect/refresh.ts"
-import { usageCommand } from "./usage/command.ts"
-import { watchCommand } from "./watch/command.ts"
 
 const HELP = `senu: watches AI coding agents in tmux
 
@@ -24,15 +20,16 @@ const notPorted = (name: string): Command => async () => {
   return 1
 }
 
+// loaded on demand: the watch daemon runs all day and shouldn't carry the popups' OpenTUI
 const COMMANDS: Record<string, Command> = {
-  usage: usageCommand,
-  watch: watchCommand,
+  vision: async (a, c) => (await import("./usage/command.ts")).usageCommand(a, c),
+  watch: async (a, c) => (await import("./watch/command.ts")).watchCommand(a, c),
   agents: notPorted("agents"),
-  scout: scoutCommand,
+  scout: async (a, c) => (await import("./detect/command.ts")).scoutCommand(a, c),
   // The live tmux config still invokes manifests refresh; keep old spellings working.
-  classify: classifyCommand,
-  explain: explainCommand,
-  manifests: (args, config) => manifestsCommand(args, config),
+  classify: async (a, c) => (await import("./detect/command.ts")).classifyCommand(a, c),
+  explain: async (a, c) => (await import("./detect/command.ts")).explainCommand(a, c),
+  manifests: async (a, c) => (await import("./detect/refresh.ts")).manifestsCommand(a, c),
 }
 
 async function main(argv: string[]): Promise<number> {
