@@ -135,16 +135,22 @@ function paint(v: View): Canvas {
 
   // ---- footer
   const fy = H - 1
-  const keys = v.confirming ? "y kill · any other key keeps it" : "j/k move · ⏎ jump · x kill · r refresh · q quit"
-  c.text(1, fy, keys, colors.dim)
   const more = [v.top > 0 ? `↑${v.top}` : "", rows.length > v.top + visible ? `↓${rows.length - v.top - visible}` : ""].filter(Boolean).join(" ")
-  const note = v.dive ? "senu dives" : v.daemon === "dead" || rows.some((r) => r.source === "live") ? "senu scouts live" : "senu keeps watch"
-  const tail = more ? `${more}  ${note}` : note
-  const tx = right - [...tail].length + 1
-  if (tx > keys.length + 3) {
-    if (more) c.text(tx, fy, more, colors.muted)
-    c.text(tx + (more ? more.length + 2 : 0), fy, note, v.dive ? brand.gold : v.daemon === "alive" || note === "senu keeps watch" ? brand.shadow : brand.dusk)
-  }
+  const live = v.daemon === "dead" || rows.some((r) => r.source === "live")
+  const note = v.dive ? "senu dives" : live ? "senu scouts live" : "senu keeps watch"
+  const noteFg = v.dive ? brand.gold : live ? brand.dusk : brand.shadow
+  // narrow: the keys shorten first, then the note goes; the scroll count stays
+  const keys = v.confirming
+    ? "y kill · any other key keeps it"
+    : [..."j/k move · ⏎ jump · x kill · r refresh · q quit"].length + more.length + note.length + 6 <= W
+      ? "j/k move · ⏎ jump · x kill · r refresh · q quit"
+      : "⏎ jump · x kill · q quit"
+  c.text(1, fy, keys, colors.dim)
+  const room = right - [...keys].length - 3
+  const tail = more.length + note.length + 2 <= room ? [more, note] : [more]
+  let tx = right + 1 - tail.filter(Boolean).reduce((n, s) => n + [...s].length + 2, -2)
+  if (more && more.length <= room) tx = c.text(tx, fy, more, colors.muted) + 2
+  if (tail.length === 2) c.text(tx, fy, note, noteFg)
 
   // ---- Senu, on the rule at its right end, facing the list
   if (!noColor && W >= 30) {
@@ -158,9 +164,15 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
   const [data, setData] = useState(initial)
-  const [selId, setSelId] = useState<string | null>(initial.rows[0]?.windowId ?? null)
-  const [selIndex, setSelIndex] = useState(0)
-  const [confirming, setConfirming] = useState<AgentRow | null>(null)
+  // the selection is its window, so it follows it as the list re-sorts, and its place, for when that window goes
+  const [cursor, setCursor] = useState<{ id: string | null; index: number }>({ id: initial.rows[0]?.windowId ?? null, index: 0 })
+  const [confirming, setConfirmingState] = useState<AgentRow | null>(null)
+  // the key handler reads the ref, so an x then y typed faster than a render still kills
+  const confirmingRef = useRef<AgentRow | null>(null)
+  const setConfirming = (row: AgentRow | null) => {
+    confirmingRef.current = row
+    setConfirmingState(row)
+  }
   const [diveAt, setDiveAt] = useState<number | null>(null)
   const [minute, setMinute] = useState(() => Math.floor(Date.now() / 60_000))
   const busy = useRef(false)
@@ -190,15 +202,22 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
 
   const rows = data.rows
   // the selection follows its window as the list re-sorts; if it's gone, stay at its place
-  let sel = rows.findIndex((r) => r.windowId === selId)
-  if (sel < 0) sel = Math.max(0, Math.min(selIndex, rows.length - 1))
-  const select = (i: number) => {
-    const k = Math.max(0, Math.min(i, rows.length - 1))
-    setSelIndex(k)
-    setSelId(rows[k]?.windowId ?? null)
+  const indexOf = (c: typeof cursor, list: AgentRow[]) => {
+    const i = list.findIndex((r) => r.windowId === c.id)
+    return i >= 0 ? i : Math.max(0, Math.min(c.index, list.length - 1))
   }
-  // a confirm for a pane that's gone is dropped
-  if (confirming && !rows.some((r) => r.paneId === confirming.paneId)) setConfirming(null)
+  const sel = indexOf(cursor, rows)
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+  const cursorRef = useRef(cursor)
+  cursorRef.current = cursor
+  // keys can land faster than renders, so each move starts from the latest cursor
+  const move = (to: (i: number, n: number) => number) => {
+    const list = rowsRef.current
+    const k = Math.max(0, Math.min(to(indexOf(cursorRef.current, list), list.length), list.length - 1))
+    cursorRef.current = { id: list[k]?.windowId ?? null, index: k }
+    setCursor(cursorRef.current)
+  }
 
   const visible = visibleCount(height)
   const topRef = useRef(0)
@@ -225,6 +244,7 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
   useKeyboard((key) => {
     if (diveAt != null) return
     const k = key.sequence === "G" ? "G" : key.name
+    const confirming = confirmingRef.current
     if (confirming) {
       if (k === "y" || k === "x" || k === "d" || k === "return") {
         const row = confirming
@@ -234,13 +254,13 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
       return
     }
     if (k === "q" || k === "escape") close()
-    else if (k === "j" || k === "down") select(sel + 1)
-    else if (k === "k" || k === "up") select(sel - 1)
-    else if (k === "g" || k === "home") select(0)
-    else if (k === "G" || k === "end") select(rows.length - 1)
+    else if (k === "j" || k === "down") move((i) => i + 1)
+    else if (k === "k" || k === "up") move((i) => i - 1)
+    else if (k === "g" || k === "home") move(() => 0)
+    else if (k === "G" || k === "end") move((_, n) => n - 1)
     else if (k === "r") void refresh()
-    else if ((k === "x" || k === "d") && rows[sel]) setConfirming(rows[sel]!)
-    else if (k === "return" && rows[sel]) go(rows[sel]!)
+    else if ((k === "x" || k === "d") && rowsRef.current.length) setConfirming(rowsRef.current[indexOf(cursorRef.current, rowsRef.current)]!)
+    else if (k === "return" && rowsRef.current.length) go(rowsRef.current[indexOf(cursorRef.current, rowsRef.current)]!)
   })
 
   const diving = diveAt != null
