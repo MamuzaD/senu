@@ -343,7 +343,7 @@ type View = "limits" | "cost"
 
 function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneTime }) {
   const renderer = useRenderer()
-  const { width } = useTerminalDimensions()
+  const { width, height } = useTerminalDimensions()
   const [sections, setSections] = useState<Section[]>(() =>
     profiles.map(() => ({ snapshot: null, refreshing: false, justUpdated: false, loadedAt: null, landedAt: null })),
   )
@@ -460,30 +460,32 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   const hint = view === "limits" ? "c cost · any other key closes" : "l limits · any other key closes"
 
   return (
-    <box flexDirection="column" gap={1}>
-      {noColor ? null : <Sky plan={plan} width={width} />}
-      {profiles.map((profile, i) =>
-        view === "limits" ? (
-          <ProfileSection
-            key={`${profile.kind}:${profile.name}`}
-            profile={profile}
-            section={sections[i]!}
-            dots={dots}
-            fillFrom={fillFrom[i]!}
-            right={right}
-          />
-        ) : (
-          <CostSection
-            key={`${profile.kind}:${profile.name}`}
-            profile={profile}
-            plan={sections[i]!.snapshot?.planType ?? null}
-            today={todays[i] ?? null}
-            watching={watchingToday[i]!}
-            dots={dots}
-            right={right}
-          />
-        ),
-      )}
+    <box flexDirection="column" height={height} gap={1}>
+      <box flexDirection="column" gap={1} flexGrow={1} flexShrink={1} overflow="hidden">
+        {noColor ? null : <Sky plan={plan} width={width} />}
+        {profiles.map((profile, i) =>
+          view === "limits" ? (
+            <ProfileSection
+              key={`${profile.kind}:${profile.name}`}
+              profile={profile}
+              section={sections[i]!}
+              dots={dots}
+              fillFrom={fillFrom[i]!}
+              right={right}
+            />
+          ) : (
+            <CostSection
+              key={`${profile.kind}:${profile.name}`}
+              profile={profile}
+              plan={sections[i]!.snapshot?.planType ?? null}
+              today={todays[i] ?? null}
+              watching={watchingToday[i]!}
+              dots={dots}
+              right={right}
+            />
+          ),
+        )}
+      </box>
       <Line>
         {HEADER}
         <span fg={colors.muted} attributes={TextAttributes.DIM}>{hint}</span>

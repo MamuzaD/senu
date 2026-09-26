@@ -458,10 +458,9 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
   const layer = bird.onLoop && bird.near < 0.45 ? back : front
   for (const [dx, dy, w] of bird.pixels) layer.set(bird.x + dx, bird.y / 2 + dy, w ? wing : color)
 
-  // Only the snag can hide her on the far side of the loop; over the moon
-  // nothing does. The trail crosses the distant scene but dies in the moon's
-  // glare and behind the snag.
-  const hides = (x: number, y: number) => scene.treeAt(x, y) && !scene.orbAt(x, y)
+  // The snag hides her on the far side of the loop, even when the setting sun
+  // is behind it. The trail dies in the orb's glare and behind the snag.
+  const hides = (x: number, y: number) => scene.treeAt(x, y)
   const veils = (x: number, y: number) => scene.treeAt(x, y) || scene.orbAt(x, y)
   for (let r = 0; r < SCENE_ROWS; r++)
     for (let x = 0; x < cols; x++) {

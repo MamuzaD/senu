@@ -7,11 +7,11 @@ import { brand, hex, mix } from "./theme.ts"
  * Giza behind the usage popup, at night, dawn, day or dusk, in one composition:
  * three pyramids on the far dunes lit from the moon's (or sun's) side, three
  * dune bands, a Medjay campfire on the left, a lightning-struck snag on the
- * right for Senu to perch on, and the moon or sun low on the horizon between
- * them. By night the sky is the terminal's own and the stars are glyphs. The
+ * right for Senu to perch on, and the moon or sun above the dunes. By night
+ * the sky is the terminal's own and the stars are glyphs. The
  * other three paint the sky: dawn goes indigo through rose to pale gold with
  * the sun just rising and the fire down to embers; day is hot haze with the
- * sun where the moon was; dusk burns orange and magenta into purple with the
+ * sun higher over the dunes; dusk burns orange and magenta into purple with the
  * sun sinking through haze and the fire freshly lit. Nothing in it
  * belongs to a profile, so it looks the same however many profiles there
  * are. Painted into pixels, so Senu can be layered through it.
@@ -39,8 +39,8 @@ export type SceneTime = "night" | "dawn" | "day" | "dusk"
 
 export const night = hex("#1a1b26")
 
-/** The moon by night, the sun by day: the same spot, the same size (dawn and dusk sit it lower). */
-const ORB = { x: 56, y: 8, r: 4.8 }
+/** The moon and sun share a size; each scene places its orb in the sky. */
+const ORB_RADIUS = 4.8
 /** centre column and height in pixels, left to right */
 const PYRAMIDS = [
   { x: 10, size: 5 },
@@ -79,6 +79,8 @@ const SNAG_X = 67
 interface Palette {
   /** the painted sky's stops, zenith to horizon, or null for the terminal's own */
   sky: RGBA[] | null
+  /** horizontal position of the moon or sun within the 72-column composition */
+  orbX: number
   /** how far down the orb sits (dawn and dusk sit it low on the horizon) */
   orbY: number
   /** the orb's dim and bright ends, its maria (the moon's) and its glow into the sky (the sun's) */
@@ -105,7 +107,8 @@ const NIGHT_BARK = { "#": hex("#2b2430"), "+": hex("#6a5a5c"), ":": hex("#54484f
 const PALETTES: Record<SceneTime, Palette> = {
   night: {
     sky: null,
-    orbY: 8,
+    orbX: 32,
+    orbY: 5,
     orb: [hex("#b9a582"), hex("#f4ead0")],
     maria: hex("#a8977a"),
     glow: null,
@@ -126,12 +129,13 @@ const PALETTES: Record<SceneTime, Palette> = {
   dawn: {
     // cool and pastel: slate-blue overhead, a thin rose band, pale gold only at the sun; mist in the far dunes
     sky: [hex("#1e2850"), hex("#3e4a7c"), hex("#8c7fa6"), hex("#e3a9a2"), hex("#fbe6bc")],
-    orbY: 14,
+    orbX: 16,
+    orbY: 11,
     orb: [hex("#ffd9a6"), hex("#fff7e2")],
     maria: null,
     glow: hex("#ffe6c0"),
     glowR: 5,
-    // the light comes low from the right: soft rose faces, always darker than the sky behind them
+    // the light comes low from behind the pyramids: soft rose faces, always darker than the sky behind them
     lit: hex("#a8788a"),
     shade: hex("#3c3a66"),
     rim: hex("#ffdcb0"),
@@ -148,7 +152,8 @@ const PALETTES: Record<SceneTime, Palette> = {
   day: {
     // a hot, washed-out blue that goes to white haze at the horizon
     sky: [hex("#6c9ec9"), hex("#dcd9cb")],
-    orbY: 8,
+    orbX: 36,
+    orbY: 5,
     orb: [hex("#ffe9a8"), hex("#fffbea")],
     maria: null,
     glow: hex("#fff3c4"),
@@ -170,7 +175,8 @@ const PALETTES: Record<SceneTime, Palette> = {
   dusk: {
     // purple overhead, through magenta, to a hot orange horizon
     sky: [hex("#2e1f4a"), hex("#6a2c62"), hex("#c24a64"), hex("#f0803e"), hex("#f4b070")],
-    orbY: 12,
+    orbX: 62,
+    orbY: 14,
     orb: [hex("#ff8a3a"), hex("#ffd27a")],
     maria: null,
     glow: hex("#ff9a5a"),
@@ -280,7 +286,7 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
   const nearAt = (x: number) => near(x - ox)
 
   const glyphs: Glyph[] = []
-  const m = { ...ORB, x: ORB.x + ox, y: pal.orbY }
+  const m = { x: pal.orbX + ox, y: pal.orbY, r: ORB_RADIUS }
   const onDisc = (x: number, y: number) => (x - m.x) ** 2 + (y - m.y) ** 2 <= m.r ** 2
 
   if (pal.sky) {
