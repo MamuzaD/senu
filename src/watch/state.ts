@@ -1,14 +1,6 @@
 import type { Detection } from "../detect/engine.ts"
 import type { AgentState } from "../detect/manifest.ts"
 
-/**
- * The daemon's state machine, kept pure so it can be tested without tmux.
- * Per pane: herdr's publish rules, including its hold on a working → idle flip.
- * Per window: the folded state written to `@ai_state`, the sticky `done`, and
- * which transitions deserve a sound.
- */
-
-/** A pane's settled state. */
 export type PaneState = "idle" | "working" | "blocked"
 /** What `@ai_state` shows. `done` is idle that you haven't looked at yet. */
 export type WindowState = PaneState | "done"
@@ -23,18 +15,13 @@ export const IDLE_RECHECK_MS = 100
 export const IDLE_CONFIRMATIONS = 3
 export const IDLE_CAP_MS = 700
 
-/**
- * `unknown` is herdr's settled fallback for a Codex screen with no rule
- * matching, which in practice is Codex sitting at its prompt. It reads as idle
- * everywhere here, so working → unknown is a finish. (The only other `unknown`
- * rules are `skip_state_update` ones, which never reach this.)
- */
-export const settle = (s: AgentState): PaneState => (s === "unknown" ? "idle" : s)
+/** `unknown` remains distinct per pane and folds to idle for the window display. */
+export type ObservedPaneState = PaneState | "unknown"
 
 export interface PaneTrack {
-  /** The published state; null until the first detection that isn't skipped. */
-  state: PaneState | null
-  /** When a held working → idle flip was first seen. */
+  /** Last published state; null until a detection is published. */
+  state: ObservedPaneState | null
+  /** Start of a held working-to-idle/unknown transition, in the same ms as observe's now. */
   pendingSince: number | null
   confirmations: number
 }
@@ -45,7 +32,6 @@ export const isPending = (t: PaneTrack) => t.pendingSince !== null
 
 type Observation = Pick<Detection, "state" | "skipStateUpdate" | "visibleIdle">
 
-/** Feeds one detection into a pane's track. True if the published state changed. */
 export function observe(t: PaneTrack, d: Observation, now: number): boolean {
   const clear = () => {
     t.pendingSince = null
@@ -56,9 +42,10 @@ export function observe(t: PaneTrack, d: Observation, now: number): boolean {
     clear()
     return false
   }
-  const next = settle(d.state)
+  const next = d.state
+  const idleCandidate = next === "idle" || next === "unknown"
 
-  if (t.state === "working" && next === "idle" && !d.visibleIdle) {
+  if (t.state === "working" && idleCandidate && !d.visibleIdle) {
     if (t.pendingSince === null) {
       t.pendingSince = now
       t.confirmations = 0
@@ -72,26 +59,25 @@ export function observe(t: PaneTrack, d: Observation, now: number): boolean {
   return true
 }
 
-const RANK: Record<PaneState, number> = { idle: 1, working: 2, blocked: 3 }
+const RANK: Record<ObservedPaneState, number> = { unknown: 1, idle: 1, working: 2, blocked: 3 }
 
-/** `blocked` > `working` > `idle`; null for a window with no settled panes. */
-export function fold(states: (PaneState | null)[]): PaneState | null {
-  let best: PaneState | null = null
+export function fold(states: (ObservedPaneState | null)[]): PaneState | null {
+  let best: ObservedPaneState | null = null
   for (const s of states) if (s && (!best || RANK[s] > RANK[best])) best = s
-  return best
+  return best === "unknown" ? "idle" : best
 }
 
 export interface WindowTrack {
-  /** The folded state last tick. */
+  /** Folded state from the previous tick. */
   raw: PaneState
-  /** Finished while you weren't looking. */
+  /** Work finished while the window was not being viewed. */
   done: boolean
 }
 
 export interface WindowInput {
   id: string
-  states: (PaneState | null)[]
-  /** The active window of an attached session: you're looking at it. */
+  states: (ObservedPaneState | null)[]
+  /** Whether the window is active in an attached session. */
   focused: boolean
 }
 
@@ -110,11 +96,7 @@ export interface Step {
   sounds: SoundEvent[]
 }
 
-/**
- * One tick for every window that has agent panes. Updates `windows` in place,
- * dropping windows that are gone. A window's first tick never chimes, so a
- * daemon restart doesn't replay what's already on screen.
- */
+/** Mutates `windows`, removes absent windows, and suppresses sounds on each window's first tick. */
 export function step(windows: Map<string, WindowTrack>, inputs: WindowInput[]): Step {
   const display = new Map<string, WindowState>()
   const sounds: SoundEvent[] = []
@@ -134,7 +116,6 @@ export function step(windows: Map<string, WindowTrack>, inputs: WindowInput[]): 
       }
       if (raw === "blocked" && prev.raw !== "blocked") sounds.push({ kind: "request", window: w.id, focused: w.focused })
     }
-    // new activity, or you looked: either way nothing is waiting unseen
     if (raw !== "idle" || w.focused) track.done = false
     track.raw = raw
     windows.set(w.id, track)
@@ -147,7 +128,7 @@ export function step(windows: Map<string, WindowTrack>, inputs: WindowInput[]): 
 
 export interface SoundOptions {
   enabled: boolean
-  /** Chime for the focused window too. */
+  /** Whether focused windows may chime. */
   always: boolean
 }
 

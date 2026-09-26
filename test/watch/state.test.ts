@@ -59,7 +59,6 @@ describe("observe: herdr's idle hold", () => {
     observe(t, det("idle"), 1100)
     expect(observe(t, det("working"), 1200)).toBe(false)
     expect(isPending(t)).toBe(false)
-    // and the next idle starts the count over
     expect(observe(t, det("idle"), 1300)).toBe(false)
     expect(observe(t, det("idle"), 1400)).toBe(false)
     expect(observe(t, det("idle"), 1500)).toBe(false)
@@ -76,12 +75,13 @@ describe("observe: herdr's idle hold", () => {
     expect(observe(t, det("blocked"), 1000)).toBe(true)
   })
 
-  test("codex unknown is idle, and held like it", () => {
+  test("codex unknown stays ambiguous until the idle hold finishes", () => {
     const t = working()
     expect(observe(t, det("unknown"), 1000)).toBe(false)
     for (const n of [1, 2]) observe(t, det("unknown"), 1000 + n * 100)
     expect(observe(t, det("unknown"), 1300)).toBe(true)
-    expect(t.state).toBe("idle")
+    expect(t.state).toBe("unknown")
+    expect(fold([t.state])).toBe("idle")
   })
 
   test("skip_state_update changes nothing and cancels a pending flip", () => {
@@ -135,7 +135,7 @@ describe("step: windows, done and sounds", () => {
     step(windows, [w(["working"])])
     step(windows, [w(["idle"])])
     expect(step(windows, [w(["working"])]).display.get("@1")).toBe("working")
-    expect(step(windows, [w(["idle"], false)]).display.get("@1")).toBe("done") // a second finish
+    expect(step(windows, [w(["idle"], false)]).display.get("@1")).toBe("done")
   })
 
   test("entering blocked requests; staying blocked doesn't", () => {

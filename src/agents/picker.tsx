@@ -9,15 +9,11 @@ import { formatDuration } from "../usage/format.ts"
 import { jump, kill } from "./actions.ts"
 import { type AgentRow, type Attention, type Collected, type Collector } from "./collect.ts"
 
-/** Refresh the list this often. */
 const REFRESH_MS = 1000
 
-/** The header: faint stars, the title and counts, then the rule she sits on. */
 const RULE_ROW = 3
-/** The list starts here; each agent takes two rows and a gap. */
 const LIST_TOP = RULE_ROW + 2
 const PER_ROW = 3
-/** Columns: the selection bar, the state glyph, the text. */
 const BAR_X = 1
 const DOT_X = 3
 const TEXT_X = 6
@@ -25,19 +21,16 @@ const TEXT_X = 6
 const BOLD = TextAttributes.BOLD
 const faint = hex("#3b3d57")
 
-/** A few faint stars over the title, where she can't be. */
 const STARS: [number, number, string][] = [
   [0.14, 0, "·"], [0.31, 1, "·"], [0.47, 0, "✦"], [0.6, 2, "·"], [0.72, 0, "·"], [0.83, 1, "⋆"],
 ]
 
-/** "now", "4m", "2h13m": how long since the window last did something. */
 function age(activity: number, nowSeconds: number) {
   if (!activity) return ""
   const s = nowSeconds - activity
   return s < 60 ? "now" : formatDuration(s)
 }
 
-/** The window name, when it says something the label and the agent's name don't. */
 function windowNote(r: AgentRow) {
   const n = r.windowName
   if (!n || n === r.label || n === r.agent || /^\d+\.\d+/.test(n)) return ""
@@ -55,30 +48,25 @@ interface View {
   height: number
 }
 
-/** How many agents fit between the header and the footer. */
 const visibleCount = (height: number) => Math.max(1, Math.floor((height - LIST_TOP - 1) / PER_ROW))
 
-/** Draw the whole popup into one canvas, so Senu can dive across the list. */
 function paint(v: View): Canvas {
   const { width: W, height: H, rows } = v
   const c = new Canvas(W, H)
   const nowS = Date.now() / 1000
   const right = W - 2
 
-  // ---- header
   if (!noColor) for (const [fx, y, ch] of STARS) c.put(Math.round(fx * (W - 10)), y, ch, mix(faint, brand.papyrus, ch === "·" ? 0.25 : 0.45))
   let x = c.text(1, RULE_ROW - 1, "agents", brand.sand, { attrs: BOLD })
   x += 1
   for (const s of ["blocked", "working", "done", "idle"] as Attention[]) {
     const n = rows.filter((r) => r.state === s).length
     if (!n) continue
-    // ◯ draws wider than its cell in most fonts, so it gets a column of its own
     x = c.text(x + 1, RULE_ROW - 1, states[s].glyph, states[s].fg, { attrs: states[s].bold ? BOLD : 0 }) + (s === "idle" ? 1 : 0)
     x = c.text(x + 1, RULE_ROW - 1, String(n), colors.muted)
   }
   for (let i = 1; i < W - 1; i++) c.put(i, RULE_ROW, "─", colors.rule)
 
-  // ---- the list
   const visible = visibleCount(H)
   if (!rows.length) c.text(TEXT_X, LIST_TOP, "no agents in sight", colors.dim)
   const glow = v.dive ? rowGlow(v.dive) : { from: Infinity, k: 0 }
@@ -95,7 +83,6 @@ function paint(v: View): Canvas {
     if (killing) c.put(DOT_X, y, "✕", colors.bad, { attrs: BOLD })
     else c.put(DOT_X, y, st.glyph, lit(st.fg, DOT_X), { attrs: st.bold ? BOLD : 0 })
 
-    // line 1: the task, and how long since the window did anything
     const whenX = right - when.length + 1
     const labelMax = when ? whenX - 2 : right + 1
     const label = r.label
@@ -104,7 +91,6 @@ function paint(v: View): Canvas {
       const fg = selected ? brand.papyrus : colors.fg
       const next = c.text(lx, y, segment, lit(fg, lx), { attrs: selected ? BOLD : 0, max: labelMax })
       if (next === lx) {
-        // clipped: end on an ellipsis
         if (lx > TEXT_X) c.put(Math.min(lx, labelMax - 1), y, "…", selected ? brand.papyrus : colors.muted)
         break
       }
@@ -112,7 +98,6 @@ function paint(v: View): Canvas {
     }
     if (when) c.text(whenX, y, when, lit(colors.dim, whenX))
 
-    // line 2: the agent, its session and window, or the kill question
     const y2 = y + 1
     if (killing) {
       let kx = c.text(TEXT_X, y2, "kill this ", colors.bad)
@@ -133,13 +118,11 @@ function paint(v: View): Canvas {
     }
   }
 
-  // ---- footer
   const fy = H - 1
   const more = [v.top > 0 ? `↑${v.top}` : "", rows.length > v.top + visible ? `↓${rows.length - v.top - visible}` : ""].filter(Boolean).join(" ")
   const live = v.daemon === "dead" || rows.some((r) => r.source === "live")
   const note = v.dive ? "senu dives" : live ? "senu scouts live" : "senu keeps watch"
   const noteFg = v.dive ? brand.gold : live ? brand.dusk : brand.shadow
-  // narrow: the keys shorten first, then the note goes; the scroll count stays
   const keys = v.confirming
     ? "y kill · any other key keeps it"
     : [..."j/k move · ⏎ jump · x kill · r refresh · q quit"].length + more.length + note.length + 6 <= W
@@ -152,7 +135,6 @@ function paint(v: View): Canvas {
   if (more && more.length <= room) tx = c.text(tx, fy, more, colors.muted) + 2
   if (tail.length === 2) c.text(tx, fy, note, noteFg)
 
-  // ---- Senu, on the rule at its right end, facing the list
   if (!noColor && W >= 30) {
     const target = { x: DOT_X, y: LIST_TOP + (v.sel - v.top) * PER_ROW }
     paintSenu(c, v.dive ?? { t: null, perch: { x: W - 5, y: RULE_ROW }, target })
@@ -164,10 +146,9 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
   const [data, setData] = useState(initial)
-  // the selection is its window, so it follows it as the list re-sorts, and its place, for when that window goes
   const [cursor, setCursor] = useState<{ id: string | null; index: number }>({ id: initial.rows[0]?.windowId ?? null, index: 0 })
   const [confirming, setConfirmingState] = useState<AgentRow | null>(null)
-  // the key handler reads the ref, so an x then y typed faster than a render still kills
+  // Key events can arrive before React renders; refs keep confirmation and cursor updates synchronous.
   const confirmingRef = useRef<AgentRow | null>(null)
   const setConfirming = (row: AgentRow | null) => {
     confirmingRef.current = row
@@ -184,7 +165,6 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
     try {
       const next = await collector.collect()
       const key = JSON.stringify(next)
-      // an unchanged list draws nothing; the ages tick over once a minute
       if (key !== last.current) {
         last.current = key
         setData(next)
@@ -201,7 +181,6 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
   }, [])
 
   const rows = data.rows
-  // the selection follows its window as the list re-sorts; if it's gone, stay at its place
   const indexOf = (c: typeof cursor, list: AgentRow[]) => {
     const i = list.findIndex((r) => r.windowId === c.id)
     return i >= 0 ? i : Math.max(0, Math.min(c.index, list.length - 1))
@@ -211,7 +190,6 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
   rowsRef.current = rows
   const cursorRef = useRef(cursor)
   cursorRef.current = cursor
-  // keys can land faster than renders, so each move starts from the latest cursor
   const move = (to: (i: number, n: number) => number) => {
     const list = rowsRef.current
     const k = Math.max(0, Math.min(to(indexOf(cursorRef.current, list), list.length), list.length - 1))
@@ -231,7 +209,7 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
   }
 
   const go = (row: AgentRow) => {
-    // the jump goes first; the dive only plays over it
+    // Start navigation immediately; the dive must not delay the jump.
     const jumped = jump(row, { raiseGhosttyTab })
     if (reducedMotion || noColor || width < 30) {
       void jumped.finally(close)
@@ -276,7 +254,6 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
 
 export async function runPicker(collector: Collector, opts: { raiseGhosttyTab: boolean }): Promise<number> {
   const { promise: closed, resolve } = Promise.withResolvers<void>()
-  // collect while the renderer starts, so the first frame is the full list
   const [initial, renderer] = await Promise.all([
     collector.collect(),
     createCliRenderer({ useMouse: false, onDestroy: resolve }),
@@ -285,4 +262,3 @@ export async function runPicker(collector: Collector, opts: { raiseGhosttyTab: b
   await closed
   process.exit(0)
 }
-

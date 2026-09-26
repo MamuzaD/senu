@@ -31,7 +31,6 @@ function loadToken(configDir: string): TokenResult {
       if (result) return result
     }
   } catch {
-    // unreadable or malformed; fall through to the keychain
   }
 
   if (process.platform === "darwin") {
@@ -57,15 +56,9 @@ function toLimit(label: string, window: any, windowMs: number): Limit {
   }
 }
 
-/** Weekly limits scoped to one model, as the endpoint names them; each shows under "Week". */
 const MODEL_WEEKS: Record<string, string> = { seven_day_opus: "Opus", seven_day_sonnet: "Sonnet" }
-/** At most this many model rows, so three profiles still fit the popup. */
 const MAX_MODEL_ROWS = 2
 
-/**
- * The model weeklies the endpoint reports with a utilization: the ones closest
- * to running out when there are more than fit, kept in `MODEL_WEEKS` order.
- */
 function modelWeeks(data: any): Limit[] {
   const present = Object.entries(MODEL_WEEKS)
     .filter(([key]) => typeof data?.[key]?.utilization === "number")

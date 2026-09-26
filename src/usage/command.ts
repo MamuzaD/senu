@@ -22,13 +22,13 @@ export async function usageCommand(args: string[], config: Config): Promise<numb
 
   if (args[0] === "refresh") {
     const key = args.slice(1).find((a) => !a.startsWith("-"))
+    // --locked transfers a lock already claimed by the parent; refreshLocked releases it.
     const locked = args.includes("--locked")
     const targets = key ? profiles.filter((p) => profileKey(p) === key) : profiles
     if (!targets.length) {
       console.error(`senu vision: no profile "${key}" (have ${profiles.map(profileKey).join(", ")})`)
       return 2
     }
-    // --locked: the parent that spawned us already holds the lock
     await Promise.all(targets.map((p) => (locked || claimLock(p) ? refreshLocked(p) : null)))
     return 0
   }
@@ -40,7 +40,7 @@ export async function usageCommand(args: string[], config: Config): Promise<numb
       console.error(`senu vision: no profile "${keys.join(", ")}" (have ${profiles.map(profileKey).join(", ")})`)
       return 2
     }
-    // --locked: the popup that spawned us already holds the locks; --refresh: only update the cache
+    // --locked transfers the parent's profile locks; refreshTodayLocked releases each one.
     const locked = args.includes("--locked")
     const results = await Promise.all(
       targets.map(async (p) => {

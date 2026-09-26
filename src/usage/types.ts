@@ -27,7 +27,7 @@ export interface Banked {
 export interface Snapshot {
   ok: boolean
   error: string | null
-  /** epoch seconds when this snapshot was fetched */
+  /** Epoch seconds when this snapshot was fetched. */
   updatedAt: number
   planType: string | null
   limits: Limit[]

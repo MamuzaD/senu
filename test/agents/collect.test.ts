@@ -95,7 +95,6 @@ describe("daemon or live", () => {
     expect(trustsState("working", "alive")).toBe(true)
     expect(trustsState("working", "unknown")).toBe(true)
     expect(trustsState("working", "dead")).toBe(false)
-    // a window the daemon hasn't written yet, or no daemon at all
     expect(trustsState("", "alive")).toBe(false)
     expect(trustsState("", "unknown")).toBe(false)
   })
@@ -104,9 +103,7 @@ describe("daemon or live", () => {
 describe("codexTask", () => {
   test("the last prompt an agent turn followed, not the input box", () => {
     expect(codexTask(fixture("live-codex-idle.screen"))).toBe("is the sample command ready")
-    // a draft in the input box isn't the task
     expect(codexTask(fixture("live-codex-idle-draft.screen"))).toBe("check the sample project")
-    // while it works, the prompt it's working on
     expect(codexTask(fixture("codex-working-screen.screen"))).toBe("update the sample status line")
   })
 

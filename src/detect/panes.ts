@@ -1,15 +1,10 @@
+import { readFileSync } from "node:fs"
+import { dlopen, FFIType, ptr } from "bun:ffi"
 import { parseAgent, type Agent } from "./manifest.ts"
-
-/**
- * Finding agent panes in tmux, shared by `scout`, `watch` and `agents`.
- * The daemon polls every second, so a poll costs a fixed number of processes
- * however many panes there are: one `list-panes`, at most one `ps`, and one
- * `tmux` call that captures every screen.
- */
 
 export interface Pane {
   id: string
-  /** The pane's shell. Its terminal's foreground process group is the agent's. */
+  /** tmux's pane_pid: the initial process, usually a shell; used to find the terminal's foreground group. */
   pid: number
   /** tmux's `pane_current_command`: the foreground process's name. */
   command: string
@@ -50,7 +45,7 @@ const FIELDS = [
   "@ai_state",
   "host",
   "host_short",
-  // free text last, so a stray separator in it can't shift the other fields
+  // Keep the free-text title last so embedded separators cannot shift the fixed fields.
   "pane_title",
 ]
 const FORMAT = FIELDS.map((f) => `#{${f}}`).join(SEP)
@@ -61,23 +56,19 @@ async function run(argv: string[]): Promise<{ ok: boolean; out: string }> {
     const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
     return { ok: code === 0, out }
   } catch {
-    return { ok: false, out: "" } // tmux or ps not installed
+    return { ok: false, out: "" }
   }
 }
 
 let socketArgs: string[] = []
 
-/**
- * Points every tmux call at another server: `["-L", name]` or `["-S", path]`.
- * Without one, tmux picks the server from `$TMUX`, as `run-shell` sets it.
- */
+/** Pass tmux socket selectors (`-L name` or `-S path`); an empty list leaves socket selection to tmux. */
 export function useTmuxSocket(args: string[]) {
   socketArgs = args
 }
 
 export const tmux = (...args: string[]) => run(["tmux", ...socketArgs, ...args])
 
-/** Every pane in every session, in one `list-panes`. */
 export async function listPanes(): Promise<Pane[]> {
   const { out } = await tmux("list-panes", "-a", "-F", FORMAT)
   const panes: Pane[] = []
@@ -135,7 +126,7 @@ function baseName(token: string): string {
 export function agentFromArgv(argv: string[]): Agent | null {
   const [argv0, ...rest] = argv
   if (!argv0) return null
-  const name = baseName(argv0.replace(/^-/, "")) // a login shell's argv0 is `-zsh`
+  const name = baseName(argv0.replace(/^-/, ""))
   const direct = parseAgent(name)
   if (direct) return direct
   if (!isRuntime(name)) return null
@@ -157,59 +148,108 @@ interface Proc {
   pid: number
   pgid: number
   tpgid: number
-  argv: string[]
+  command: string
 }
 
-/** One `ps` for the whole machine. `args` is space-joined, so a path with spaces splits; herdr reads /proc and doesn't have that problem. */
-async function processTable(): Promise<Proc[]> {
-  const { ok, out } = await run(["ps", "-ax", "-o", "pid=,pgid=,tpgid=,args="])
-  if (!ok) return []
-  const procs: Proc[] = []
-  for (const line of out.split("\n")) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(.*)$/.exec(line)
-    if (m) procs.push({ pid: Number(m[1]), pgid: Number(m[2]), tpgid: Number(m[3]), argv: m[4]!.trim().split(/\s+/) })
+const CTL_KERN = 1
+const KERN_PROCARGS2 = 49
+
+const macSysctl = process.platform === "darwin"
+  ? dlopen("/usr/lib/libSystem.B.dylib", {
+      sysctl: { args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
+    }).symbols.sysctl
+  : null
+
+/** Returns a process's argv, or an empty list when it cannot be read. */
+export function processArgv(pid: number): string[] {
+  try {
+    if (process.platform === "linux") {
+      const argv = readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0")
+      if (argv.at(-1) === "") argv.pop()
+      return argv
+    }
+    if (!macSysctl) return []
+    const mib = new Int32Array([CTL_KERN, KERN_PROCARGS2, pid])
+    const size = new BigUint64Array(1)
+    if (macSysctl(ptr(mib), 3, 0, ptr(size), 0, 0) !== 0 || size[0] === 0n) return []
+    const data = new Uint8Array(Number(size[0]))
+    if (macSysctl(ptr(mib), 3, ptr(data), ptr(size), 0, 0) !== 0) return []
+    const bytes = Buffer.from(data.subarray(0, Number(size[0])))
+    const argc = bytes.readInt32LE(0)
+    if (argc <= 0) return []
+    let at = bytes.indexOf(0, 4) + 1
+    while (at < bytes.length && bytes[at] === 0) at++
+    const argv: string[] = []
+    for (let i = 0; i < argc && at < bytes.length; i++) {
+      const end = bytes.indexOf(0, at)
+      if (end < 0) return []
+      argv.push(bytes.toString("utf8", at, end))
+      at = end + 1
+    }
+    return argv
+  } catch {
+    return []
   }
-  return procs
 }
 
-/** The agent in the pane's foreground process group: its leader first, then any member. */
-function agentInForeground(pane: Pane, procs: Proc[]): Agent | null {
+async function processTable(panes: Pane[]): Promise<Proc[]> {
+  const { ok, out } = await run(["ps", "-ax", "-o", "pid=,pgid=,tpgid=,comm="])
+  if (!ok) return []
+  const rows: Proc[] = []
+  for (const line of out.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(.+)$/.exec(line)
+    if (m) rows.push({ pid: Number(m[1]), pgid: Number(m[2]), tpgid: Number(m[3]), command: m[4]! })
+  }
+  const shellPids = new Set(panes.map((p) => p.pid))
+  const foreground = new Set(rows.filter((p) => shellPids.has(p.pid) && p.tpgid > 0).map((p) => p.tpgid))
+  return rows.filter((p) => shellPids.has(p.pid) || foreground.has(p.pgid))
+}
+
+const needsArgv = (command: string) => isRuntime(baseName(command)) || VERSION_COMMAND.test(baseName(command))
+const claudeVersionPath = (path: string) => /(?:^|[/\\])claude[/\\]versions[/\\]\d+\.\d+(?:\.\d+)?(?:$|[/\\])/.test(path)
+
+export function agentFromProcess(command: string, argv: () => string[]): Agent | null {
+  const direct = parseAgent(baseName(command))
+  if (direct) return direct
+  if (!needsArgv(command)) return null
+  if (claudeVersionPath(command)) return "claude"
+  const args = argv()
+  return claudeVersionPath(args[0] ?? "") ? "claude" : agentFromArgv(args)
+}
+
+function agentInForeground(pane: Pane, procs: Proc[], argvFor: (pid: number) => string[]): Agent | null {
   const shell = procs.find((p) => p.pid === pane.pid)
   if (!shell || shell.tpgid <= 0) return null
   const group = procs.filter((p) => p.pgid === shell.tpgid)
   const leader = group.find((p) => p.pid === shell.tpgid)
   for (const p of leader ? [leader, ...group.filter((g) => g !== leader)] : group) {
-    const agent = agentFromArgv(p.argv)
+    const agent = agentFromProcess(p.command, () => argvFor(p.pid))
     if (agent) return agent
   }
   return null
 }
 
-/** Worth a `ps` lookup: a runtime that might be running an agent script, or Claude's versioned binary. */
-const needsArgv = (command: string) => isRuntime(baseName(command)) || VERSION_COMMAND.test(command)
-
-/**
- * Picks out the panes running an agent. The command name settles most panes;
- * the rest (`node`, `bun`, a version number) cost one `ps` between them.
- */
 export async function identifyAgents(panes: Pane[]): Promise<AgentPane[]> {
   const direct = (p: Pane) => parseAgent(baseName(p.command))
-  const procs = panes.some((p) => !direct(p) && needsArgv(p.command)) ? await processTable() : []
+  const procs = panes.some((p) => !direct(p) && needsArgv(p.command)) ? await processTable(panes) : []
+  const argvCache = new Map<number, string[]>()
+  const argvFor = (pid: number) => {
+    let argv = argvCache.get(pid)
+    if (!argv) argvCache.set(pid, (argv = processArgv(pid)))
+    return argv
+  }
 
   const found: AgentPane[] = []
   for (const p of panes) {
     let agent = direct(p)
     if (!agent && needsArgv(p.command)) {
-      agent = agentInForeground(p, procs)
-      // without ps, a version-number command is still almost certainly Claude
-      if (!agent && !procs.length && VERSION_COMMAND.test(p.command)) agent = "claude"
+      agent = agentInForeground(p, procs, argvFor)
     }
     if (agent) found.push({ ...p, agent })
   }
   return found
 }
 
-/** `listPanes` then `identifyAgents`. */
 export async function listAgentPanes(): Promise<AgentPane[]> {
   return identifyAgents(await listPanes())
 }
@@ -224,7 +264,6 @@ export async function capturePanes(ids: string[], history = 0): Promise<Map<stri
   if (!ids.length) return screens
 
   const capture = (id: string) => ["capture-pane", "-p", "-t", id, ...(history > 0 ? ["-S", `-${history}`] : [])]
-  // one tmux call: a marker line, then the screen, per pane
   const args: string[] = []
   for (const id of ids) args.push(...(args.length ? [";"] : []), "display-message", "-p", "-t", id, `${SEP}senu ${id}${SEP}`, ";", ...capture(id))
   const { out } = await tmux(...args)
@@ -246,7 +285,7 @@ export async function capturePane(id: string, history = 0): Promise<string | nul
   return ok ? out : null
 }
 
-/** The pane a tmux target (`%8`, `senu:2`, `senu:2.1`) names, or null if there's none. */
+/** Resolves a tmux pane, window, or session target; returns null when no pane matches. */
 export async function findPane(target: string): Promise<Pane | null> {
   const { ok, out } = await tmux("display-message", "-p", "-t", target, "#{pane_id}")
   if (!ok) return null

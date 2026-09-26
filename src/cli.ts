@@ -16,17 +16,13 @@ commands:
 
 type Command = (args: string[], config: Config) => Promise<number>
 
-// loaded on demand: the watch daemon runs all day and shouldn't carry the popups' OpenTUI
+// Load only the selected command so short invocations avoid initializing unrelated modules.
 const COMMANDS: Record<string, Command> = {
   vision: async (a, c) => (await import("./usage/command.ts")).usageCommand(a, c),
   watch: async (a, c) => (await import("./watch/command.ts")).watchCommand(a, c),
   agents: async (a, c) => (await import("./agents/command.ts")).agentsCommand(a, c),
   scout: async (a, c) => (await import("./detect/command.ts")).scoutCommand(a, c),
   sound: async (a, c) => (await import("./watch/sound-command.ts")).soundCommand(a, c),
-  // The live tmux config still invokes manifests refresh; keep old spellings working.
-  classify: async (a, c) => (await import("./detect/command.ts")).classifyCommand(a, c),
-  explain: async (a, c) => (await import("./detect/command.ts")).explainCommand(a, c),
-  manifests: async (a, c) => (await import("./detect/refresh.ts")).manifestsCommand(a, c),
 }
 
 async function main(argv: string[]): Promise<number> {

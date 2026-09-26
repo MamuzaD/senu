@@ -42,7 +42,6 @@ function gateMatches(g: Gate, text: string, lower: string): boolean {
   if (!g.contains.every((needle) => lower.includes(needle))) return false
   if (!g.regex.every((re) => re.test(text))) return false
   if (g.lineRegex.length) {
-    // every pattern must match some line (not: some pattern matches some line)
     const ls = lines(text)
     if (!g.lineRegex.every((re) => ls.some((l) => re.test(l)))) return false
   }
@@ -54,9 +53,7 @@ function gateMatches(g: Gate, text: string, lower: string): boolean {
 
 export const ruleMatches = (rule: Rule, text: string) => gateMatches(rule.gate, text, text.toLowerCase())
 
-/** `explain` against a given manifest instead of the agent's active one. */
 export function explainWith(loaded: LoadedManifest, agent: Agent, input: DetectionInput, previous: AgentState | null = null): Explanation {
-  // regions are cheap but rules share them; slice each one once per screen
   const regions = new Map<string, string>()
   const evaluated: EvaluatedRule[] = []
   let winner: Rule | null = null
@@ -112,7 +109,6 @@ export function classify(agent: Agent, input: DetectionInput, previous: AgentSta
   return detection
 }
 
-/** `classify` plus every rule's region and verdict, for `senu scout explain`. */
 export function explain(agent: Agent, input: DetectionInput, previous: AgentState | null = null): Explanation {
   return explainWith(loadManifest(agent), agent, input, previous)
 }

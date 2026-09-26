@@ -2,7 +2,6 @@ import { tmux } from "../detect/panes.ts"
 import type { AgentRow } from "./collect.ts"
 import { raiseGhosttyTab } from "./ghostty.ts"
 
-/** A tmux client: a terminal attached to a session. */
 export interface Client {
   name: string
   session: string
@@ -22,7 +21,6 @@ async function clients(): Promise<Client[]> {
     })
 }
 
-/** The client the picker's popup belongs to; null outside a client (a detached run). */
 async function currentClient(): Promise<string | null> {
   if (!process.env.TMUX) return null
   const { ok, out } = await tmux("display-message", "-p", "#{client_name}")
@@ -34,8 +32,7 @@ async function currentClient(): Promise<string | null> {
  * - `here`: its session is the one you're in, so just select the window.
  * - `raise`: its session is showing in another Ghostty tab, so raise that tab
  *   and point it at the window, rather than pulling the session into this tab.
- * - `switch`: switch this client to the session and window (the python
- *   picker's switch-client, and the fallback when raising fails).
+ * - `switch`: switch this client to the session and window; also the fallback when raising fails.
  */
 export type JumpPlan = "here" | "raise" | "switch"
 
@@ -52,7 +49,7 @@ export function planJump(
   return elsewhere ? "raise" : "switch"
 }
 
-/** Jump to the agent's window. Resolves once tmux (and Ghostty) have done it. */
+/** Waits for the tmux/Ghostty navigation attempts and returns the chosen plan; tmux failures do not reject. */
 export async function jump(row: AgentRow, opts: { raiseGhosttyTab: boolean }): Promise<JumpPlan> {
   const [all, current] = await Promise.all([clients(), currentClient()])
   let plan = planJump(row, all, current, { ...opts, platform: process.platform })
@@ -60,7 +57,7 @@ export async function jump(row: AgentRow, opts: { raiseGhosttyTab: boolean }): P
 
   const client = current ? ["-c", current] : []
   if (plan === "switch") {
-    // select the window first, so the client lands on it rather than flashing the session's last one
+    // Select first so switching clients does not briefly show the session's previous window.
     await tmux("select-window", "-t", row.windowId, ";", "switch-client", ...client, "-t", row.windowId)
   } else {
     await tmux("select-window", "-t", row.windowId)
@@ -68,7 +65,6 @@ export async function jump(row: AgentRow, opts: { raiseGhosttyTab: boolean }): P
   return plan
 }
 
-/** Kill the agent's pane; tmux closes the window with it if it was the last one. */
 export async function kill(row: AgentRow): Promise<boolean> {
   return (await tmux("kill-pane", "-t", row.paneId)).ok
 }

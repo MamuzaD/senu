@@ -26,26 +26,19 @@ import {
 import { readToday, spawnTodayRefresh, todayIsFresh, type Today } from "./today.ts"
 import { errorSnapshot, nowSeconds, type Banked, type Snapshot, type Spend } from "./types.ts"
 
-/** Older than this, a section says it's refreshing and watches for a newer snapshot. */
 const STALE_NOTICE_SECONDS = 10 * 60
 const POLL_MS = 1000
 const MAX_POLL_SECONDS = 20
 
-/** Bars fill from empty over this long, on open (staggered) and when fresh data lands. */
 const FILL_MS = 250
 const STAGGER_MS = 40
-/** Eagle Vision: a landed section's header and freshness hold gold, then ease back. */
 const VISION_HOLD_MS = 150
 const VISION_MS = 600
-/** A snapshot that takes longer than this to arrive was fetched, not read from cache. */
 const FETCHED_AFTER_MS = 250
 const DOTS_MS = 400
-/** The even-pace tick on a limit bar, and the behind-pace caret by its percent. */
 const PACE_MARK = brand.papyrus
-/** How long the popup watches for a background scan of today's transcripts to land. */
 const TODAY_WATCH_SECONDS = 30
 
-/** Headers and rows sit on the scene's columns: headers at 1, labels at 3, bars at 11. */
 const HEADER = " "
 const INDENT = "   "
 
@@ -53,22 +46,17 @@ interface Section {
   snapshot: Snapshot | null
   refreshing: boolean
   justUpdated: boolean
-  /** when the first snapshot arrived, on the `now()` clock */
+  /** First snapshot arrival on the monotonic now() clock, in ms. */
   loadedAt: number | null
-  /** when fresh data last landed (a refresh, or a fetch with nothing cached) */
+  /** Highlight start on the same clock; null when the initial result arrives within FETCHED_AFTER_MS. */
   landedAt: number | null
 }
 
-/** How strongly Eagle Vision lights a section right now, 1 to 0. */
 function vision(landedAt: number | null) {
   if (landedAt == null || !running(landedAt, VISION_MS)) return 0
   return 1 - tween(landedAt + VISION_HOLD_MS, VISION_MS - VISION_HOLD_MS, easeInOut)
 }
 
-/**
- * The dimmed clock after a countdown, shown only when a row `used` columns
- * long still ends by `right`, the column the freshness ends at.
- */
 function Clock({ at, used, right }: { at: number | null; used: number; right: number }) {
   const clock = formatClock(at)
   if (!clock || used + clockSuffix(clock).length > right) return null
@@ -80,19 +68,15 @@ function Row({ label, left, resetsAt, windowMs, fill, right, children }: {
   left: number | null
   resetsAt: number | null
   windowMs?: number | null
-  /** 0..1 through the bar fill */
   fill: number
-  /** the column the freshness ends at */
   right: number
   children?: ReactNode
 }) {
-  // the colour always comes from the real value, so a bar never changes state as it fills
   const color = colorFor(left)
   const shown = left == null ? null : left * fill
   const pct = shown == null ? "n/a" : `${Math.round(shown)}%`
   const reset = formatUntil(resetsAt)
   const even = left == null ? null : evenLeft(resetsAt, windowMs)
-  // behind pace (using faster than time passes) takes the percent's spare leading column
   const behind = even != null && left! < even - PACE_SLACK
   const cells = bar(shown)
   const at = even == null ? null : markCell(even)
@@ -128,7 +112,6 @@ function SpendRow({ spend, fill, cols }: { spend: Spend; fill: number; cols: num
   const color = spend.reached ? colors.bad : colorFor(spend.left)
   const reset = formatUntil(spend.resetsAt)
   const text = ` $${spend.used.toFixed(2)}/$${spend.limit.toFixed(0)}${spend.reached ? " cap reached" : ""}`
-  // two spaces before the reset when it fits in the scene's width, one when it doesn't
   const used = INDENT.length + LABEL_WIDTH + BAR_WIDTH + 5 + text.length
   const gap = reset && used + 2 + reset.length <= cols ? "  " : " "
   const shown = spend.left == null ? null : spend.left * fill
@@ -161,7 +144,6 @@ function BankedRow({ banked, right }: { banked: Banked; right: number }) {
   const titles = [...new Set(banked.credits.map((c) => c.title).filter((t): t is string => !!t))].sort()
   const expires = soonest != null ? formatUntil(soonest)! : null
   const tail = titles.length ? "  " + titles.join(" · ") : ""
-  // the clock goes after the expiry only if the titles after it still fit too
   const used =
     label.length + banked.available + ` ${banked.available}`.length + (banked.available === 1 ? 6 : 7) +
     (expires ? "  expires ".length + expires.length : 0) + tail.length
@@ -183,7 +165,6 @@ function BankedRow({ banked, right }: { banked: Banked; right: number }) {
   )
 }
 
-/** The freshness text for a section's header, and its colour. */
 function freshness(section: Section, dots: string, glow: (fg: RGBA) => RGBA): { text: string; fg: RGBA } {
   const { snapshot } = section
   if (!snapshot) return { text: `fetching${dots}`, fg: colors.muted }
@@ -198,7 +179,6 @@ function ProfileSection({ profile, section, dots, fillFrom, right }: {
   section: Section
   dots: string
   fillFrom: number | null
-  /** the column the freshness ends at */
   right: number
 }) {
   const { snapshot } = section
@@ -231,11 +211,6 @@ function ProfileSection({ profile, section, dots, fillFrom, right }: {
   )
 }
 
-/**
- * Milliseconds until some minute-granular time on screen ("3m ago",
- * "resets 4h19m") next ticks over, so an idle popup wakes about once a
- * minute instead of every second.
- */
 function untilNextMinute(sections: Section[]): number {
   const t = Date.now() / 1000
   const phases: number[] = []
@@ -252,10 +227,7 @@ function untilNextMinute(sections: Section[]): number {
   return phases.length ? Math.ceil(Math.min(...phases) * 1000) + 30 : 60_000
 }
 
-/**
- * "auto" follows local time, decided once as the popup opens: dawn from 05:30,
- * day from 07:00, dusk from 17:30, night from 19:30.
- */
+/** Auto uses local time: dawn 05:30, day 07:00, dusk 17:30, night 19:30. */
 export function sceneTime(scene: UsageScene, at = new Date()): SceneTime {
   if (scene !== "auto") return scene
   const minutes = at.getHours() * 60 + at.getMinutes()
@@ -265,20 +237,12 @@ export function sceneTime(scene: UsageScene, at = new Date()): SceneTime {
   return "night"
 }
 
-/** The model column in the cost view, wide enough for a model's name without its date. */
 const MODEL_WIDTH = 22
-/** At most this many models under a profile's total, costliest first. */
 const TOP_MODELS = 3
 
 const usd = (v: number | null) => (v == null ? "—" : `$${v.toFixed(2)}`)
-/** `claude-opus-4-1-20250805` reads as `claude-opus-4-1`. */
 const modelName = (m: string) => m.replace(/-\d{8}$/, "")
 
-/**
- * A profile in the cost view: today's estimated spend and tokens, from its own
- * transcripts, then its costliest models. `+` marks a total that leaves out
- * models the price table doesn't know.
- */
 function CostSection({ profile, plan, today, watching, dots, right }: {
   profile: UsageProfile
   plan: string | null
@@ -370,7 +334,6 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
     })
   }, [])
 
-  // today's spend: cached totals on the first frame, a detached rescan if they're stale, watched quietly
   const [todays, setTodays] = useState(() => profiles.map((p) => readToday(p)))
   const [watchingToday, setWatchingToday] = useState(() => profiles.map(() => false))
   useEffect(() => {
@@ -397,7 +360,6 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   const refreshing = sections.some((s) => s.refreshing)
   const busy = sections.some((s) => !s.snapshot || s.refreshing)
 
-  // poll every second while something refreshes; otherwise only wake when a minute ticks over
   useEffect(() => {
     if (!refreshing) return
     const id = setInterval(() => setTick((t) => t + 1), POLL_MS)
@@ -409,7 +371,6 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
     return () => clearTimeout(id)
   }, [busy, tick])
 
-  // watch refreshing sections for the background refresh to land
   useEffect(() => {
     const watchedOut = Date.now() - startedAt >= MAX_POLL_SECONDS * 1000
     sections.forEach((section, i) => {
@@ -424,7 +385,6 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   }, [tick])
 
   const [view, setView] = useState<View>("limits")
-  // c or t: cost and tokens; l: back to the limits; tab flips; anything else closes
   useKeyboard((key) => {
     if (key.name === "c" || key.name === "t") setView("cost")
     else if (key.name === "l") setView("limits")
@@ -434,7 +394,6 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
 
   const t = now()
   const cols = sceneCols(width)
-  // once nothing is busy she comes round and lands on the snag, once
   if (!busy && leave.current == null) leave.current = leaveAfter(t - openedAt)
   const plan: FlightPlan = {
     t: t - openedAt,
@@ -501,6 +460,6 @@ export async function runUsagePopup(profiles: UsageProfile[], scene: UsageScene)
   const renderer = await createCliRenderer({ useMouse: false, onDestroy: resolve })
   createRoot(renderer).render(<UsagePopup profiles={profiles} time={sceneTime(scene)} />)
   await closed
-  // exit now rather than waiting on in-flight fetches, or a tmux popup stays open blank
+  // In-flight snapshot fetches can keep a closed tmux popup alive and leave it blank.
   process.exit(0)
 }

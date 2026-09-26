@@ -9,7 +9,6 @@ const run = (rules: string, screen: string, agent: Agent = "codex", previous: Ag
   explainWith(loaded(rules), agent, { screen, oscTitle: "" }, previous)
 
 describe("herdr rule semantics", () => {
-  // herdr's rule_semantics_apply_gates_priority_and_line_regex, verbatim
   const rules = `
 [[rules]]
 id = "low_contains"
@@ -54,7 +53,6 @@ line_regex = ["^exact line$"]
     const r = `[[rules]]\nid = "r"\nstate = "working"\nline_regex = ['^/btw', 'esc to close$']`
     expect(run(r, "/btw what now").rule).toBeNull()
     expect(run(r, "/btw what now\n  esc to close").rule?.id).toBe("r")
-    // both on one line counts too
     expect(run(r, "/btw esc to close").rule?.id).toBe("r")
   })
 
@@ -118,36 +116,26 @@ contains = ["x"]
   })
 })
 
-/**
- * Synthetic pane fixtures preserve the prompt, status, and menu shapes needed
- * to exercise each state without keeping a user's terminal transcript. `python`
- * is what the old engine said, where it was wrong.
- */
 const FIXTURES = join(import.meta.dir, "../fixtures/detect")
 const cases: { name: string; agent: Agent; state: AgentState; rule: string; python?: AgentState; previous?: AgentState }[] = [
   { name: "live-claude-idle", agent: "claude", state: "idle", rule: "live_prompt_box" },
   { name: "live-claude-idle-draft", agent: "claude", state: "idle", rule: "live_prompt_box" },
-  // herdr 9c96f7d dropped codex's osc_title_idle: an idle Codex is ambiguous, not idle
   { name: "live-codex-idle", agent: "codex", state: "unknown", rule: "codex_state_ambiguous", python: "idle" },
   { name: "live-codex-idle-draft", agent: "codex", state: "unknown", rule: "codex_state_ambiguous", python: "idle" },
 
   { name: "claude-working-title", agent: "claude", state: "working", rule: "osc_title_working" },
   { name: "claude-working-screen", agent: "claude", state: "working", rule: "live_turn_working" },
   { name: "claude-blocked-bash", agent: "claude", state: "blocked", rule: "bash_permission_prompt" },
-  // "Do you want to" is capitalised; the python's case-sensitive contains missed it
   { name: "claude-blocked-edit", agent: "claude", state: "blocked", rule: "legacy_no_prompt_blocker", python: "idle" },
   { name: "claude-blocked-question", agent: "claude", state: "blocked", rule: "live_blocked_form", python: "idle" },
   { name: "claude-transcript-viewer", agent: "claude", state: "working", rule: "transcript_viewer", previous: "working", python: "idle" },
-  // "Esc to close" alone isn't the /btw overlay; the python took either line_regex
   { name: "claude-overlay-esc-to-close", agent: "claude", state: "idle", rule: "osc_title_idle", python: "working" },
   { name: "claude-no-signal", agent: "claude", state: "idle", rule: "default_known_agent_idle_fallback" },
 
   { name: "codex-working-title", agent: "codex", state: "working", rule: "osc_title_working" },
-  // before_current_prompt_marker was "" in the python, so this rule never fired
   { name: "codex-working-screen", agent: "codex", state: "working", rule: "screen_working_fallback", python: "idle" },
   { name: "codex-blocked-approval", agent: "codex", state: "blocked", rule: "live_strong_blocker", python: "idle" },
   { name: "codex-blocked-title", agent: "codex", state: "blocked", rule: "osc_title_blocked" },
-  // whole_recent_without_current_prompt_marker was "" in the python too
   { name: "codex-weak-blocker", agent: "codex", state: "blocked", rule: "weak_blocker", python: "idle" },
   { name: "codex-no-title", agent: "codex", state: "unknown", rule: "codex_state_ambiguous" },]
 

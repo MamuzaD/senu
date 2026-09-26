@@ -6,11 +6,8 @@ import { fetchClaude } from "./claude.ts"
 import { fetchCodex } from "./codex.ts"
 import { nowSeconds, type Snapshot } from "./types.ts"
 
-/** Serve from cache without refreshing while younger than this. */
 const FRESH_TTL_SECONDS: Record<UsageProfile["kind"], number> = { codex: 60, claude: 300 }
-/** Past the fresh TTL but younger than this, serve stale and refresh in the background. */
 const STALE_MAX_AGE_SECONDS = 15 * 60
-/** A refresh lock older than this is treated as abandoned. */
 const LOCK_TTL_SECONDS = 15
 
 const usageDir = join(cacheDir, "usage")
@@ -33,7 +30,6 @@ export function readCache(p: UsageProfile): CacheEntry | null {
 }
 
 function writeCache(p: UsageProfile, snapshot: Snapshot) {
-  // keep good data over a failed refresh; it ages out to a synchronous fetch instead
   if (!snapshot.ok && readCache(p)?.snapshot.ok) return
   mkdirSync(usageDir, { recursive: true })
   const entry: CacheEntry = { cachedAt: nowSeconds(), snapshot }
@@ -42,7 +38,6 @@ function writeCache(p: UsageProfile, snapshot: Snapshot) {
   renameSync(tmp, cachePath(p))
 }
 
-/** Atomically claims a lock file. False if another process holds one younger than `ttlSeconds`. */
 export function claimLockFile(path: string, ttlSeconds = LOCK_TTL_SECONDS): boolean {
   mkdirSync(dirname(path), { recursive: true })
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -55,7 +50,6 @@ export function claimLockFile(path: string, ttlSeconds = LOCK_TTL_SECONDS): bool
         if (ageMs < ttlSeconds * 1000) return false
         unlinkSync(path)
       } catch {
-        // lock vanished between open and stat; retry
       }
     }
   }
@@ -68,7 +62,6 @@ export function releaseLockFile(path: string) {
   } catch {}
 }
 
-/** Atomically claims the refresh lock. False if another refresh holds a live one. */
 export const claimLock = (p: UsageProfile) => claimLockFile(lockPath(p))
 export const releaseLock = (p: UsageProfile) => releaseLockFile(lockPath(p))
 
@@ -90,11 +83,6 @@ export async function refreshLocked(p: UsageProfile): Promise<Snapshot> {
   }
 }
 
-/**
- * Spawns a detached `senu vision refresh` that outlives the popup. The lock is
- * claimed here and handed to the child with --locked, so the child doesn't
- * try to re-claim a lock its parent already holds.
- */
 function spawnBackgroundRefresh(p: UsageProfile) {
   if (!claimLock(p)) return
   try {
@@ -108,7 +96,7 @@ function spawnBackgroundRefresh(p: UsageProfile) {
   }
 }
 
-/** Stale-while-revalidate read of a profile's snapshot. */
+/** Returns fresh cached data, serves stale data while refreshing, or awaits a fetch when expired. */
 export async function getSnapshot(p: UsageProfile): Promise<Snapshot> {
   const cached = readCache(p)
   const age = cached ? nowSeconds() - cached.cachedAt : Infinity
@@ -119,7 +107,6 @@ export async function getSnapshot(p: UsageProfile): Promise<Snapshot> {
     return cached.snapshot
   }
 
-  // nothing usable cached; block on a fetch so there's something to show
   if (claimLock(p)) return refreshLocked(p)
   const snapshot = await fetchProfile(p)
   writeCache(p, snapshot)

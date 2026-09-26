@@ -43,7 +43,6 @@ async function testSounds(args: string[], config: Config): Promise<number> {
 
 async function once(): Promise<number> {
   const watcher = new Watcher()
-  // dry: read and fold, but print instead of writing
   if (!(await watcher.tick(true, Date.now(), true))) {
     console.error("senu watch once: no tmux server, or no panes")
     return 1

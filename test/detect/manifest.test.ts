@@ -16,7 +16,6 @@ describe("parseManifest", () => {
     expect(parseManifest(rule(`contains = ["Do You"]`)).rules[0]!.gate.contains).toEqual(["do you"])
   })
 
-  // herdr's manifest_validation_* tests
   const invalid: [string, string][] = [
     ["no rules", `id = "codex"`],
     ["unknown manifest field", `id = "codex"\nextra = 1\n[[rules]]\nid = "r"\ncontains = ["x"]`],

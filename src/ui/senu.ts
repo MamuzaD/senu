@@ -1,48 +1,32 @@
 import type { RGBA } from "@opentui/core"
 import { Braille, Quad, type Canvas } from "./canvas.tsx"
-import { PERCH, SCENE_ROWS, desert, night, sceneShift, type SceneTime } from "./desert.ts"
+import { PERCH, SCENE_ROWS, desert, night, sceneShift, type Desert, type SceneTime } from "./desert.ts"
 import { clamp, easeInOut, easeOut, phase, pulse, smooth } from "./motion.ts"
 import { brand, hex, mix } from "./theme.ts"
 
-/**
- * Senu over the desert. While anything is loading or refreshing she circles
- * a wide loop, seen from the ground by the campfire: the near arc high and
- * large, the far arc lower, smaller and dusk-coloured, with a gold comet
- * trail behind her. Nothing in the distance can hide her (she's close
- * overhead); only the snag in the foreground can. Once nothing is busy she
- * eases off the loop into one arc round the snag, flares, folds and perches
- * facing the moon, and the scene is still. Everything is a pure function of
- * the plan, so a frame can be drawn for any moment.
- */
 export interface FlightPlan {
-  /** ms since the popup opened */
+  /** ms since the popup opened. */
   t: number
-  /** any section loading or refreshing */
+  /** Whether any section is loading or refreshing. */
   busy: boolean
-  /** when each landing happened (fresh data arriving), for the rings and the glint */
+  /** Fresh-data arrival times in ms since opening, used for rings and glints. */
   marks: number[]
-  /** when she breaks off the loop for the snag, once nothing is busy */
+  /** Departure time in ms since opening; null until a landing is scheduled. */
   leave: number | null
-  /** reduced motion: she is simply on the snag */
+  /** Reduced motion: the bird is already on the snag. */
   perched: boolean
-  /** the night desert or the day one */
   time: SceneTime
-  /** how wide the scene is drawn, from `sceneCols` */
+  /** Scene width in columns, calculated by `sceneCols`. */
   cols: number
 }
 
-/** From touching to folded and still. */
 const FOLD_MS = 330
-/** She never breaks off sooner than this after opening, so a fresh open still shows her flying in. */
 const MIN_LEAVE_MS = 600
 const FLARE_MS = 260
 
-/** Is the flight over (she's folded on the snag), so nothing needs drawing again? */
+/** True once the bird is still on the snag, so the scene no longer needs animation frames. */
 export const flightDone = (p: FlightPlan) => p.perched || (p.leave != null && p.t >= p.leave + arcMs(p.leave) + FOLD_MS)
 
-// ------------------------------------------------------------------- the loop
-
-/** The loop, in braille dots (2 per column, 4 per row). */
 const LOOP = { cx: 68, cy: 15, rx: 54, ry: 9, lap: 3000, wobble: 1, phase: -8.998, near: 7, far: 3 }
 const omega = (2 * Math.PI) / LOOP.lap
 const loopAngle = (t: number) => LOOP.phase + omega * t
@@ -52,16 +36,11 @@ function loopAt(t: number) {
   return {
     x: LOOP.cx + LOOP.rx * Math.cos(a),
     y: LOOP.cy + LOOP.ry * Math.sin(a) + LOOP.wobble * Math.sin(2 * a),
-    // 0 on the far (lower) arc, 1 on the near (upper) arc
     near: (1 - Math.sin(a)) / 2,
   }
 }
 
-/**
- * When she can break off once nothing is busy: the first moment at or after
- * `settledAt` that she's on the upper left of the loop heading right, so the
- * arc always carries her the same way round the snag.
- */
+/** First time after settling when the bird is on the loop's upper left, heading right toward the snag. */
 export function leaveAfter(settledAt: number): number {
   let t = Math.max(settledAt, MIN_LEAVE_MS)
   for (let i = 0; i < 400; i++, t += 10) {
@@ -71,7 +50,6 @@ export function leaveAfter(settledAt: number): number {
   return t
 }
 
-/** A wingbeat that mostly glides: two beats a lap, then a held soar. */
 function wingbeat(t: number) {
   const inLap = t % LOOP.lap
   if (inLap < 720) return -Math.sin((2 * Math.PI * inLap) / 360) * 0.9
@@ -84,16 +62,12 @@ const hermite = (p0: number, v0: number, p1: number, v1: number, u: number) => {
   return (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * v0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * v1
 }
 
-// ---------------------------------------------------------------- the arc in
-
-/** Her perch, in dots, and where the flare starts: just beyond it and above, so she comes in toward the moon. */
 const PERCH_DOTS = { x: PERCH.x * 2 + 1, y: PERCH.y * 2 }
 const FLARE_FROM = { x: PERCH_DOTS.x + 2, y: PERCH_DOTS.y - 4 }
 
-/** How far round the loop the blend looks ahead; it shapes the arc, not how long she takes on it. */
+// Look-ahead shapes the arc; arcTiming derives its travel duration from distance and speed.
 const ARC_SHAPE_MS = 940
 
-/** Her speed on the loop, in dots per ms, which she keeps on the way in. */
 const LOOP_SPEED = (() => {
   let len = 0
   let p = loopAt(0)
@@ -105,11 +79,6 @@ const LOOP_SPEED = (() => {
   return len / LOOP.lap
 })()
 
-/**
- * The arc as a shape, `u` from breaking off (0) to the flare (1): the circling
- * eases into a curl that swings in front of the snag, round its far side and
- * in over the top.
- */
 function arcPoint(leave: number, u: number) {
   const th = 2.6 * (1 - easeInOut(u))
   const shrink = 1 - u ** 1.6
@@ -119,12 +88,9 @@ function arcPoint(leave: number, u: number) {
   return { x: lp.x + (curl.x - lp.x) * w, y: lp.y + (curl.y - lp.y) * w }
 }
 
-/**
- * When she reaches each point of the arc: at her loop speed, easing off over
- * the last quarter into the flare, so she never speeds up to reach the snag.
- */
 const arcs = new Map<number, { ms: number; times: number[] }>()
 function arcTiming(leave: number) {
+  // Preserve loop speed on entry, then decelerate over the final quarter of the arc.
   let timing = arcs.get(leave)
   if (timing) return timing
   const N = 240
@@ -147,10 +113,9 @@ function arcTiming(leave: number) {
   return timing
 }
 
-/** From breaking off the loop to her talons touching the snag. */
+/** ms from leaving the loop to touching the perch, including the flare but excluding the fold. */
 export const arcMs = (leave: number) => arcTiming(leave).ms + FLARE_MS
 
-/** How far along the arc's shape she is `dt` ms after breaking off. */
 function arcU(leave: number, dt: number) {
   const { times } = arcTiming(leave)
   const N = times.length - 1
@@ -165,12 +130,6 @@ function arcU(leave: number, dt: number) {
   return (lo + (dt - times[lo]!) / (times[hi]! - times[lo]!)) / N
 }
 
-// ---------------------------------------------------------------- her sprites
-
-/**
- * In flight, seen from below, hand-set in quadrant pixels (tall: 5×10 on
- * screen) in three sizes and four poses; `ORIGIN` is the row on her flight line.
- */
 const FLYING = {
   near: {
     glide: ["##...........##", ".####.....####.", "....#######....", ".......#......."],
@@ -204,13 +163,7 @@ export function flyingPixels(span: number, flap: number): [number, number, boole
   return out
 }
 
-/**
- * Landing, facing right (mirrored to face the moon). `#` and `h` are her pale
- * head and breast, `w` her folded wing a shade darker; `o` marks her talons
- * (`O` in wing tone). The flare flings her wings up and wide with her legs
- * down; touch closes them; fold draws them over her back; then she perches
- * in profile, hooked head forward, tail hanging past the branch.
- */
+// Quadrant pixels, facing right: #/h body, w wing, o/O talon origin in body/wing color, . empty.
 const LANDING = {
   flare: ["#...........#", "##.........##", ".##..###..##.", "..####.####..", "....#####....", ".....#.o....."],
   touch: [".#.........#.", "..##.....##..", "...##.##.##..", "....#####....", ".....###.....", ".....#.o....."],
@@ -235,23 +188,22 @@ export function landingPixels(pose: LandingPose, facing: 1 | -1): [number, numbe
 }
 
 interface Bird {
-  /** in braille dots; her quad pixel is (x, y / 2) */
+  /** Position in braille dots: two across and four down per terminal cell. */
   x: number
   y: number
   near: number
+  /** Offsets in quadrant pixels; the boolean selects the wing color. */
   pixels: [number, number, boolean][]
   onLoop: boolean
   flying: boolean
 }
 
-/** Where she is and how she holds herself. `perch` is in dots; she lands facing left, toward the moon. */
 function birdAt(t: number, plan: FlightPlan, perch: { x: number; y: number }): Bird {
   const facing = -1
   const land = plan.leave == null ? Infinity : plan.leave + arcMs(plan.leave)
   if (plan.perched || t >= land) {
     const since = plan.perched ? Infinity : t - land
     const pose: LandingPose = since < 140 ? "touch" : since < FOLD_MS ? "fold" : "perch"
-    // the branch gives a little under her as she takes it
     const give = since < 200 ? Math.sin((Math.PI * since) / 200) * 2 : 0
     return { x: perch.x, y: perch.y + give, near: 1, pixels: landingPixels(pose, facing), onLoop: false, flying: false }
   }
@@ -263,7 +215,6 @@ function birdAt(t: number, plan: FlightPlan, perch: { x: number; y: number }): B
     return { x: p.x, y: p.y, near: p.near, pixels: flyingPixels(span, wingbeat(t)), onLoop: true, flying: true }
   }
   if (t < flareAt) {
-    // one continuous arc round the snag, at the speed she kept on the loop
     const u = arcU(plan.leave, t - plan.leave)
     const at = arcPoint(plan.leave, u)
     const n0 = loopAt(plan.leave).near
@@ -279,7 +230,6 @@ function birdAt(t: number, plan: FlightPlan, perch: { x: number; y: number }): B
       flying: true,
     }
   }
-  // the flare: she stalls onto the broken top, talons first
   const u = easeOut((t - flareAt) / FLARE_MS)
   return {
     x: f.x + (perch.x - f.x) * u,
@@ -291,14 +241,6 @@ function birdAt(t: number, plan: FlightPlan, perch: { x: number; y: number }): B
   }
 }
 
-// ------------------------------------------------------------------ composite
-
-/**
- * Her colours and her trail's. By night she's pale papyrus near and dusk far
- * with a gold comet; by day, against the bright haze, she's a warm dark brown
- * with a rust trail that fades into the sky. Over the moon or the sun she's a
- * dark silhouette either way.
- */
 export const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint: RGBA; trail: RGBA; trailEnd: RGBA; ringEnd: RGBA }> = {
   night: {
     near: brand.papyrus,
@@ -309,7 +251,6 @@ export const TONES: Record<SceneTime, { near: RGBA; far: RGBA; wing: RGBA; glint
     trailEnd: hex("#2f3550"),
     ringEnd: hex("#2a2e44"),
   },
-  // backlit against the low sun: pale up in the dark sky, a silhouette against the bright
   dawn: {
     near: hex("#f4e4cc"),
     far: hex("#e8cfd8"),
@@ -357,7 +298,6 @@ export const QUAD_AT = [
   [1, 1, 8],
 ] as const
 
-/** Braille dot bits in the top two rows of a cell. */
 const TOP_DOTS = 0x01 | 0x08 | 0x02 | 0x10
 const popcount = (b: number) => {
   let n = 0
@@ -365,11 +305,15 @@ const popcount = (b: number) => {
   return n
 }
 
-/**
- * Put one cell from four quadrant pixels, choosing the two colours that lose
- * the least (her pixels weigh most). Null is the terminal's own background.
- */
-export function putQuads(c: Canvas, x: number, y: number, sub: (RGBA | null)[], bird: boolean[]) {
+const BIRD_COLOR_WEIGHT = 6
+
+interface QuadPalette {
+  foreground: RGBA | null
+  background: RGBA | null
+  sourceColorCount: number
+}
+
+function quadPalette(sub: (RGBA | null)[], bird: boolean[]): QuadPalette {
   const keys: (RGBA | null)[] = []
   for (const s of sub) if (!keys.some((k) => k === s || (k && s && k.equals(s)))) keys.push(s)
   let a = keys[0] ?? null
@@ -379,53 +323,43 @@ export function putQuads(c: Canvas, x: number, y: number, sub: (RGBA | null)[], 
     for (let i = 0; i < keys.length; i++)
       for (let j = i + 1; j < keys.length; j++) {
         let cost = 0
-        sub.forEach((s, k) => (cost += Math.min(dist(s, keys[i]!), dist(s, keys[j]!)) * (bird[k] ? 6 : 1)))
+        sub.forEach((s, k) => (cost += Math.min(dist(s, keys[i]!), dist(s, keys[j]!)) * (bird[k] ? BIRD_COLOR_WEIGHT : 1)))
         if (cost < best) [best, a, b] = [cost, keys[i]!, keys[j]!]
       }
   }
-  // her colour goes in front; the terminal background can only be the back
   const hers = sub.find((_, k) => bird[k]) ?? null
   if (a === null || (hers && b && dist(hers, b) < dist(hers, a))) [a, b] = [b, a]
-  let mask = 0
-  sub.forEach((s, k) => {
-    if (keys.length <= 2 ? s === a || (s && a && s.equals(a)) : dist(s, a) <= dist(s, b)) mask |= QUAD_AT[k]![2]
-  })
-  if (!a) return
-  if (mask === 15) c.put(x, y, "█", a)
-  else c.put(x, y, QUADS[mask]!, a, b ? { bg: b } : {})
+  return { foreground: a, background: b, sourceColorCount: keys.length }
 }
 
-/** Paint the desert and Senu for the plan into a `plan.cols × SCENE_ROWS` canvas. */
-export function paintSky(c: Canvas, plan: FlightPlan) {
-  const { t, cols } = plan
-  const scene = desert(c, { t, busy: plan.busy, time: plan.time, cols })
-  const tone = TONES[plan.time]
-  // she goes dark over anything bright: by day that's only the sun (the whole
-  // sky is bright, so she's dark brown there instead); at night, dawn and dusk
-  // it's the moon or sun and the bright low sky she's backlit against
-  // she flies in the 72-column composition; `sx` moves her into a wider scene with it, in dots
-  const sx = sceneShift(cols) * 2
-  const at = (u: number) => {
-    const b = birdAt(u, plan, PERCH_DOTS)
-    return { ...b, x: b.x + sx }
-  }
-  const bird0 = at(t)
-  // backlit or not is decided for her whole body (the average sky under her), so she never splits in two in the glow
+/** Renders four quadrant pixels with at most two colors; null leaves the terminal background visible. */
+export function putQuads(c: Canvas, x: number, y: number, sub: (RGBA | null)[], bird: boolean[]) {
+  const { foreground, background, sourceColorCount } = quadPalette(sub, bird)
+  let mask = 0
+  sub.forEach((s, k) => {
+    if (sourceColorCount <= 2 ? s === foreground || (s && foreground && s.equals(foreground)) : dist(s, foreground) <= dist(s, background)) mask |= QUAD_AT[k]![2]
+  })
+  if (!foreground) return
+  if (mask === 15) c.put(x, y, "█", foreground)
+  else c.put(x, y, QUADS[mask]!, foreground, background ? { bg: background } : {})
+}
+
+type Tone = (typeof TONES)[SceneTime]
+
+function isBacklit(scene: Desert, bird: Bird, time: SceneTime): boolean {
   let sum = 0
   let n = 0
-  for (const [dx, dy] of bird0.pixels) {
-    const u = scene.px.get(Math.floor((bird0.x + dx) / 2), Math.round(bird0.y / 2 + dy))
+  for (const [dx, dy] of bird.pixels) {
+    const u = scene.px.get(Math.floor((bird.x + dx) / 2), Math.round(bird.y / 2 + dy))
     if (u) (sum += lum(u)), n++
   }
-  const backlit = plan.time !== "day" && n > 0 && sum / n > (plan.time === "night" ? 0.55 : 0.5)
-  const glare = (x: number, y: number, _under: RGBA) => scene.orbAt(x, y) || backlit
-  const back = new Quad(cols, SCENE_ROWS)
-  const front = new Quad(cols, SCENE_ROWS)
-  const trail = new Braille(cols, SCENE_ROWS)
-  const bird = bird0
+  return time !== "day" && n > 0 && sum / n > (time === "night" ? 0.55 : 0.5)
+}
 
+function paintTrail(plan: FlightPlan, tone: Tone, at: (t: number) => Bird, sx: number): Braille {
+  const { t, cols } = plan
+  const trail = new Braille(cols, SCENE_ROWS)
   if (!plan.perched) {
-    // the comet: where she's been, gold at her tail, cooling as she comes in to land
     const cool = plan.leave == null ? 1 : 1 - smooth(phase(t, plan.leave, arcMs(plan.leave)))
     const N = 60
     if (cool > 0)
@@ -440,7 +374,6 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
         if (f > 0.55) trail.dot(p.x, p.y + 1, col, 5 + f * 10)
       }
 
-    // a ring opens where she was as each section lands
     for (const at of plan.marks) {
       const age = t - at
       if (age < 0 || age > 900) continue
@@ -450,17 +383,23 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
         trail.dot(p.x + sx + r * Math.cos(a), p.y + r * Math.sin(a) * 0.55, mix(tone.trail, tone.ringEnd, age / 900), 20)
     }
   }
+  return trail
+}
 
+function paintBird(plan: FlightPlan, tone: Tone, bird: Bird): { back: Quad; front: Quad } {
+  const back = new Quad(plan.cols, SCENE_ROWS)
+  const front = new Quad(plan.cols, SCENE_ROWS)
   const lastLand = plan.marks.length ? Math.max(...plan.marks) : null
-  const glint = plan.perched ? 0 : pulse(t, lastLand, 600)
+  const glint = plan.perched ? 0 : pulse(plan.t, lastLand, 600)
   const color = mix(mix(tone.far, tone.near, clamp(bird.near * 1.3 - 0.15)), tone.glint, glint)
   const wing = mix(color, tone.wing, 0.5)
   const layer = bird.onLoop && bird.near < 0.45 ? back : front
   for (const [dx, dy, w] of bird.pixels) layer.set(bird.x + dx, bird.y / 2 + dy, w ? wing : color)
+  return { back, front }
+}
 
-  // The snag hides her on the far side of the loop, even when the setting sun
-  // is behind it. The trail dies in the orb's glare and behind the snag.
-  const hides = (x: number, y: number) => scene.treeAt(x, y)
+function compositeScene(c: Canvas, scene: Desert, trail: Braille, layers: { back: Quad; front: Quad }, backlit: boolean, cols: number) {
+  const { back, front } = layers
   const veils = (x: number, y: number) => scene.treeAt(x, y) || scene.orbAt(x, y)
   for (let r = 0; r < SCENE_ROWS; r++)
     for (let x = 0; x < cols; x++) {
@@ -470,9 +409,9 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
       const hers: boolean[] = []
       for (const [dx, dy] of QUAD_AT) {
         const under = scene.px.get(x, r * 2 + dy)
-        const open = !under || !hides(x, r * 2 + dy)
+        const open = !under || !scene.treeAt(x, r * 2 + dy)
         const her = front.px[r * 2 + dy]?.[x * 2 + dx] ?? (open ? (back.px[r * 2 + dy]?.[x * 2 + dx] ?? null) : null)
-        sub.push(her ? (under && glare(x, r * 2 + dy, under) ? mix(night, her, 0.12) : her) : under)
+        sub.push(her ? (under && (scene.orbAt(x, r * 2 + dy) || backlit) ? mix(night, her, 0.12) : her) : under)
         hers.push(!!her)
       }
       if (hers.some(Boolean)) {
@@ -484,13 +423,9 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
       const ground = top && bot ? mix(top, bot, 0.5) : (top ?? bot)
       const fg = tb ? trail.color[r]![x]! : null
       if (tb && top && bot && dist(top, bot) > 64) {
-        // an outline (a peak, the sun's rim) splits this cell: flattening it would
-        // chip the shape, so the line slips behind it here
         if (top.equals(bot)) c.put(x, r, "█", top)
         else c.put(x, r, "▀", top, { bg: bot })
       } else if (tb && top && bot) {
-        // a cell holds two scene pixels but only one background: give it to the
-        // half the dots leave bare, so the flattened half is the one under them
         const nt = popcount(tb & TOP_DOTS)
         const k = nt / popcount(tb)
         c.put(x, r, String.fromCharCode(0x2800 + tb), fg!, { bg: mix(top, bot, k) })
@@ -503,4 +438,17 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
       } else if (top) c.put(x, r, "▀", top)
       else if (bot) c.put(x, r, "▄", bot)
     }
+}
+
+/** Paints into a canvas sized plan.cols by SCENE_ROWS terminal cells; plan times are ms since opening. */
+export function paintSky(c: Canvas, plan: FlightPlan) {
+  const scene = desert(c, { t: plan.t, busy: plan.busy, time: plan.time, cols: plan.cols })
+  const tone = TONES[plan.time]
+  const sx = sceneShift(plan.cols) * 2
+  const at = (t: number) => {
+    const bird = birdAt(t, plan, PERCH_DOTS)
+    return { ...bird, x: bird.x + sx }
+  }
+  const bird = at(plan.t)
+  compositeScene(c, scene, paintTrail(plan, tone, at, sx), paintBird(plan, tone, bird), isBacklit(scene, bird, plan.time), plan.cols)
 }

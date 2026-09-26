@@ -1,5 +1,6 @@
 import { statSync } from "node:fs"
 import { join } from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
 import { loadConfig } from "../config.ts"
 import { classify } from "../detect/engine.ts"
 import { AGENTS, overridePath, reloadManifests, type Agent } from "../detect/manifest.ts"
@@ -23,22 +24,11 @@ import {
   type WindowTrack,
 } from "./state.ts"
 
-/**
- * The watch loop. A full tick, once a second, costs one `list-panes`, at most
- * one `ps` and one batched capture of the agent panes, however many there are.
- * While a pane holds a working → idle flip, herdr's 100 ms re-checks capture
- * just that pane. `@ai_state` is diffed against what tmux has, so a write that
- * failed (a window closing mid-tick) is retried on the next tick, and a stale
- * value left by a crashed daemon is cleared on the first.
- */
-
 export const POLL_MS = 1000
-/** Give up on a tmux server that's been gone this long; its successor starts its own daemon. */
 const SERVER_GONE_MS = 30_000
-/** Stamped (epoch seconds) with every write, so `senu agents` can tell a live daemon from a dead one's leftovers. */
+/** tmux option stamped with epoch seconds so clients can detect a stale watcher. */
 export const HEARTBEAT_OPTION = "@ai_watch_heartbeat"
 
-/** tmux commands that bring each window's `@ai_state` from `current` to `wanted`. */
 export function optionCommands(current: Map<string, string>, wanted: Map<string, WindowState>): string[][] {
   const cmds: string[][] = []
   for (const [id, state] of wanted) if (current.get(id) !== state) cmds.push(["set-option", "-w", "-t", id, "@ai_state", state])
@@ -46,16 +36,13 @@ export function optionCommands(current: Map<string, string>, wanted: Map<string,
   return cmds
 }
 
-/** Several tmux commands in one process, `;`-separated. */
 export async function tmuxBatch(cmds: string[][]) {
   if (!cmds.length) return
   await tmux(...cmds.flatMap((c, i) => (i ? [";", ...c] : c)))
 }
 
-/** Each window's `@ai_state` as tmux has it now. */
 const currentStates = (panes: Pane[]) => new Map(panes.map((p) => [p.windowId, p.aiState]))
 
-/** A signature of the override files, so the loop notices an edit or a refresh. */
 function manifestStamp(): string {
   return AGENTS.map((a) => {
     try {
@@ -69,18 +56,15 @@ function manifestStamp(): string {
 
 export class Watcher {
   private panes = new Map<string, PaneTrack>()
-  /** Pane id → agent, from the last full tick; re-checks reuse it instead of running `ps`. */
   private agents = new Map<string, Agent>()
   private windows = new Map<string, WindowTrack>()
   private stamp = manifestStamp()
 
-  /** Some pane is holding a working → idle flip and wants a re-check soon. */
   get pending(): boolean {
     for (const t of this.panes.values()) if (isPending(t)) return true
     return false
   }
 
-  /** Forget everything, e.g. after the server restarted and window ids mean new windows. */
   reset() {
     this.panes.clear()
     this.agents.clear()
@@ -142,13 +126,11 @@ export class Watcher {
     return true
   }
 
-  /** Every window's state, for `senu watch once`. */
   snapshot(): { panes: Map<string, PaneTrack>; windows: Map<string, WindowTrack> } {
     return { panes: this.panes, windows: this.windows }
   }
 }
 
-/** Plays at most one of each kind per tick, reading sound preferences only when something chimes. */
 async function chime(events: SoundEvent[]) {
   const sound = loadConfig().sound
   const opts = { enabled: effectiveSoundEnabled(sound.enabled), always: sound.always }
@@ -159,14 +141,13 @@ async function chime(events: SoundEvent[]) {
   }
 }
 
-/** Unsets every `@ai_state` and the heartbeat, so a stopped daemon leaves no stale dots behind. */
 export async function clearStates() {
   await tmuxBatch([...optionCommands(currentStates(await listPanes()), new Map()), ["set-option", "-gu", HEARTBEAT_OPTION]])
 }
 
 export const pidPath = (socket: string) => join(stateDir, "watch", `${socket.replace(/[^\w.-]/g, "_")}.pid`)
 
-/** The daemon. Returns at once (0) if another one already watches this server. */
+/** Returns 0 immediately when another daemon already holds this tmux server's lock. */
 export async function runDaemon(): Promise<number> {
   const { ok, out } = await tmux("display-message", "-p", "#{socket_path}")
   const socket = out.trim()
@@ -179,20 +160,15 @@ export async function runDaemon(): Promise<number> {
 
   const watcher = new Watcher()
   let stopping = false
-  let inflight: Promise<unknown> = Promise.resolve()
-  const stop = async () => {
-    if (stopping) return
+  const stopSignal = new AbortController()
+  const requestStop = () => {
     stopping = true
-    try {
-      await inflight // a tick finishing after the clear would write a state back
-      await clearStates()
-    } finally {
-      releasePidFile(lock)
-      process.exit(0)
-    }
+    stopSignal.abort()
   }
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(sig, stop)
-  process.on("exit", () => releasePidFile(lock))
+  const signals = ["SIGTERM", "SIGINT", "SIGHUP"] as const
+  for (const sig of signals) process.on(sig, requestStop)
+  const release = () => releasePidFile(lock)
+  process.on("exit", release)
 
   let lastFull = 0
   let goneSince: number | null = null
@@ -200,22 +176,32 @@ export async function runDaemon(): Promise<number> {
     if (await watcher.tick(full, now)) {
       goneSince = null
     } else if (!(await tmux("display-message", "-p", "#{pid}")).ok) {
-      // no server: remember nothing, and give up if it doesn't come back
       watcher.reset()
       goneSince ??= now
     }
   }
-  while (!stopping) {
-    const started = Date.now()
-    // full ticks keep a steady once-a-second beat; re-checks slot in between
-    const full = started - lastFull >= POLL_MS - IDLE_RECHECK_MS / 2
-    if (full) lastFull = started
-    inflight = poll(full, started).catch(() => {}) // one bad poll never kills the daemon
-    await inflight
-    if (goneSince !== null && started - goneSince > SERVER_GONE_MS) break
-    const wait = watcher.pending ? IDLE_RECHECK_MS : lastFull + POLL_MS - Date.now()
-    await Bun.sleep(Math.max(wait, 10))
+  try {
+    while (!stopping) {
+      const started = Date.now()
+      const full = started - lastFull >= POLL_MS - IDLE_RECHECK_MS / 2
+      if (full) lastFull = started
+      await poll(full, started).catch(() => {})
+      if (stopping || (goneSince !== null && started - goneSince > SERVER_GONE_MS)) break
+      const wait = watcher.pending ? IDLE_RECHECK_MS : lastFull + POLL_MS - Date.now()
+      try {
+        await delay(Math.max(wait, 10), undefined, { signal: stopSignal.signal })
+      } catch (error) {
+        if (!stopping) throw error
+      }
+    }
+  } finally {
+    try {
+      await clearStates()
+    } finally {
+      for (const sig of signals) process.off(sig, requestStop)
+      process.off("exit", release)
+      release()
+    }
   }
-  releasePidFile(lock)
   return 0
 }

@@ -8,7 +8,6 @@
  * the answer.
  */
 
-/** A string as an AppleScript literal. */
 export const appleString = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 
 export function raiseTabScript(session: string): string {

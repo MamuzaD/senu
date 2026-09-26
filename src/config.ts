@@ -11,7 +11,6 @@ export interface UsageProfile {
   home: string
 }
 
-/** The usage popup's scene: the desert at night, dawn, day or dusk, or by the time of day. */
 export type UsageScene = "night" | "dawn" | "day" | "dusk" | "auto"
 
 export interface Config {
@@ -74,7 +73,6 @@ function parseScene(raw: unknown, where: string): UsageScene {
   return raw as UsageScene
 }
 
-/** SENU_SCENE overrides the config's scene, for quick testing. */
 function sceneOf(fromConfig: unknown): UsageScene {
   const env = process.env.SENU_SCENE
   if (env) return parseScene(env, "SENU_SCENE")

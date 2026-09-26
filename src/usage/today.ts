@@ -1,17 +1,9 @@
 /**
- * Today's estimated spend and tokens per profile, read from the CLIs' own
- * transcripts on disk, like ccusage.
- *
- * - Claude: `<home>/projects/**\/*.jsonl`, assistant lines' `message.usage`,
- *   de-duplicated by message id + request id (repeats overcount ~2.4x).
- * - Codex: `<home>/sessions/**\/*.jsonl`, `token_count` events'
- *   `last_token_usage`, with the model carried from the last `turn_context`,
- *   unchanged re-emits and forked sessions' copied history dropped.
- *
- * Costs are priced against LiteLLM's public price table, cached for 24h. The
- * scan is cached per file by (size, mtime) and a grown file is read on from
- * its saved offset. All of it runs in a detached `senu vision today --refresh`
- * child; the popup only ever reads `today/<key>.json`.
+ * Claude usage comes from assistant message.usage records under projects/;
+ * repeated message ID and request ID pairs are counted once. Codex usage comes
+ * from token_count events under sessions/, with the model from the last
+ * turn_context; unchanged re-emits are skipped and copied fork history is filtered heuristically.
+ * Costs use LiteLLM's public price table.
  */
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -43,17 +35,14 @@ export interface ModelDay {
   costUsd: number | null
 }
 
-/** Serve without rescanning while younger than this. */
 const FRESH_TTL_SECONDS = 60
-/** A scan holding its lock longer than this is treated as abandoned. */
 const LOCK_TTL_SECONDS = 120
 
 const RATES_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 const RATES_TTL_SECONDS = 24 * 60 * 60
 const RATES_TIMEOUT_MS = 10_000
-/** Scan-cache entries for files untouched this long are dropped. */
 const SCAN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
-const SCAN_CACHE_VERSION = 1
+const SCAN_CACHE_VERSION = 2
 
 const todayDir = join(cacheDir, "today")
 const totalsPath = (p: UsageProfile) => join(todayDir, `${profileKey(p)}.json`)
@@ -76,7 +65,7 @@ function readJson<T>(path: string): T | null {
   }
 }
 
-/** Local midnight today, and today's date as YYYY-MM-DD. */
+/** Returns local midnight in ms and the local date as YYYY-MM-DD. */
 export function localDay(at = new Date()): { startMs: number; day: string } {
   const start = new Date(at)
   start.setHours(0, 0, 0, 0)
@@ -84,11 +73,7 @@ export function localDay(at = new Date()): { startMs: number; day: string } {
   return { startMs: start.getTime(), day: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}` }
 }
 
-/* ----------------------------------------------------------------------------
- * Pricing
- * ------------------------------------------------------------------------- */
-
-/** USD per token: input, output, cache read, cache creation. */
+/** USD per token, ordered as input, output, cache read, cache creation. */
 type Rate = [number, number, number, number]
 type Rates = Record<string, Rate>
 
@@ -100,11 +85,6 @@ interface RatesCache {
 const finite = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
 const bareName = (key: string) => key.slice(key.lastIndexOf("/") + 1)
 
-/**
- * Projects LiteLLM's table to the four rates we use. Missing cache rates fall
- * back to the input rate. A bare name (after the last `/`) is aliased when no
- * entry has it already and every qualified entry agrees on its rate.
- */
 function parseRates(doc: unknown): Rates {
   const rates: Rates = {}
   if (typeof doc !== "object" || doc === null) return rates
@@ -129,12 +109,10 @@ function parseRates(doc: unknown): Rates {
   return rates
 }
 
-/** The price table: fresh from cache, else fetched, else the stale copy, else null. */
 async function loadRates(): Promise<Rates | null> {
   const cached = readJson<RatesCache>(ratesPath)
   if (cached && nowSeconds() - cached.fetchedAt < RATES_TTL_SECONDS) return cached.rates
   try {
-    // the only network request this feature makes: a public file, no auth
     const res = await fetch(RATES_URL, { signal: AbortSignal.timeout(RATES_TIMEOUT_MS) })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const rates = parseRates(await res.json())
@@ -146,7 +124,6 @@ async function loadRates(): Promise<Rates | null> {
   }
 }
 
-/** Never priced: unbilled local messages, and bare family names that could be any generation. */
 const UNPRICEABLE = new Set(["<synthetic>", "synthetic", "opus", "sonnet", "haiku", "fable"])
 
 function lookupRate(rates: Rates, model: string): Rate | null {
@@ -158,11 +135,6 @@ function lookupRate(rates: Rates, model: string): Rate | null {
   return rates[key] ?? null
 }
 
-/* ----------------------------------------------------------------------------
- * Transcript parsing
- * ------------------------------------------------------------------------- */
-
-/** One usage event: timestamp ms, model, uncached input, cache read, cache creation, output, dedupe key. */
 type UsageRecord = [ts: number, model: string, uncached: number, cached: number, creation: number, output: number, key: string | null]
 
 interface CodexState {
@@ -170,9 +142,7 @@ interface CodexState {
   sessionId: string
   lastSignature: string | null
   sawMeta: boolean
-  /** while true, leading usage events are a fork's re-stamped copy of its parent's history */
-  suppressing: boolean
-  anchorMs: number
+  forkCopy: { lastMs: number } | null
 }
 
 const initialCodexState = (): CodexState => ({
@@ -180,11 +150,9 @@ const initialCodexState = (): CodexState => ({
   sessionId: "",
   lastSignature: null,
   sawMeta: false,
-  suppressing: false,
-  anchorMs: 0,
+  forkCopy: null,
 })
 
-/** A fork's copied history lands in one burst; its first real turn comes seconds later. */
 const FORK_COPY_MAX_GAP_MS = 1000
 
 const int = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0)
@@ -222,6 +190,35 @@ function isForkMeta(payload: any): boolean {
   return typeof payload?.source?.subagent?.thread_spawn?.parent_thread_id === "string"
 }
 
+function recordCodexSession(payload: any, timestamp: unknown, state: CodexState) {
+  // A fork can repeat its ancestors' metadata; only the first entry identifies this session.
+  if (state.sawMeta) return
+  state.sawMeta = true
+  const id = payload.id ?? payload.session_id
+  if (typeof id === "string") state.sessionId = id
+  const ts = parseTs(timestamp)
+  if (!Number.isNaN(ts) && isForkMeta(payload)) state.forkCopy = { lastMs: ts }
+}
+
+function isNewCodexUsage(last: unknown, state: CodexState): boolean {
+  const signature = JSON.stringify(last)
+  if (signature === state.lastSignature) return false
+  state.lastSignature = signature
+  return true
+}
+
+function isCopiedForkUsage(ts: number, state: CodexState): boolean {
+  if (!state.forkCopy) return false
+  // Treat events less than one second apart after fork metadata as copied history.
+  // This can skip early new usage or count copied events separated by longer gaps.
+  if (ts - state.forkCopy.lastMs < FORK_COPY_MAX_GAP_MS) {
+    state.forkCopy.lastMs = ts
+    return true
+  }
+  state.forkCopy = null
+  return false
+}
+
 function parseCodexLine(line: string, state: CodexState): UsageRecord | null {
   let rec: any
   try {
@@ -233,16 +230,7 @@ function parseCodexLine(line: string, state: CodexState): UsageRecord | null {
   if (typeof payload !== "object" || payload === null) return null
 
   if (rec.type === "session_meta") {
-    // only the first meta is this file's own; a fork repeats its ancestors' after it
-    if (state.sawMeta) return null
-    state.sawMeta = true
-    const id = payload.id ?? payload.session_id
-    if (typeof id === "string") state.sessionId = id
-    const ts = parseTs(rec.timestamp)
-    if (!Number.isNaN(ts) && isForkMeta(payload)) {
-      state.suppressing = true
-      state.anchorMs = ts
-    }
+    recordCodexSession(payload, rec.timestamp, state)
     return null
   }
   if (rec.type === "turn_context") {
@@ -255,18 +243,7 @@ function parseCodexLine(line: string, state: CodexState): UsageRecord | null {
   const ts = parseTs(rec.timestamp)
   if (Number.isNaN(ts) || !state.model) return null
 
-  // Codex re-emits an unchanged token_count on some stream boundaries
-  const signature = JSON.stringify(last)
-  if (signature === state.lastSignature) return null
-  state.lastSignature = signature
-
-  if (state.suppressing) {
-    if (ts - state.anchorMs < FORK_COPY_MAX_GAP_MS) {
-      state.anchorMs = ts
-      return null
-    }
-    state.suppressing = false
-  }
+  if (!isNewCodexUsage(last, state) || isCopiedForkUsage(ts, state)) return null
 
   const cached = int(last.cached_input_tokens)
   const creation = int(last.cache_write_input_tokens)
@@ -274,27 +251,22 @@ function parseCodexLine(line: string, state: CodexState): UsageRecord | null {
   // Codex's input_tokens includes the cached part
   const uncached = Math.max(0, int(last.input_tokens) - cached - creation)
   if (uncached + cached + creation + output === 0) return null
-  // matches a moved copy of the same rollout without collapsing equal events within one
   const key = `${state.sessionId}|${ts}|${state.model}|${uncached},${cached},${creation},${output}`
   return [ts, state.model, uncached, cached, creation, output, state.sessionId ? key : null]
 }
 
-/* ----------------------------------------------------------------------------
- * Reading files, incrementally
- * ------------------------------------------------------------------------- */
-
 interface FileEntry {
-  /** size and mtime the entry was parsed at */
+  /** File size in bytes and mtime in epoch ms at the last scan. */
   s: number
   m: number
-  /** byte offset just past the last complete line read */
+  /** Byte offset immediately after the last complete newline-terminated record. */
   o: number
-  /** FNV-1a of the (up to) 64 bytes before `o`, to catch a rewritten file */
+  /** Length and FNV-1a hash of the bytes just before o; detects rewrites near the resume point. */
   gl: number
   gh: number
-  /** Codex reducer state at `o` */
+  /** Codex parser state at o, including the model and fork-history suppression state. */
   cs: CodexState | null
-  /** today's records, de-duplicated within the file */
+  /** Retained usage records for the scanned day. */
   r: UsageRecord[]
 }
 
@@ -321,7 +293,6 @@ function readGuard(fd: number, offset: number, length: number): number | null {
   return readSync(fd, buf, 0, length, offset - length) === length ? fnv1a(buf) : null
 }
 
-/** `.jsonl` files under `root` modified at or after `sinceMs`. */
 function listFiles(root: string, sinceMs: number): { path: string; size: number; mtimeMs: number }[] {
   const found: { path: string; size: number; mtimeMs: number }[] = []
   const walk = (dir: string) => {
@@ -349,12 +320,7 @@ function listFiles(root: string, sinceMs: number): { path: string; size: number;
 const CLAUDE_NEEDLE = Buffer.from('"usage"')
 const CODEX_NEEDLES = ['"token_count"', '"turn_context"', '"session_meta"'].map((n) => Buffer.from(n))
 
-/**
- * Parses a transcript from `resume` (or byte 0 when the guard no longer
- * matches), keeping only records from `sinceMs` on. A trailing line without
- * its newline is left for the next scan, so a half-written line is never
- * counted twice. Returns null when the file can't be read.
- */
+// Leave an unterminated final line for the next scan: the CLI may still be writing it.
 function readFile(
   path: string,
   kind: UsageProfile["kind"],
@@ -373,13 +339,12 @@ function readFile(
     let resumed = false
     if (resume && resume.o > 0 && (kind !== "codex" || resume.cs) && readGuard(fd, resume.o, resume.gl) === resume.gh) {
       start = resume.o
-      if (resume.cs) state = { ...resume.cs }
+      if (resume.cs) state = { ...resume.cs, forkCopy: resume.cs.forkCopy && { ...resume.cs.forkCopy } }
       resumed = true
     }
 
     const records: UsageRecord[] = []
     const onLine = (line: Buffer) => {
-      // cheap substring gate before JSON.parse; most lines are tool output
       if (kind === "claude") {
         if (!line.includes(CLAUDE_NEEDLE)) return
         const rec = parseClaudeLine(line.toString("utf8"))
@@ -438,15 +403,7 @@ function dedupe(records: UsageRecord[]): UsageRecord[] {
   })
 }
 
-/* ----------------------------------------------------------------------------
- * The scan
- * ------------------------------------------------------------------------- */
-
-/** Scans a profile's own home for today's usage and prices it. Pure of the totals cache. */
-export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today> {
-  const { startMs, day } = localDay(at)
-  const ratesPromise = loadRates()
-
+function scanProfileFiles(p: UsageProfile, startMs: number): UsageRecord[][] {
   const loaded = readJson<ScanCache>(scanPath(p))
   const cache: ScanCache = loaded?.version === SCAN_CACHE_VERSION ? loaded : { version: SCAN_CACHE_VERSION, files: {} }
   const root = join(p.home, p.kind === "claude" ? "projects" : "sessions")
@@ -459,7 +416,6 @@ export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today
       perFile.push(hit.r.filter((r) => r[0] >= startMs))
       continue
     }
-    // only a strictly grown file may resume; anything else was rewritten
     const resume = hit && file.size > hit.s ? hit : undefined
     const parsed = readFile(file.path, p.kind, startMs, resume)
     if (!parsed) {
@@ -472,22 +428,24 @@ export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today
     perFile.push(records)
   }
 
-  // drop old entries and yesterday's records so the cache stays small
   const cutoff = Date.now() - SCAN_RETENTION_MS
   for (const [path, entry] of Object.entries(cache.files)) {
     if (entry.m < cutoff) delete cache.files[path]
     else entry.r = entry.r.filter((r) => r[0] >= startMs)
   }
   writeAtomic(scanPath(p), JSON.stringify(cache))
+  return perFile
+}
 
-  // across files: Claude by message + request id; Codex by event + occurrence within its file
+function aggregateUsage(perFile: UsageRecord[][], kind: UsageProfile["kind"]): Map<string, [number, number, number, number]> {
   const seen = new Set<string>()
   const byModel = new Map<string, [number, number, number, number]>()
   for (const records of perFile) {
     const occurrences = new Map<string, number>()
     for (const r of records) {
       let key = r[6]
-      if (key != null && p.kind === "codex") {
+      // Match copies across rollout files without collapsing repeated occurrences within one file.
+      if (key != null && kind === "codex") {
         const n = (occurrences.get(key) ?? 0) + 1
         occurrences.set(key, n)
         key = `${key}#${n}`
@@ -501,6 +459,14 @@ export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today
       byModel.set(r[1], sum)
     }
   }
+  return byModel
+}
+
+/** Scans a profile's transcripts for the local day without updating its totals cache. */
+export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today> {
+  const { startMs, day } = localDay(at)
+  const ratesPromise = loadRates()
+  const byModel = aggregateUsage(scanProfileFiles(p, startMs), p.kind)
 
   const rates = await ratesPromise
   let tokens = 0
@@ -527,17 +493,12 @@ export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today
   return { day, updatedAt: nowSeconds(), tokens, cachedTokens, costUsd: rates ? cost : null, unpricedTokens, models }
 }
 
-/* ----------------------------------------------------------------------------
- * Stale-while-revalidate
- * ------------------------------------------------------------------------- */
-
-/** Today's cached totals, or null when there are none for today. Cheap; safe on the first frame. */
+/** Reads cached totals for the current local day; returns null without scanning when absent or stale by date. */
 export function readToday(p: UsageProfile, at = new Date()): Today | null {
   const today = readJson<Today>(totalsPath(p))
   return today && today.day === localDay(at).day ? today : null
 }
 
-// totals cached before the per-model breakdown existed are rescanned once
 export const todayIsFresh = (t: Today | null) => t?.models != null && nowSeconds() - t.updatedAt <= FRESH_TTL_SECONDS
 
 export const claimTodayLock = (p: UsageProfile) => claimLockFile(lockPath(p), LOCK_TTL_SECONDS)
@@ -556,16 +517,12 @@ export async function refreshTodayLocked(p: UsageProfile): Promise<Today> {
   }
 }
 
-/**
- * Spawns one detached `senu vision today --refresh --locked` for the profiles
- * whose totals are stale and whose lock is free. The scan parses JSON for up to
- * a few seconds, which would stall the popup's animation if run in-process.
- * Returns the profiles a refresh is now running for.
- */
+/** Starts detached refreshes for profiles with free locks; returns those now refreshing. */
 export function spawnTodayRefresh(profiles: UsageProfile[]): UsageProfile[] {
   const claimed = profiles.filter(claimTodayLock)
   if (!claimed.length) return []
   try {
+    // Transcript parsing is synchronous, so run it outside the animated popup.
     const child = Bun.spawn([...selfCommand(), "vision", "today", ...claimed.map(profileKey), "--refresh", "--locked"], {
       stdio: ["ignore", "ignore", "ignore"],
       detached: true,

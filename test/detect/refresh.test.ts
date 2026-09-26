@@ -11,10 +11,8 @@ import { compareVersions, manifestsCommand, MIRROR, PRIMARY, refreshAgent, synce
 const bundled = { claude: claudeToml as string, codex: codexToml as string }
 const codexVersion = bundledManifest("codex").manifest.version!
 
-/** The bundled codex manifest at another version, optionally with a change. */
 const codexAt = (version: string, extra = "") => (bundled.codex as string).replace(/^version = ".*"$/m, `version = "${version}"`) + extra
 
-/** Serves `files` by URL; anything else is a 404. */
 const serve =
   (files: Record<string, string>): Fetcher =>
   async (url) => {

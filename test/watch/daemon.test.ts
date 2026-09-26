@@ -102,7 +102,7 @@ describe("claimPidFile", () => {
 
   test("the default check sees a dead pid as stale", () => {
     claimPidFile(path, () => true)
-    writeFileSync(path, "999999\n") // well above macOS's pid range
+    writeFileSync(path, "999999\n")
     expect(claimPidFile(path)).toBe(true)
   })
 

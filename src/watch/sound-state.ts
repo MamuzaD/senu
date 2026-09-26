@@ -2,7 +2,6 @@ import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "
 import { dirname, join } from "node:path"
 import { stateDir } from "../paths.ts"
 
-/** The user's live choice, shared by every senu watch process. */
 export const soundStatePath = join(stateDir, "sound-enabled")
 
 export function soundOverride(path = soundStatePath): boolean | null {
@@ -25,7 +24,6 @@ export function setSoundEnabled(enabled: boolean, path = soundStatePath) {
   renameSync(tmp, path)
 }
 
-/** Return to the `enabled` value from config.toml. */
 export function clearSoundOverride(path = soundStatePath) {
   try {
     unlinkSync(path)

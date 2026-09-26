@@ -14,7 +14,6 @@ export const configPath = join(configDir, "config.toml")
 export const cacheDir = join(process.env.XDG_CACHE_HOME || join(home, ".cache"), "senu")
 export const stateDir = join(process.env.XDG_STATE_HOME || join(home, ".local", "state"), "senu")
 
-/** argv prefix that re-invokes senu, whether compiled or run from source. */
 export function selfCommand(): string[] {
   // Compiled binaries run their entrypoint from Bun's virtual /$bunfs filesystem.
   return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main]

@@ -8,14 +8,13 @@ export const SYSTEM_SOUNDS: Record<SoundKind, string> = {
   request: "/System/Library/Sounds/Funk.aiff",
 }
 
-/** A configured sound file, or a fallback when the custom file is missing. */
+/** Chooses an existing custom file, then the fallback; returns null if neither exists. */
 export function pickSound(custom: string, fallback: string, exists: (p: string) => boolean = existsSync): string | null {
   const path = custom.trim() ? expandHome(custom.trim()) : ""
   for (const p of [path, fallback]) if (p && exists(p)) return p
   return null
 }
 
-/** Generate portable default chimes without shipping files beside the compiled binary. */
 export function defaultSoundFile(kind: SoundKind, dir = join(stateDir, "sounds")): string {
   const path = join(dir, `${kind}.wav`)
   if (existsSync(path)) return path
@@ -28,8 +27,8 @@ export function defaultSoundFile(kind: SoundKind, dir = join(stateDir, "sounds")
   wav.writeUInt32LE(wav.length - 8, 4)
   wav.write("WAVEfmt ", 8)
   wav.writeUInt32LE(16, 16)
-  wav.writeUInt16LE(1, 20) // PCM
-  wav.writeUInt16LE(1, 22) // mono
+  wav.writeUInt16LE(1, 20) // PCM format
+  wav.writeUInt16LE(1, 22) // Mono channel count
   wav.writeUInt32LE(sampleRate, 24)
   wav.writeUInt32LE(sampleRate * 2, 28)
   wav.writeUInt16LE(2, 32)
@@ -81,7 +80,6 @@ export const powershellString = (value: string) => `'${value.replaceAll("'", "''
 
 const MEDIA_PLAY = "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName PresentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([uri]$env:SENU_SOUND_FILE); $p.Play(); $i = 0; while (-not $p.NaturalDuration.HasTimeSpan -and $i -lt 50) { Start-Sleep -Milliseconds 100; $i++ }; if (-not $p.NaturalDuration.HasTimeSpan) { throw 'Cannot play sound' }; Start-Sleep -Milliseconds ([math]::Ceiling($p.NaturalDuration.TimeSpan.TotalMilliseconds)); $p.Close()"
 
-/** Find a player. WSL uses the Windows host; native Linux uses an installed player. */
 export function playerCommand(path: string, platform = process.platform, which: (name: string) => string | null = Bun.which, wsl = isWsl()): string[] | null {
   if (platform === "darwin") return which("afplay") ? ["afplay", path] : null
   if (platform === "win32") {
@@ -106,7 +104,6 @@ export function playerCommand(path: string, platform = process.platform, which: 
   return null
 }
 
-/** Build the final command, including WSL path translation and its native fallback. */
 export function playbackCommand(
   path: string,
   platform = process.platform,
@@ -123,7 +120,7 @@ export function playbackCommand(
   return command
 }
 
-/** Starts playback and returns at once; the poll loop never waits on audio. */
+/** Starts playback without waiting for the sound to finish. */
 export function play(path: string): Bun.Subprocess | null {
   const command = playbackCommand(path)
   if (!command) return null

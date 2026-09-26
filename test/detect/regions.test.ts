@@ -4,7 +4,6 @@ import { isHorizontalRule, isValidRegion, lines, region } from "../../src/detect
 const at = (screen: string, spec: string) => region({ screen, oscTitle: "title", oscProgress: "4;0" }, spec)
 
 describe("region", () => {
-  // herdr's screen_regions_extract_structure_without_classifying_agent_state, verbatim
   const cases: [string, string, string][] = [
     ["old\n\nnew\n", "bottom_lines(2)", "\nnew\n"],
     ["before\n› input\nafter\n", "after_last_prompt_marker", "after\n"],
@@ -18,7 +17,6 @@ describe("region", () => {
     ["above\n\n───\nbody\n───\nfooter\n", "last_non_empty_above_prompt_box", "above"],
     ["above\n───\nbody\n───\nfooter\n", "prompt_box_body", "body\n"],
     ["above\n───\nbody\n───\nfooter\n", "after_last_horizontal_rule", "footer\n"],
-    // herdr's bottom/top occurrence tests
     ["marker\nold\n\nmiddle\nmarker\nnew\n", "bottom_non_empty_lines(2)", "marker\nnew\n"],
     ["\nmarker\nold\n\nmiddle\nmarker\nnew\n", "top_non_empty_lines(2)", "\nmarker\nold\n"],
   ]
@@ -53,6 +51,14 @@ describe("region", () => {
     expect(lines("a\rb\n")).toEqual(["a\rb"])
     expect(lines("\n")).toEqual([""])
     expect(lines("")).toEqual([])
+  })
+
+  test("region boundaries preserve CRLF and Unicode offsets", () => {
+    const screen = "é\r\n› prompt\r\nafter\r\n"
+    expect(at(screen, "before_current_prompt_marker")).toBe("é\r\n")
+    expect(at(screen, "after_last_prompt_marker")).toBe("after\r\n")
+    expect(at(screen, "top_non_empty_lines(1)")).toBe("é\r\n")
+    expect(at("é\r\n───\r\nafter\r\n", "after_last_horizontal_rule")).toBe("after\r\n")
   })
 
   test("blank means Rust's whitespace: U+0085 is blank, U+FEFF isn't", () => {

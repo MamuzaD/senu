@@ -1,9 +1,9 @@
 /**
  * Manifest regions: the slice of the screen (or the OSC title) a rule looks at.
- * A line-for-line port of herdr's `src/detect/manifest.rs`, down to the edge
- * cases: a region that can't be found is `""` for some names and the whole
- * screen for others, and slices keep their trailing newline, because rules
- * anchor on it (`\s*\z`).
+ * Follows herdr's region selection and fallback behavior: a missing region is
+ * `""` for some names and the whole screen for others. Slices keep their
+ * trailing newline because rules can anchor on it (`\s*\z`). Offsets use
+ * JavaScript string positions, which can differ from Rust byte offsets.
  */
 
 export interface DetectionInput {
@@ -47,20 +47,17 @@ export function lines(content: string): string[] {
   return ls
 }
 
-/**
- * Offset where line `index` starts, counting each line plus its newline, clamped
- * to the text. Like herdr, a `\r\n` line counts one short. herdr counts bytes and
- * this counts UTF-16 units, so the two land on different characters once CRLF and
- * non-ASCII text mix (herdr can even panic mid-character). tmux captures never
- * contain `\r`, so this doesn't arise here.
- */
-function lineStart(content: string, ls: string[], index: number): number {
+function lineStart(content: string, index: number): number {
   let offset = 0
-  for (let i = 0; i < Math.min(index, ls.length); i++) offset += ls[i]!.length + 1
-  return Math.min(offset, content.length)
+  for (let i = 0; i < index; i++) {
+    const end = content.indexOf("\n", offset)
+    if (end < 0) return content.length
+    offset = end + 1
+  }
+  return offset
 }
 
-const fromLine = (content: string, ls: string[], index: number) => content.slice(lineStart(content, ls, index))
+const fromLine = (content: string, index: number) => content.slice(lineStart(content, index))
 
 const USIZE_MAX = 2n ** 64n - 1n
 
@@ -124,7 +121,7 @@ export function region(input: DetectionInput, spec: string): string {
 
 function bottomLines(c: string, n: number): string {
   const ls = lines(c)
-  return fromLine(c, ls, Math.max(0, ls.length - n))
+  return fromLine(c, Math.max(0, ls.length - n))
 }
 
 function bottomNonEmptyLines(c: string, n: number): string {
@@ -136,7 +133,7 @@ function bottomNonEmptyLines(c: string, n: number): string {
       seen++
     }
   }
-  return start < 0 ? "" : fromLine(c, ls, start)
+  return start < 0 ? "" : fromLine(c, start)
 }
 
 function topNonEmptyLines(c: string, n: number): string {
@@ -148,13 +145,11 @@ function topNonEmptyLines(c: string, n: number): string {
       seen++
     }
   }
-  return end < 0 ? "" : c.slice(0, lineStart(c, ls, end + 1))
+  return end < 0 ? "" : c.slice(0, lineStart(c, end + 1))
 }
 
-/** Codex's composer line: a bare `›`, or `› ` and a draft, at column zero. */
 const codexPromptLine = (line: string) => line === "›" || line.startsWith("› ")
 
-/** Codex starts each transcript block (response, tool call, error, result) with one of these. */
 const codexBlockMarkerLine = (line: string) => /^[•■✗✓]/u.test(line)
 
 function lastIndexWhere(ls: string[], pred: (l: string) => boolean, end = ls.length): number {
@@ -162,7 +157,6 @@ function lastIndexWhere(ls: string[], pred: (l: string) => boolean, end = ls.len
   return -1
 }
 
-/** The last prompt line, unless a block started after it, which makes it stale. */
 function currentCodexPromptIndex(ls: string[]): number | null {
   const i = lastIndexWhere(ls, codexPromptLine)
   if (i < 0) return null
@@ -172,13 +166,13 @@ function currentCodexPromptIndex(ls: string[]): number | null {
 function afterLastPromptMarker(c: string): string {
   const ls = lines(c)
   const i = lastIndexWhere(ls, codexPromptLine)
-  return i < 0 ? c : fromLine(c, ls, i + 1)
+  return i < 0 ? c : fromLine(c, i + 1)
 }
 
 function beforeCurrentPromptMarker(c: string): string {
   const ls = lines(c)
   const i = currentCodexPromptIndex(ls)
-  return i === null ? c : c.slice(0, lineStart(c, ls, i))
+  return i === null ? c : c.slice(0, lineStart(c, i))
 }
 
 function currentPromptBlockMarker(c: string): string {
@@ -194,13 +188,10 @@ function afterCurrentPromptBlockMarker(c: string): string {
   const prompt = currentCodexPromptIndex(ls)
   if (prompt === null) return ""
   const i = lastIndexWhere(ls, codexBlockMarkerLine, prompt)
-  return i < 0 ? "" : fromLine(c, ls, i)
+  return i < 0 ? "" : fromLine(c, i)
 }
 
-/**
- * A trimmed line that starts with `─`: all rule, or at least three `─` then a
- * label (Claude titles some rules). Box corners like `╭` don't count.
- */
+/** Accepts a line of `─`, or at least three `─` before a label; box corners do not count. */
 export function isHorizontalRule(line: string): boolean {
   const t = trim(line)
   if (!t) return false
@@ -210,7 +201,6 @@ export function isHorizontalRule(line: string): boolean {
   return !trimStart(t.slice(run)) || run >= 3
 }
 
-/** The prompt box is the last two rules; its top is the second-to-last rule on screen. */
 function promptBoxTop(ls: string[]): number | null {
   let seen = 0
   for (let i = ls.length - 1; i >= 0; i--) {
@@ -225,22 +215,22 @@ function promptBoxBody(c: string): string {
   if (top === null) return ""
   const rel = ls.slice(top + 1).findIndex(isHorizontalRule)
   const end = rel < 0 ? ls.length : top + 1 + rel
-  return c.slice(lineStart(c, ls, top + 1), lineStart(c, ls, end))
+  return c.slice(lineStart(c, top + 1), lineStart(c, end))
 }
 
 function abovePromptBox(c: string): string {
   const ls = lines(c)
   const top = promptBoxTop(ls)
-  return top === null ? c : c.slice(0, lineStart(c, ls, top))
+  return top === null ? c : c.slice(0, lineStart(c, top))
 }
 
 function afterLastHorizontalRule(c: string): string {
   let lastRuleEnd = 0
   let offset = 0
   for (const line of lines(c)) {
-    const next = offset + line.length + 1
-    if (isHorizontalRule(line)) lastRuleEnd = Math.min(next, c.length)
-    offset = next
+    const end = c.indexOf("\n", offset)
+    offset = end < 0 ? c.length : end + 1
+    if (isHorizontalRule(line)) lastRuleEnd = offset
   }
   return c.slice(lastRuleEnd)
 }

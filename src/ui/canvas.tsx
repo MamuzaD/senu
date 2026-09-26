@@ -1,17 +1,11 @@
 import type { RGBA } from "@opentui/core"
 import { Line } from "./line.tsx"
 
-/**
- * The pixel layer under the popup's scene: a character grid to paint into,
- * a half-block pixel buffer, braille dots and quadrant pixels. Nothing
- * paints a background unless it's asked to, so the terminal (and its blur)
- * shows through everywhere the scene is empty.
- */
 export interface Cell {
   ch: string
   fg: RGBA
   bg: RGBA | null
-  /** TextAttributes bits (bold, dim); 0 for none */
+  /** TextAttributes bits; zero means none. */
   attrs?: number
 }
 
@@ -55,7 +49,6 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
 
 const same = (a: RGBA | null, b: RGBA | null) => a === b || (!!a && !!b && a.equals(b))
 
-/** Render a canvas as `Line`s from column `from`, one span per run of the same colours. */
 export function CanvasView({ canvas, from = 0 }: { canvas: Canvas; from?: number }) {
   return (
     <box flexDirection="column" height={canvas.height} flexShrink={0}>
@@ -90,7 +83,7 @@ export function CanvasView({ canvas, from = 0 }: { canvas: Canvas; from?: number
   )
 }
 
-/** A pixel buffer twice as tall as its cell area: one pixel per column, two per row. */
+/** One pixel per column and two per terminal row; dimensions are pixel counts. */
 export class Pixels {
   readonly px: (RGBA | null)[][]
 
@@ -119,7 +112,7 @@ const BRAILLE = [
   [0x40, 0x80],
 ]
 
-/** Braille dots: a 2×4 grid per cell. `weight` decides which colour wins a shared cell. */
+/** Braille dots at two columns and four rows per terminal cell. */
 export class Braille {
   readonly bits: number[][]
   readonly color: (RGBA | null)[][]
@@ -134,6 +127,7 @@ export class Braille {
     this.weight = Array.from({ length: rows }, () => Array<number>(cols).fill(-1))
   }
 
+  /** When dots share a cell, the color with the highest weight wins. */
   dot(x: number, y: number, c: RGBA, weight = 0) {
     x = Math.round(x)
     y = Math.round(y)
@@ -148,7 +142,7 @@ export class Braille {
   }
 }
 
-/** Quadrant pixels: 2×2 per cell. Senu's body is drawn in these, so she's solid over any scene. */
+/** Quadrant pixels at two columns and two rows per terminal cell. */
 export class Quad {
   readonly px: (RGBA | null)[][]
 

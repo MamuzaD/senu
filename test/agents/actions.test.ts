@@ -36,7 +36,6 @@ describe("the Ghostty script", () => {
     expect(raiseTabScript('we"ird')).toContain('set wanted to "we\\"ird"')
   })
 
-  // compiles against Ghostty's dictionary without running it, so no window moves
   test.skipIf(process.platform !== "darwin" || !Bun.which("osacompile") || !Bun.file("/Applications/Ghostty.app/Contents/Resources/Ghostty.sdef").size)(
     "compiles with osacompile",
     () => {

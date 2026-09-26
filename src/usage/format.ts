@@ -21,11 +21,7 @@ export const formatUntil = (epochSeconds: number | null) =>
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
-/**
- * The local clock time of a reset, to sit after its countdown: `14:20` today,
- * `Fri 09:00` within the next six days, `3 Oct` further out. 24-hour, like
- * the tmux status bar, rounded to the nearest minute.
- */
+/** Local 24-hour reset clock, rounded to a minute: HH:MM today, weekday and time within six days, then day and month. */
 export function formatClock(epochSeconds: number | null, now = new Date()): string | null {
   if (epochSeconds == null) return null
   const at = new Date(Math.round(epochSeconds / 60) * 60_000)
@@ -41,10 +37,8 @@ export function formatClock(epochSeconds: number | null, now = new Date()): stri
   return `${at.getDate()} ${MONTHS[at.getMonth()]}`
 }
 
-/** The dimmed clock after a countdown, e.g. ` · 14:20`. */
 export const clockSuffix = (clock: string) => ` · ${clock}`
 
-/** Colour by percent left: green at 40+, yellow 20–39, red under 20, grey when unknown. */
 export function colorFor(left: number | null): RGBA {
   if (left == null) return colors.dim
   if (left < 20) return colors.bad
@@ -52,10 +46,7 @@ export function colorFor(left: number | null): RGBA {
   return colors.good
 }
 
-/**
- * Where even spending would leave the bar: the percent of the window still to
- * run. Null when the window's length or reset is unknown, or it has already reset.
- */
+/** Remaining-window percentage at an even spending pace; null when reset or window length is unavailable or past. */
 export function evenLeft(resetsAt: number | null, windowMs: number | null | undefined): number | null {
   if (resetsAt == null || !windowMs) return null
   const remaining = resetsAt - nowSeconds()
@@ -63,15 +54,12 @@ export function evenLeft(resetsAt: number | null, windowMs: number | null | unde
   return Math.min(100, (remaining * 1000 * 100) / windowMs)
 }
 
-/** More than this many points below even means it's being used faster than time passes. */
 export const PACE_SLACK = 5
 
-/** The bar cell that holds the even-pace marker. */
 export const markCell = (even: number) => Math.min(BAR_WIDTH - 1, Math.floor((even * BAR_WIDTH) / 100))
 
 const EIGHTHS =["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
 
-/** A bar of percent left, with an eighth-block on the fill edge for sub-cell precision. */
 export function bar(left: number | null): string {
   if (left == null) return "░".repeat(BAR_WIDTH)
   const eighths = Math.round((Math.max(0, Math.min(100, left)) * BAR_WIDTH * 8) / 100)
@@ -80,7 +68,6 @@ export function bar(left: number | null): string {
   return "█".repeat(full) + edge + "░".repeat(BAR_WIDTH - full - (edge ? 1 : 0))
 }
 
-/** A token count, short: 850, 12k, 3.1M, 1.2B. */
 export function formatTokens(n: number): string {
   const short = (v: number, unit: string) => `${v < 9.95 ? v.toFixed(1).replace(/\.0$/, "") : Math.round(v)}${unit}`
   if (n >= 999_500_000) return short(n / 1e9, "B")
