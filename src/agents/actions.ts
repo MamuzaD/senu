@@ -1,4 +1,4 @@
-import { tmux } from "~/detect/panes.ts"
+import { SEP, tmux } from "~/detect/panes.ts"
 
 import type { AgentRow } from "./collect.ts"
 import { raiseGhosttyTab } from "./ghostty.ts"
@@ -8,8 +8,6 @@ export interface Client {
   session: string
   termname: string
 }
-
-const SEP = "\x1f"
 
 async function clients(): Promise<Client[]> {
   const { out } = await tmux(

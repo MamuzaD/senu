@@ -32,7 +32,11 @@ export interface AgentPane extends Pane {
   agent: Agent
 }
 
-const SEP = "\x1f"
+/**
+ * Printable on purpose: tmux 3.4-3.5a print control characters as octal text (`\037`),
+ * and a client without a UTF-8 locale gets them as `_`, on any version.
+ */
+export const SEP = "|senu|"
 const FIELDS = [
   "pane_id",
   "pane_pid",
@@ -421,7 +425,9 @@ export async function listAgentPanes(): Promise<AgentPane[]> {
  * `history` adds that many scrollback lines above it (the picker's Codex label
  * wants more), but classifying should use 0: rules anchor on the screen's top.
  */
-const CAPTURE_MARK = new RegExp(`^${SEP}senu \\d+${SEP}$`, "m")
+/** Random per process, so no screen can print a line that passes for a marker. */
+const MARK = `senu-${crypto.randomUUID().slice(0, 8)}`
+const CAPTURE_MARK = new RegExp(`^${MARK} \\d+$`, "m")
 /** Captures per tmux call: ~60 bytes each keeps a call well under tmux's ~16 KB limit. */
 const MAX_CHAINED = 100
 
@@ -443,7 +449,7 @@ export function captureArgs(ids: string[], history = 0): string[] {
       "-p",
       "-t",
       id,
-      `${SEP}senu ${id.slice(1)}${SEP}`,
+      `${MARK} ${id.slice(1)}`,
       ";",
       ...captureOne(id, history),
     )
@@ -452,7 +458,7 @@ export function captureArgs(ids: string[], history = 0): string[] {
 
 export function parseCaptures(out: string): Map<string, string> {
   const screens = new Map<string, string>()
-  const parts = out.split(new RegExp(`^${SEP}senu (\\d+)${SEP}\\n`, "m"))
+  const parts = out.split(new RegExp(`^${MARK} (\\d+)\\n`, "m"))
   for (let i = 1; i + 1 < parts.length; i += 2) screens.set(`%${parts[i]}`, parts[i + 1]!)
   return screens
 }
