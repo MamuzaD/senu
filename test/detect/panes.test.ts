@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -9,8 +9,11 @@ import {
   agentFromArgv,
   agentFromProcess,
   captureArgs,
+  identifyAgents,
+  listPanes,
   parseCaptures,
   processArgv,
+  setTmuxSocket,
   type Pane,
 } from "~/detect/panes.ts"
 
@@ -21,6 +24,7 @@ const pane: Pane = {
   title: "",
   oscTitle: "",
   active: true,
+  dead: false,
   session: "test",
   sessionAttached: true,
   windowId: "@1",
@@ -198,6 +202,44 @@ test.skipIf(!Bun.which("tmux"))("one chained capture returns every pane's screen
     expect(screens.get(ids[0]!)).toStartWith("screen A\n")
     expect(screens.get(ids[1]!)).toStartWith("screen B\n")
   } finally {
+    t("kill-server")
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a dead pane is not an agent, and the cache forgets one it had", async () => {
+  const alive = { ...pane, id: "%7", command: "claude" }
+  const cache = new AgentCache()
+  expect((await cache.identify([alive], 0)).map((p) => p.agent)).toEqual(["claude"])
+  expect(await cache.identify([{ ...alive, dead: true }], 1)).toEqual([])
+  expect(await identifyAgents([{ ...alive, dead: true }])).toEqual([])
+})
+
+test.skipIf(!Bun.which("tmux"))("an agent that exits under remain-on-exit is dropped", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "senu-dead-"))
+  const sock = join(dir, "sock")
+  const t = (...args: string[]) => Bun.spawnSync(["tmux", "-S", sock, "-f", "/dev/null", ...args])
+  writeFileSync(join(dir, "codex.js"), "setTimeout(() => {}, 500)\n")
+  try {
+    t("new-session", "-d", "-s", "dead", "-c", dir, `${process.execPath} codex.js`)
+    t("set-option", "-t", "dead", "remain-on-exit", "on")
+    setTmuxSocket(["-S", sock])
+    const cache = new AgentCache()
+    let agents: string[] = []
+    for (let i = 0; i < 40 && !agents.length; i++) {
+      agents = (await cache.identify(await listPanes(), 0)).map((p) => p.agent)
+      if (!agents.length) await Bun.sleep(25)
+    }
+    expect(agents).toEqual(["codex"])
+    let panes = await listPanes()
+    for (let i = 0; i < 80 && !panes[0]?.dead; i++) {
+      await Bun.sleep(25)
+      panes = await listPanes()
+    }
+    expect(panes[0]?.dead).toBe(true)
+    expect(await cache.identify(panes, 60_000)).toEqual([])
+  } finally {
+    setTmuxSocket([])
     t("kill-server")
     rmSync(dir, { recursive: true, force: true })
   }

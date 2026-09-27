@@ -14,6 +14,8 @@ export interface Pane {
   /** The title the agent set; `""` when tmux is still showing its default (the host name). */
   oscTitle: string
   active: boolean
+  /** tmux's `pane_dead`: its process exited, and remain-on-exit is keeping the pane. */
+  dead: boolean
   session: string
   sessionAttached: boolean
   windowId: string
@@ -36,6 +38,7 @@ const FIELDS = [
   "pane_pid",
   "pane_current_command",
   "pane_active",
+  "pane_dead",
   "session_name",
   "session_attached",
   "window_id",
@@ -112,6 +115,7 @@ function parsePanes(out: string): Pane[] {
       pid,
       command,
       active,
+      dead,
       session,
       attached,
       windowId,
@@ -132,6 +136,7 @@ function parsePanes(out: string): Pane[] {
       // tmux titles a pane with the host name until something sets one; herdr would see no title
       oscTitle: title === host || title === hostShort ? "" : title,
       active: active === "1",
+      dead: dead === "1",
       session: session!,
       sessionAttached: attached !== "" && attached !== "0",
       windowId: windowId!,
@@ -321,7 +326,7 @@ interface Identification {
 
 async function identifyAgentsChecked(panes: Pane[]): Promise<Identification> {
   const direct = (p: Pane) => parseAgent(baseName(p.command))
-  const procs = panes.some((p) => !direct(p) && needsArgv(p.command))
+  const procs = panes.some((p) => !p.dead && !direct(p) && needsArgv(p.command))
     ? await processTable(panes)
     : []
   const argvCache = new Map<number, string[]>()
@@ -334,6 +339,8 @@ async function identifyAgentsChecked(panes: Pane[]): Promise<Identification> {
   const found: AgentPane[] = []
   const unresolved = new Set<string>()
   for (const p of panes) {
+    // A dead pane keeps its pid and command, but no process runs there anymore.
+    if (p.dead) continue
     let agent = direct(p)
     if (!agent && needsArgv(p.command)) {
       if (procs === null) {
@@ -357,7 +364,7 @@ export async function identifyAgents(panes: Pane[]): Promise<AgentPane[]> {
 }
 
 const RUNTIME_RECHECK_MS = 5_000
-const procKey = (pane: Pane) => `${pane.pid}\x1f${pane.command}`
+const procKey = (pane: Pane) => `${pane.pid}\x1f${pane.command}\x1f${pane.dead}`
 
 /** Avoid repeated process-table reads while bounding stale runtime identifications. */
 export class AgentCache {
