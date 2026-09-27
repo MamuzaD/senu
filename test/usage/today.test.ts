@@ -58,6 +58,8 @@ test("today scan excludes copied fork usage, deduplicates events, and resumes ap
     const run = Bun.spawnSync([process.execPath, "-e", script], {
       env: {
         ...process.env,
+        // bun test runs in UTC without setting TZ; the child must agree on "today".
+        TZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
         XDG_CACHE_HOME: join(dir, "cache"),
         FIXTURE_HOME: home,
         FIXTURE_AT: at.toISOString(),

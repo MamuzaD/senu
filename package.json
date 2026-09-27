@@ -13,7 +13,10 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "format": "oxfmt",
-    "format:check": "oxfmt --check"
+    "format:check": "oxfmt --check",
+    "manifests:sync": "bun run scripts/manifests.ts",
+    "manifests:check": "bun run scripts/manifests.ts --check",
+    "prepare": "husky"
   },
   "dependencies": {
     "@opentui/core": "0.5.12",
@@ -21,8 +24,12 @@
     "react": "^19.3.0"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
     "@types/bun": "latest",
     "@types/react": "^19.2.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
     "oxfmt": "^0.70.0",
     "oxlint": "^1.85.0",
     "oxlint-tsgolint": "^7.0.2003",
