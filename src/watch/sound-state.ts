@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { stateDir } from "../paths.ts"
+
+import { stateDir } from "~/paths.ts"
 
 export const soundStatePath = join(stateDir, "sound-enabled")
 

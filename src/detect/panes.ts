@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs"
 import { dlopen, FFIType, ptr } from "bun:ffi"
+import { readFileSync } from "node:fs"
+
 import { parseAgent, type Agent } from "./manifest.ts"
 
 export interface Pane {
@@ -75,7 +76,22 @@ export async function listPanes(): Promise<Pane[]> {
   for (const line of out.split("\n")) {
     const f = line.split(SEP)
     if (f.length < FIELDS.length) continue
-    const [id, pid, command, active, session, attached, windowId, windowIndex, windowName, windowActive, activity, aiState, host, hostShort] = f
+    const [
+      id,
+      pid,
+      command,
+      active,
+      session,
+      attached,
+      windowId,
+      windowIndex,
+      windowName,
+      windowActive,
+      activity,
+      aiState,
+      host,
+      hostShort,
+    ] = f
     const title = f.slice(FIELDS.length - 1).join(SEP)
     panes.push({
       id: id!,
@@ -108,13 +124,34 @@ const EVAL_FLAGS = ["-e", "--eval", "-p", "--print", "-c", "-m"]
 
 /** `-e`, `-ecode` or `--eval=code`: herdr's short-payload and long-value forms. */
 const isEvalFlag = (arg: string) =>
-  EVAL_FLAGS.some((f) => arg === f || (f.startsWith("--") ? arg.startsWith(`${f}=`) : !arg.startsWith("--") && arg.startsWith(f)))
+  EVAL_FLAGS.some(
+    (f) =>
+      arg === f ||
+      (f.startsWith("--") ? arg.startsWith(`${f}=`) : !arg.startsWith("--") && arg.startsWith(f)),
+  )
 /** Runtime flags that take the next argument as their value. */
-const VALUE_FLAGS = new Set(["-r", "--require", "--loader", "--import", "--experimental-loader", "--inspect-port", "-W", "-X", "-S", "-L", "-o"])
+const VALUE_FLAGS = new Set([
+  "-r",
+  "--require",
+  "--loader",
+  "--import",
+  "--experimental-loader",
+  "--inspect-port",
+  "-W",
+  "-X",
+  "-S",
+  "-L",
+  "-o",
+])
 
 /** A path's basename, lowercased, without a script or Windows suffix, as herdr normalises it. */
 function baseName(token: string): string {
-  const base = token.replace(/^["']+|["']+$/g, "").split(/[/\\]/).filter(Boolean).pop() ?? ""
+  const base =
+    token
+      .replace(/^["']+|["']+$/g, "")
+      .split(/[/\\]/)
+      .filter(Boolean)
+      .pop() ?? ""
   return base.toLowerCase().replace(/\.(exe|cmd|bat|ps1|js)$/, "")
 }
 
@@ -154,11 +191,15 @@ interface Proc {
 const CTL_KERN = 1
 const KERN_PROCARGS2 = 49
 
-const macSysctl = process.platform === "darwin"
-  ? dlopen("/usr/lib/libSystem.B.dylib", {
-      sysctl: { args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
-    }).symbols.sysctl
-  : null
+const macSysctl =
+  process.platform === "darwin"
+    ? dlopen("/usr/lib/libSystem.B.dylib", {
+        sysctl: {
+          args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64],
+          returns: FFIType.i32,
+        },
+      }).symbols.sysctl
+    : null
 
 /** Returns a process's argv, or an empty list when it cannot be read. */
 export function processArgv(pid: number): string[] {
@@ -201,12 +242,16 @@ async function processTable(panes: Pane[]): Promise<Proc[]> {
     if (m) rows.push({ pid: Number(m[1]), pgid: Number(m[2]), tpgid: Number(m[3]), command: m[4]! })
   }
   const shellPids = new Set(panes.map((p) => p.pid))
-  const foreground = new Set(rows.filter((p) => shellPids.has(p.pid) && p.tpgid > 0).map((p) => p.tpgid))
+  const foreground = new Set(
+    rows.filter((p) => shellPids.has(p.pid) && p.tpgid > 0).map((p) => p.tpgid),
+  )
   return rows.filter((p) => shellPids.has(p.pid) || foreground.has(p.pgid))
 }
 
-const needsArgv = (command: string) => isRuntime(baseName(command)) || VERSION_COMMAND.test(baseName(command))
-const claudeVersionPath = (path: string) => /(?:^|[/\\])claude[/\\]versions[/\\]\d+\.\d+(?:\.\d+)?(?:$|[/\\])/.test(path)
+const needsArgv = (command: string) =>
+  isRuntime(baseName(command)) || VERSION_COMMAND.test(baseName(command))
+const claudeVersionPath = (path: string) =>
+  /(?:^|[/\\])claude[/\\]versions[/\\]\d+\.\d+(?:\.\d+)?(?:$|[/\\])/.test(path)
 
 export function agentFromProcess(command: string, argv: () => string[]): Agent | null {
   const direct = parseAgent(baseName(command))
@@ -217,7 +262,11 @@ export function agentFromProcess(command: string, argv: () => string[]): Agent |
   return claudeVersionPath(args[0] ?? "") ? "claude" : agentFromArgv(args)
 }
 
-function agentInForeground(pane: Pane, procs: Proc[], argvFor: (pid: number) => string[]): Agent | null {
+function agentInForeground(
+  pane: Pane,
+  procs: Proc[],
+  argvFor: (pid: number) => string[],
+): Agent | null {
   const shell = procs.find((p) => p.pid === pane.pid)
   if (!shell || shell.tpgid <= 0) return null
   const group = procs.filter((p) => p.pgid === shell.tpgid)
@@ -231,7 +280,9 @@ function agentInForeground(pane: Pane, procs: Proc[], argvFor: (pid: number) => 
 
 export async function identifyAgents(panes: Pane[]): Promise<AgentPane[]> {
   const direct = (p: Pane) => parseAgent(baseName(p.command))
-  const procs = panes.some((p) => !direct(p) && needsArgv(p.command)) ? await processTable(panes) : []
+  const procs = panes.some((p) => !direct(p) && needsArgv(p.command))
+    ? await processTable(panes)
+    : []
   const argvCache = new Map<number, string[]>()
   const argvFor = (pid: number) => {
     let argv = argvCache.get(pid)
@@ -263,9 +314,25 @@ export async function capturePanes(ids: string[], history = 0): Promise<Map<stri
   const screens = new Map<string, string>()
   if (!ids.length) return screens
 
-  const capture = (id: string) => ["capture-pane", "-p", "-t", id, ...(history > 0 ? ["-S", `-${history}`] : [])]
+  const capture = (id: string) => [
+    "capture-pane",
+    "-p",
+    "-t",
+    id,
+    ...(history > 0 ? ["-S", `-${history}`] : []),
+  ]
   const args: string[] = []
-  for (const id of ids) args.push(...(args.length ? [";"] : []), "display-message", "-p", "-t", id, `${SEP}senu ${id}${SEP}`, ";", ...capture(id))
+  for (const id of ids)
+    args.push(
+      ...(args.length ? [";"] : []),
+      "display-message",
+      "-p",
+      "-t",
+      id,
+      `${SEP}senu ${id}${SEP}`,
+      ";",
+      ...capture(id),
+    )
   const { out } = await tmux(...args)
 
   const parts = out.split(new RegExp(`^${SEP}senu (%\\d+)${SEP}\\n`, "m"))
@@ -274,14 +341,22 @@ export async function capturePanes(ids: string[], history = 0): Promise<Map<stri
   // tmux stops at the first failing command, so a pane that closed mid-poll hides the rest
   const missing = ids.filter((id) => !screens.has(id))
   if (missing.length) {
-    const rest = await Promise.all(missing.map(async (id) => [id, await tmux(...capture(id))] as const))
+    const rest = await Promise.all(
+      missing.map(async (id) => [id, await tmux(...capture(id))] as const),
+    )
     for (const [id, r] of rest) if (r.ok) screens.set(id, r.out)
   }
   return screens
 }
 
 export async function capturePane(id: string, history = 0): Promise<string | null> {
-  const { ok, out } = await tmux("capture-pane", "-p", "-t", id, ...(history > 0 ? ["-S", `-${history}`] : []))
+  const { ok, out } = await tmux(
+    "capture-pane",
+    "-p",
+    "-t",
+    id,
+    ...(history > 0 ? ["-S", `-${history}`] : []),
+  )
   return ok ? out : null
 }
 

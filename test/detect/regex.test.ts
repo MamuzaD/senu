@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { compileRustRegex, translateRustRegex } from "../../src/detect/regex.ts"
+
+import { compileRustRegex, translateRustRegex } from "~/detect/regex.ts"
 
 describe("translateRustRegex", () => {
   test("\\x{HHHH} becomes a unicode escape", () => {
-    expect(translateRustRegex("^[\\x{2800}-\\x{28FF}] ")).toEqual({ source: "^[\\u{2800}-\\u{28FF}] ", flags: "u" })
+    expect(translateRustRegex("^[\\x{2800}-\\x{28FF}] ")).toEqual({
+      source: "^[\\u{2800}-\\u{28FF}] ",
+      flags: "u",
+    })
     expect(compileRustRegex("^[\\x{2800}-\\x{28FF}] ").test("⠂ task")).toBe(true)
   })
 
@@ -69,13 +73,24 @@ describe("translateRustRegex", () => {
   })
 
   test("every pattern in the vendored manifests compiles", async () => {
-    const { bundledManifest } = await import("../../src/detect/manifest.ts")
+    const { bundledManifest } = await import("~/detect/manifest.ts")
     expect(bundledManifest("claude").manifest.rules.length).toBeGreaterThan(0)
     expect(bundledManifest("codex").manifest.rules.length).toBeGreaterThan(0)
   })
 
   test("syntax Rust doesn't have, or JS can't mirror, is rejected", () => {
-    for (const p of ["(?=x)", "(?<!x)y", "(x)\\1", "a(?i)b", "(?x)a", "[a[b]]", "[a&&b]", "\\<word", "[\\b]", "[\\W]"]) {
+    for (const p of [
+      "(?=x)",
+      "(?<!x)y",
+      "(x)\\1",
+      "a(?i)b",
+      "(?x)a",
+      "[a[b]]",
+      "[a&&b]",
+      "\\<word",
+      "[\\b]",
+      "[\\W]",
+    ]) {
       expect(() => translateRustRegex(p)).toThrow()
     }
   })

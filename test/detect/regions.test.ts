@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { isHorizontalRule, isValidRegion, lines, region } from "../../src/detect/regions.ts"
 
-const at = (screen: string, spec: string) => region({ screen, oscTitle: "title", oscProgress: "4;0" }, spec)
+import { isHorizontalRule, isValidRegion, lines, region } from "~/detect/regions.ts"
+
+const at = (screen: string, spec: string) =>
+  region({ screen, oscTitle: "title", oscProgress: "4;0" }, spec)
 
 describe("region", () => {
   const cases: [string, string, string][] = [
@@ -86,12 +88,26 @@ describe("isHorizontalRule", () => {
 
 describe("isValidRegion", () => {
   test("accepts herdr's names and counted regions", () => {
-    for (const r of ["whole_recent", " osc_title ", "bottom_lines(3)", "bottom_non_empty_lines(0)", "top_non_empty_lines(1)", "top_non_empty_lines(65535)"]) {
+    for (const r of [
+      "whole_recent",
+      " osc_title ",
+      "bottom_lines(3)",
+      "bottom_non_empty_lines(0)",
+      "top_non_empty_lines(1)",
+      "top_non_empty_lines(65535)",
+    ]) {
       expect(isValidRegion(r)).toBe(true)
     }
   })
   test("rejects unknown names and bad top counts", () => {
-    for (const r of ["nope", "bottom_lines()", "bottom_lines(-1)", "top_non_empty_lines(0)", "top_non_empty_lines(01)", "top_non_empty_lines(65536)"]) {
+    for (const r of [
+      "nope",
+      "bottom_lines()",
+      "bottom_lines(-1)",
+      "top_non_empty_lines(0)",
+      "top_non_empty_lines(01)",
+      "top_non_empty_lines(65536)",
+    ]) {
       expect(isValidRegion(r)).toBe(false)
     }
   })

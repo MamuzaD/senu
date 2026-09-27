@@ -49,5 +49,9 @@ export function mix(a: RGBA, b: RGBA, k: number): RGBA {
   if (k === 1) return b
   const [ar, ag, ab] = a.toInts()
   const [br, bg, bb] = b.toInts()
-  return RGBA.fromInts(Math.round(ar + (br - ar) * k), Math.round(ag + (bg - ag) * k), Math.round(ab + (bb - ab) * k))
+  return RGBA.fromInts(
+    Math.round(ar + (br - ar) * k),
+    Math.round(ag + (bg - ag) * k),
+    Math.round(ab + (bb - ab) * k),
+  )
 }

@@ -1,4 +1,11 @@
-import { errorSnapshot, nowSeconds, type Banked, type Limit, type Snapshot, type Spend } from "./types.ts"
+import {
+  errorSnapshot,
+  nowSeconds,
+  type Banked,
+  type Limit,
+  type Snapshot,
+  type Spend,
+} from "./types.ts"
 
 const TIMEOUT_MS = 8000
 const RATE_LIMITS_ID = 2
@@ -56,7 +63,9 @@ export function parseRateLimits(result: any): Snapshot {
     error: null,
     updatedAt: nowSeconds(),
     planType: rateLimits.planType ?? null,
-    limits: [toLimit(rateLimits.primary), toLimit(rateLimits.secondary)].filter((l): l is Limit => l !== null),
+    limits: [toLimit(rateLimits.primary), toLimit(rateLimits.secondary)].filter(
+      (l): l is Limit => l !== null,
+    ),
     spend: toSpend(rateLimits.individualLimit, rateLimits.spendControlReached),
     banked: toBanked(result?.rateLimitResetCredits),
   }

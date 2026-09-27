@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { agentFromArgv, agentFromProcess, processArgv } from "../../src/detect/panes.ts"
+
+import { agentFromArgv, agentFromProcess, processArgv } from "~/detect/panes.ts"
 
 describe("agentFromArgv", () => {
   const cases: [string, string | null][] = [
@@ -8,7 +9,10 @@ describe("agentFromArgv", () => {
     ["claude --resume", "claude"],
     ["claude-code", "claude"],
     ["codex --config x=1", "codex"],
-    ["node /Users/me/.local/state/fnm_multishells/1_2/bin/codex --config cli_auth_credentials_store=file", "codex"],
+    [
+      "node /Users/me/.local/state/fnm_multishells/1_2/bin/codex --config cli_auth_credentials_store=file",
+      "codex",
+    ],
     ["node --require ./hook.js /usr/local/lib/node_modules/@openai/codex/bin/codex.js", "codex"],
     ["bun /opt/bin/claude", "claude"],
     ["node -- /opt/bin/codex", "codex"],
@@ -48,7 +52,10 @@ test("version-named Claude executable is identified from its path", () => {
 
 test("processArgv preserves arguments containing spaces", async () => {
   const path = "/tmp/agent files/codex.js"
-  const proc = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 2000)", "--", path], { stdout: "ignore", stderr: "ignore" })
+  const proc = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 2000)", "--", path], {
+    stdout: "ignore",
+    stderr: "ignore",
+  })
   try {
     let argv: string[] = []
     for (let i = 0; i < 20; i++) {

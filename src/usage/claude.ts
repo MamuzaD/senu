@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { home } from "../paths.ts"
+
+import { home } from "~/paths.ts"
+
 import { errorSnapshot, nowSeconds, type Limit, type Snapshot } from "./types.ts"
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -30,11 +32,16 @@ function loadToken(configDir: string): TokenResult {
       const result = tokenFromOauth(readFileSync(file, "utf8"))
       if (result) return result
     }
-  } catch {
-  }
+  } catch {}
 
   if (process.platform === "darwin") {
-    const proc = Bun.spawnSync(["security", "find-generic-password", "-s", keychainService(configDir), "-w"])
+    const proc = Bun.spawnSync([
+      "security",
+      "find-generic-password",
+      "-s",
+      keychainService(configDir),
+      "-w",
+    ])
     if (proc.exitCode === 0) {
       try {
         const result = tokenFromOauth(proc.stdout.toString())

@@ -42,7 +42,11 @@ const TIMEOUT_MS = 2000
 export async function raiseGhosttyTab(session: string): Promise<boolean> {
   if (process.platform !== "darwin" || !Bun.which("osascript")) return false
   try {
-    const proc = Bun.spawn(["osascript", "-e", raiseTabScript(session)], { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+    const proc = Bun.spawn(["osascript", "-e", raiseTabScript(session)], {
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+    })
     const timer = setTimeout(() => proc.kill(), TIMEOUT_MS)
     const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
     clearTimeout(timer)

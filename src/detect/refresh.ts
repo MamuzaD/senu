@@ -1,8 +1,26 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs"
 import { dirname, join } from "node:path"
-import type { Config } from "../config.ts"
-import { stateDir } from "../paths.ts"
-import { AGENTS, ENGINE_VERSION, ManifestError, matchesAgent, overrideDir, parseManifest, type Agent, type Manifest } from "./manifest.ts"
+
+import type { Config } from "~/config.ts"
+import { stateDir } from "~/paths.ts"
+
+import {
+  AGENTS,
+  ENGINE_VERSION,
+  ManifestError,
+  matchesAgent,
+  overrideDir,
+  parseManifest,
+  type Agent,
+  type Manifest,
+} from "./manifest.ts"
 import claudeToml from "./manifests/claude.toml" with { type: "text" }
 import codexToml from "./manifests/codex.toml" with { type: "text" }
 
@@ -16,7 +34,8 @@ import codexToml from "./manifests/codex.toml" with { type: "text" }
  */
 
 export const PRIMARY = "https://herdr.dev/agent-detection"
-export const MIRROR = "https://raw.githubusercontent.com/herdrdev/herdr/HEAD/website/agent-detection"
+export const MIRROR =
+  "https://raw.githubusercontent.com/herdrdev/herdr/HEAD/website/agent-detection"
 /** herdr's MAX_FETCH_BYTES. */
 const MAX_BYTES = 256 * 1024
 const DAY_SECONDS = 24 * 60 * 60
@@ -50,10 +69,13 @@ export function compareVersions(a: string, b: string): number {
 /** A fetched manifest the engine would load for `agent`, with a version to compare. */
 export function validateRemote(agent: Agent, text: string): Manifest & { version: string } {
   const m = parseManifest(text)
-  if (!matchesAgent(m, agent)) throw new ManifestError(`manifest id ${m.id} does not match ${agent}`)
+  if (!matchesAgent(m, agent))
+    throw new ManifestError(`manifest id ${m.id} does not match ${agent}`)
   if (!m.version) throw new ManifestError("manifest has no version")
   if ((m.minEngineVersion ?? 0) > ENGINE_VERSION) {
-    throw new ManifestError(`it requires engine ${m.minEngineVersion}, this is engine ${ENGINE_VERSION}`)
+    throw new ManifestError(
+      `it requires engine ${m.minEngineVersion}, this is engine ${ENGINE_VERSION}`,
+    )
   }
   return m as Manifest & { version: string }
 }
@@ -68,7 +90,12 @@ interface Local {
 /** The copy in use: the override if there is one, else the bundled manifest. */
 function localCopy(agent: Agent, dir: string): Local {
   const path = join(dir, `${agent}.toml`)
-  if (!existsSync(path)) return { text: BUNDLED[agent], version: parseManifest(BUNDLED[agent]).version, source: "bundled" }
+  if (!existsSync(path))
+    return {
+      text: BUNDLED[agent],
+      version: parseManifest(BUNDLED[agent]).version,
+      source: "bundled",
+    }
   const text = readFileSync(path, "utf8")
   let version: string | null = null
   try {
@@ -118,18 +145,22 @@ export async function refreshAgent(agent: Agent, opts: RefreshOptions = {}): Pro
   try {
     remote = validateRemote(agent, text)
   } catch (err) {
-    return fail(`fetched file is invalid, kept the current one: ${err instanceof Error ? err.message : err}`)
+    return fail(
+      `fetched file is invalid, kept the current one: ${err instanceof Error ? err.message : err}`,
+    )
   }
 
   const local = localCopy(agent, dir)
   const was = `${local.source} ${local.version ?? "?"}`
-  if (text === local.text) return { agent, status: "current", message: `up to date (${remote.version}, ${local.source})` }
+  if (text === local.text)
+    return { agent, status: "current", message: `up to date (${remote.version}, ${local.source})` }
   if (local.version) {
     const order = compareVersions(remote.version, local.version)
     if (order < 0) return fail(`online ${remote.version} is older than ${was}`)
     if (order === 0) return fail(`online ${remote.version} changed content without a version bump`)
   }
-  if (opts.check) return { agent, status: "drift", message: `drift: ${was}, online ${remote.version}` }
+  if (opts.check)
+    return { agent, status: "drift", message: `drift: ${was}, online ${remote.version}` }
 
   const dest = join(dir, `${agent}.toml`)
   try {
@@ -159,7 +190,12 @@ export function writeStamp(path = stampPath, now = Date.now()) {
   writeFileSync(path, `${Math.floor(now / 1000)}\n`)
 }
 
-const MARK: Record<Outcome["status"], string> = { current: "=", updated: "↑", drift: "!", failed: "✗" }
+const MARK: Record<Outcome["status"], string> = {
+  current: "=",
+  updated: "↑",
+  drift: "!",
+  failed: "✗",
+}
 
 const HELP = `usage: senu scout manifest refresh [--check] [--daily]
 
@@ -171,7 +207,11 @@ only if it's newer than the one in use.
 --daily  do nothing if the last clean sync was under 24 hours ago
 `
 
-export async function manifestsCommand(args: string[], _config: Config, opts: RefreshOptions & { stamp?: string; now?: number } = {}): Promise<number> {
+export async function manifestsCommand(
+  args: string[],
+  _config: Config,
+  opts: RefreshOptions & { stamp?: string; now?: number } = {},
+): Promise<number> {
   const [sub, ...flags] = args
   if (sub !== "refresh" || flags.some((f) => f !== "--check" && f !== "--daily")) {
     const help = !sub || sub === "-h" || sub === "--help"

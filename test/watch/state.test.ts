@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import type { AgentState } from "../../src/detect/manifest.ts"
+
+import type { AgentState } from "~/detect/manifest.ts"
 import {
   fold,
   IDLE_CAP_MS,
@@ -12,9 +13,12 @@ import {
   type PaneState,
   type PaneTrack,
   type WindowTrack,
-} from "../../src/watch/state.ts"
+} from "~/watch/state.ts"
 
-const det = (state: AgentState, extra: { visibleIdle?: boolean; skipStateUpdate?: boolean } = {}) => ({
+const det = (
+  state: AgentState,
+  extra: { visibleIdle?: boolean; skipStateUpdate?: boolean } = {},
+) => ({
   state,
   visibleIdle: false,
   skipStateUpdate: false,
@@ -171,10 +175,12 @@ describe("step: windows, done and sounds", () => {
 describe("shouldPlay", () => {
   const bg = { kind: "done" as const, window: "@1", focused: false }
   const fg = { ...bg, focused: true }
-  test("background windows chime", () => expect(shouldPlay(bg, { enabled: true, always: false })).toBe(true))
+  test("background windows chime", () =>
+    expect(shouldPlay(bg, { enabled: true, always: false })).toBe(true))
   test("the focused window only with sound.always", () => {
     expect(shouldPlay(fg, { enabled: true, always: false })).toBe(false)
     expect(shouldPlay(fg, { enabled: true, always: true })).toBe(true)
   })
-  test("sound.enabled off silences everything", () => expect(shouldPlay(fg, { enabled: false, always: true })).toBe(false))
+  test("sound.enabled off silences everything", () =>
+    expect(shouldPlay(fg, { enabled: false, always: true })).toBe(false))
 })

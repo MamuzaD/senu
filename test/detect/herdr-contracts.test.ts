@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { explainWith } from "../../src/detect/engine.ts"
-import { AGENTS, bundledManifest, parseManifest, type AgentState } from "../../src/detect/manifest.ts"
-import { isValidRegion } from "../../src/detect/regions.ts"
+
+import { explainWith } from "~/detect/engine.ts"
+import { AGENTS, bundledManifest, parseManifest, type AgentState } from "~/detect/manifest.ts"
+import { isValidRegion } from "~/detect/regions.ts"
 
 /**
  * herdr's engine-contract tests (`src/detect/manifest/tests.rs` at 9c96f7d,
@@ -10,7 +11,11 @@ import { isValidRegion } from "../../src/detect/regions.ts"
  * The remote-cache tests have no senu counterpart: senu has no remote cache.
  */
 
-const codex = (rules: string) => ({ manifest: parseManifest(`id = "codex"\n${rules}`), source: "test", warning: null })
+const codex = (rules: string) => ({
+  manifest: parseManifest(`id = "codex"\n${rules}`),
+  source: "test",
+  warning: null,
+})
 
 test("osc_regions_use_separate_inputs_and_share_rule_priority", () => {
   const m = codex(`
@@ -52,7 +57,11 @@ regex = ['^progress-marker$']
     expect(x.visibleWorking).toBe(state === "working")
     expect(x.visibleBlocker).toBe(state === "blocked")
   }
-  const swapped = explainWith(m, "codex", { screen: "", oscTitle: "progress-marker", oscProgress: "title-marker" })
+  const swapped = explainWith(m, "codex", {
+    screen: "",
+    oscTitle: "progress-marker",
+    oscProgress: "title-marker",
+  })
   expect(swapped.rule).toBeNull()
 })
 
@@ -91,7 +100,8 @@ test("codex_no_match_is_unknown_without_changing_other_agents", () => {
 })
 
 test("all_bundled_manifests_parse_and_validate", () => {
-  for (const agent of AGENTS) expect(bundledManifest(agent).manifest.rules.length).toBeGreaterThan(0)
+  for (const agent of AGENTS)
+    expect(bundledManifest(agent).manifest.rules.length).toBeGreaterThan(0)
 })
 
 describe("manifest validation", () => {
@@ -103,7 +113,10 @@ describe("manifest validation", () => {
     bad_nested_regex: `[[rules]]\nid = "bad_nested_regex"\nstate = "working"\nany = [{ line_regex = ["["] }]`,
     bad_skip_state: `[[rules]]\nid = "bad_skip_state"\nstate = "idle"\nskip_state_update = true\ncontains = ["menu"]`,
     bad_skip_visible: `[[rules]]\nid = "bad_skip_visible"\nstate = "unknown"\nskip_state_update = true\nvisible_blocker = true\ncontains = ["menu"]`,
-    excessive_rule_count: Array.from({ length: 129 }, (_, i) => `[[rules]]\nid = "rule_${i}"\nstate = "idle"\ncontains = ["ready"]`).join("\n"),
+    excessive_rule_count: Array.from(
+      { length: 129 },
+      (_, i) => `[[rules]]\nid = "rule_${i}"\nstate = "idle"\ncontains = ["ready"]`,
+    ).join("\n"),
     excessive_gate_depth: `[[rules]]
 id = "deep"
 state = "idle"

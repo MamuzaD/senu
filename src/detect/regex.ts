@@ -43,7 +43,8 @@ export function translateRustRegex(pattern: string): TranslatedRegex {
   const flags = new Set<string>()
   for (let m = FLAG_GROUP.exec(rest); m; m = FLAG_GROUP.exec(rest)) {
     for (const f of m[1]!) {
-      if (f !== "i" && f !== "m" && f !== "s") throw new Error(`unsupported regex flag "${f}" in ${JSON.stringify(pattern)}`)
+      if (f !== "i" && f !== "m" && f !== "s")
+        throw new Error(`unsupported regex flag "${f}" in ${JSON.stringify(pattern)}`)
       flags.add(f)
     }
     rest = rest.slice(m[0].length)
@@ -83,7 +84,10 @@ export function translateRustRegex(pattern: string): TranslatedRegex {
       } else if (n === "w") {
         out += inClass ? WORD : `[${WORD}]`
       } else if (n === "W" || n === "b" || n === "B") {
-        if (inClass) throw new Error(`"\\${n}" inside a character class is not supported: ${JSON.stringify(pattern)}`)
+        if (inClass)
+          throw new Error(
+            `"\\${n}" inside a character class is not supported: ${JSON.stringify(pattern)}`,
+          )
         out += n === "W" ? `[^${WORD}]` : n === "b" ? WORD_EDGE : NOT_WORD_EDGE
       } else if (/[0-9<>]/.test(n)) {
         // backreferences aren't Rust syntax; Rust's `\<` / `\>` word edges have no JS spelling
@@ -99,9 +103,12 @@ export function translateRustRegex(pattern: string): TranslatedRegex {
 
     if (inClass) {
       if (c === "]") inClass = false
-      else if (c === "[") throw new Error(`nested character classes are not supported: ${JSON.stringify(pattern)}`)
+      else if (c === "[")
+        throw new Error(`nested character classes are not supported: ${JSON.stringify(pattern)}`)
       else if ((c === "&" || c === "~" || c === "-") && rest[i + 1] === c) {
-        throw new Error(`character class set operations are not supported: ${JSON.stringify(pattern)}`)
+        throw new Error(
+          `character class set operations are not supported: ${JSON.stringify(pattern)}`,
+        )
       }
       out += c
       continue

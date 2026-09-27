@@ -1,5 +1,6 @@
-import type { Config } from "../config.ts"
-import { tmux, useTmuxSocket } from "../detect/panes.ts"
+import type { Config } from "~/config.ts"
+import { tmux, useTmuxSocket } from "~/detect/panes.ts"
+
 import { Collector } from "./collect.ts"
 import { runPicker } from "./picker.tsx"
 

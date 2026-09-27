@@ -1,12 +1,21 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { explainWith } from "../../src/detect/engine.ts"
-import { bundledManifest, parseManifest, type Agent, type AgentState } from "../../src/detect/manifest.ts"
 
-const loaded = (rules: string) => ({ manifest: parseManifest(`id = "codex"\n${rules}`), source: "test", warning: null })
-const run = (rules: string, screen: string, agent: Agent = "codex", previous: AgentState | null = null) =>
-  explainWith(loaded(rules), agent, { screen, oscTitle: "" }, previous)
+import { explainWith } from "~/detect/engine.ts"
+import { bundledManifest, parseManifest, type Agent, type AgentState } from "~/detect/manifest.ts"
+
+const loaded = (rules: string) => ({
+  manifest: parseManifest(`id = "codex"\n${rules}`),
+  source: "test",
+  warning: null,
+})
+const run = (
+  rules: string,
+  screen: string,
+  agent: Agent = "codex",
+  previous: AgentState | null = null,
+) => explainWith(loaded(rules), agent, { screen, oscTitle: "" }, previous)
 
 describe("herdr rule semantics", () => {
   const rules = `
@@ -34,9 +43,12 @@ state = "blocked"
 priority = 20
 line_regex = ["^exact line$"]
 `
-  test("nested gates and priority", () => expect(run(rules, "match win").rule?.id).toBe("high_nested_gates"))
-  test("a not gate knocks out a higher rule", () => expect(run(rules, "match win blocked").rule?.id).toBe("low_contains"))
-  test("line_regex matches a whole line", () => expect(run(rules, "before\nexact line\nafter").rule?.id).toBe("line_regex"))
+  test("nested gates and priority", () =>
+    expect(run(rules, "match win").rule?.id).toBe("high_nested_gates"))
+  test("a not gate knocks out a higher rule", () =>
+    expect(run(rules, "match win blocked").rule?.id).toBe("low_contains"))
+  test("line_regex matches a whole line", () =>
+    expect(run(rules, "before\nexact line\nafter").rule?.id).toBe("line_regex"))
 
   test("contains is case-insensitive", () => {
     const r = `[[rules]]\nid = "r"\nstate = "blocked"\ncontains = ["do you want to proceed?"]`
@@ -117,27 +129,100 @@ contains = ["x"]
 })
 
 const FIXTURES = join(import.meta.dir, "../fixtures/detect")
-const cases: { name: string; agent: Agent; state: AgentState; rule: string; python?: AgentState; previous?: AgentState }[] = [
+const cases: {
+  name: string
+  agent: Agent
+  state: AgentState
+  rule: string
+  python?: AgentState
+  previous?: AgentState
+}[] = [
   { name: "live-claude-idle", agent: "claude", state: "idle", rule: "live_prompt_box" },
   { name: "live-claude-idle-draft", agent: "claude", state: "idle", rule: "live_prompt_box" },
-  { name: "live-codex-idle", agent: "codex", state: "unknown", rule: "codex_state_ambiguous", python: "idle" },
-  { name: "live-codex-idle-draft", agent: "codex", state: "unknown", rule: "codex_state_ambiguous", python: "idle" },
+  {
+    name: "live-codex-idle",
+    agent: "codex",
+    state: "unknown",
+    rule: "codex_state_ambiguous",
+    python: "idle",
+  },
+  {
+    name: "live-codex-idle-draft",
+    agent: "codex",
+    state: "unknown",
+    rule: "codex_state_ambiguous",
+    python: "idle",
+  },
 
   { name: "claude-working-title", agent: "claude", state: "working", rule: "osc_title_working" },
   { name: "claude-working-screen", agent: "claude", state: "working", rule: "live_turn_working" },
-  { name: "claude-blocked-bash", agent: "claude", state: "blocked", rule: "bash_permission_prompt" },
-  { name: "claude-blocked-edit", agent: "claude", state: "blocked", rule: "legacy_no_prompt_blocker", python: "idle" },
-  { name: "claude-blocked-question", agent: "claude", state: "blocked", rule: "live_blocked_form", python: "idle" },
-  { name: "claude-transcript-viewer", agent: "claude", state: "working", rule: "transcript_viewer", previous: "working", python: "idle" },
-  { name: "claude-overlay-esc-to-close", agent: "claude", state: "idle", rule: "osc_title_idle", python: "working" },
-  { name: "claude-no-signal", agent: "claude", state: "idle", rule: "default_known_agent_idle_fallback" },
+  {
+    name: "claude-blocked-bash",
+    agent: "claude",
+    state: "blocked",
+    rule: "bash_permission_prompt",
+  },
+  {
+    name: "claude-blocked-edit",
+    agent: "claude",
+    state: "blocked",
+    rule: "legacy_no_prompt_blocker",
+    python: "idle",
+  },
+  {
+    name: "claude-blocked-question",
+    agent: "claude",
+    state: "blocked",
+    rule: "live_blocked_form",
+    python: "idle",
+  },
+  {
+    name: "claude-transcript-viewer",
+    agent: "claude",
+    state: "working",
+    rule: "transcript_viewer",
+    previous: "working",
+    python: "idle",
+  },
+  {
+    name: "claude-overlay-esc-to-close",
+    agent: "claude",
+    state: "idle",
+    rule: "osc_title_idle",
+    python: "working",
+  },
+  {
+    name: "claude-no-signal",
+    agent: "claude",
+    state: "idle",
+    rule: "default_known_agent_idle_fallback",
+  },
 
   { name: "codex-working-title", agent: "codex", state: "working", rule: "osc_title_working" },
-  { name: "codex-working-screen", agent: "codex", state: "working", rule: "screen_working_fallback", python: "idle" },
-  { name: "codex-blocked-approval", agent: "codex", state: "blocked", rule: "live_strong_blocker", python: "idle" },
+  {
+    name: "codex-working-screen",
+    agent: "codex",
+    state: "working",
+    rule: "screen_working_fallback",
+    python: "idle",
+  },
+  {
+    name: "codex-blocked-approval",
+    agent: "codex",
+    state: "blocked",
+    rule: "live_strong_blocker",
+    python: "idle",
+  },
   { name: "codex-blocked-title", agent: "codex", state: "blocked", rule: "osc_title_blocked" },
-  { name: "codex-weak-blocker", agent: "codex", state: "blocked", rule: "weak_blocker", python: "idle" },
-  { name: "codex-no-title", agent: "codex", state: "unknown", rule: "codex_state_ambiguous" },]
+  {
+    name: "codex-weak-blocker",
+    agent: "codex",
+    state: "blocked",
+    rule: "weak_blocker",
+    python: "idle",
+  },
+  { name: "codex-no-title", agent: "codex", state: "unknown", rule: "codex_state_ambiguous" },
+]
 
 describe("pane fixtures", () => {
   const manifests = { claude: bundledManifest("claude"), codex: bundledManifest("codex") }

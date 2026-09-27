@@ -1,4 +1,5 @@
 import type { TextProps } from "@opentui/react"
+
 import { colors } from "./theme.ts"
 
 export function Line(props: TextProps) {

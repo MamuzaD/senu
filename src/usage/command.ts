@@ -1,4 +1,5 @@
-import type { Config } from "../config.ts"
+import type { Config } from "~/config.ts"
+
 import { claimLock, getSnapshot, profileKey, refreshLocked } from "./cache.ts"
 import { formatTokens } from "./format.ts"
 import { claimTodayLock, refreshTodayLocked, scanToday } from "./today.ts"
@@ -26,7 +27,9 @@ export async function usageCommand(args: string[], config: Config): Promise<numb
     const locked = args.includes("--locked")
     const targets = key ? profiles.filter((p) => profileKey(p) === key) : profiles
     if (!targets.length) {
-      console.error(`senu vision: no profile "${key}" (have ${profiles.map(profileKey).join(", ")})`)
+      console.error(
+        `senu vision: no profile "${key}" (have ${profiles.map(profileKey).join(", ")})`,
+      )
       return 2
     }
     await Promise.all(targets.map((p) => (locked || claimLock(p) ? refreshLocked(p) : null)))
@@ -37,7 +40,9 @@ export async function usageCommand(args: string[], config: Config): Promise<numb
     const keys = args.slice(1).filter((a) => !a.startsWith("-"))
     const targets = keys.length ? profiles.filter((p) => keys.includes(profileKey(p))) : profiles
     if (!targets.length) {
-      console.error(`senu vision: no profile "${keys.join(", ")}" (have ${profiles.map(profileKey).join(", ")})`)
+      console.error(
+        `senu vision: no profile "${keys.join(", ")}" (have ${profiles.map(profileKey).join(", ")})`,
+      )
       return 2
     }
     // --locked transfers the parent's profile locks; refreshTodayLocked releases each one.
@@ -58,7 +63,9 @@ export async function usageCommand(args: string[], config: Config): Promise<numb
       const cost = r.costUsd == null ? "no prices" : `$${r.costUsd.toFixed(2)}`
       const cached = r.tokens ? ` (${Math.round((100 * r.cachedTokens) / r.tokens)}% cached)` : ""
       const unpriced = r.unpricedTokens ? `, ${formatTokens(r.unpricedTokens)} unpriced` : ""
-      console.log(`${r.key.padEnd(16)} ${r.day}  ${cost.padStart(9)}  ${formatTokens(r.tokens)} tok${cached}${unpriced}  ${r.ms}ms`)
+      console.log(
+        `${r.key.padEnd(16)} ${r.day}  ${cost.padStart(9)}  ${formatTokens(r.tokens)} tok${cached}${unpriced}  ${r.ms}ms`,
+      )
     }
     return 0
   }

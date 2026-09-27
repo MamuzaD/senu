@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 
-export const reducedMotion = !!process.env.SENU_REDUCED_MOTION && process.env.SENU_REDUCED_MOTION !== "0"
+export const reducedMotion =
+  !!process.env.SENU_REDUCED_MOTION && process.env.SENU_REDUCED_MOTION !== "0"
 
 export const FPS = 30
 
@@ -26,12 +27,18 @@ export const smooth = (k: number) => {
   k = clamp(k)
   return k * k * (3 - 2 * k)
 }
-export const phase = (t: number, from: number | null, ms: number) => (from == null ? 0 : clamp((t - from) / ms))
+export const phase = (t: number, from: number | null, ms: number) =>
+  from == null ? 0 : clamp((t - from) / ms)
 export const pulse = (t: number, from: number | null, ms: number) =>
   from == null || t < from || t > from + ms ? 0 : Math.sin((Math.PI * (t - from)) / ms)
 
 /** Times are ms on the now() clock; a null start or reduced motion returns the completed value, 1. */
-export function tween(start: number | null, duration: number, ease: (k: number) => number = (k) => k, t = now()) {
+export function tween(
+  start: number | null,
+  duration: number,
+  ease: (k: number) => number = (k) => k,
+  t = now(),
+) {
   if (start == null || reducedMotion) return 1
   return ease(clamp((t - start) / duration))
 }

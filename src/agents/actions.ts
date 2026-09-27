@@ -1,4 +1,5 @@
-import { tmux } from "../detect/panes.ts"
+import { tmux } from "~/detect/panes.ts"
+
 import type { AgentRow } from "./collect.ts"
 import { raiseGhosttyTab } from "./ghostty.ts"
 
@@ -11,7 +12,11 @@ export interface Client {
 const SEP = "\x1f"
 
 async function clients(): Promise<Client[]> {
-  const { out } = await tmux("list-clients", "-F", ["#{client_name}", "#{session_name}", "#{client_termname}"].join(SEP))
+  const { out } = await tmux(
+    "list-clients",
+    "-F",
+    ["#{client_name}", "#{session_name}", "#{client_termname}"].join(SEP),
+  )
   return out
     .split("\n")
     .filter(Boolean)
@@ -45,7 +50,9 @@ export function planJump(
   const mine = all.find((c) => c.name === current)
   if (mine && mine.session === row.session) return "here"
   if (!opts.raiseGhosttyTab || opts.platform !== "darwin") return "switch"
-  const elsewhere = all.some((c) => c.name !== current && c.session === row.session && /ghostty/i.test(c.termname))
+  const elsewhere = all.some(
+    (c) => c.name !== current && c.session === row.session && /ghostty/i.test(c.termname),
+  )
   return elsewhere ? "raise" : "switch"
 }
 
@@ -58,7 +65,16 @@ export async function jump(row: AgentRow, opts: { raiseGhosttyTab: boolean }): P
   const client = current ? ["-c", current] : []
   if (plan === "switch") {
     // Select first so switching clients does not briefly show the session's previous window.
-    await tmux("select-window", "-t", row.windowId, ";", "switch-client", ...client, "-t", row.windowId)
+    await tmux(
+      "select-window",
+      "-t",
+      row.windowId,
+      ";",
+      "switch-client",
+      ...client,
+      "-t",
+      row.windowId,
+    )
   } else {
     await tmux("select-window", "-t", row.windowId)
   }

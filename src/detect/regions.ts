@@ -78,7 +78,12 @@ function topCount(spec: string): number | null {
 
 export function isValidRegion(spec: string): boolean {
   const s = trim(spec)
-  return FIXED.has(s) || count(s, "bottom_lines") !== null || count(s, "bottom_non_empty_lines") !== null || topCount(s) !== null
+  return (
+    FIXED.has(s) ||
+    count(s, "bottom_lines") !== null ||
+    count(s, "bottom_non_empty_lines") !== null ||
+    topCount(s) !== null
+  )
 }
 
 export function region(input: DetectionInput, spec: string): string {

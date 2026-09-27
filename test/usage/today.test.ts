@@ -13,23 +13,31 @@ test("today scan excludes copied fork usage, deduplicates events, and resumes ap
   const started = at.getTime()
   const event = (type: string, payload: object, after: number) =>
     JSON.stringify({ type, payload, timestamp: new Date(started + after).toISOString() }) + "\n"
-  const usage = (input: number, cached: number, output: number) =>
-    ({ type: "token_count", info: { last_token_usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: output } } })
+  const usage = (input: number, cached: number, output: number) => ({
+    type: "token_count",
+    info: {
+      last_token_usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: output },
+    },
+  })
   const parent = join(sessions, "parent.jsonl")
   const child = join(sessions, "child.jsonl")
-  writeFileSync(parent,
+  writeFileSync(
+    parent,
     event("session_meta", { id: "parent" }, 0) +
-    event("turn_context", { model: "gpt-test" }, 10) +
-    event("event_msg", usage(10, 2, 3), 100) +
-    event("event_msg", usage(10, 2, 3), 200) +
-    event("event_msg", usage(20, 5, 4), 2000))
-  writeFileSync(child,
+      event("turn_context", { model: "gpt-test" }, 10) +
+      event("event_msg", usage(10, 2, 3), 100) +
+      event("event_msg", usage(10, 2, 3), 200) +
+      event("event_msg", usage(20, 5, 4), 2000),
+  )
+  writeFileSync(
+    child,
     event("session_meta", { id: "child", forked_from_id: "parent" }, 3000) +
-    event("turn_context", { model: "gpt-test" }, 3010) +
-    event("event_msg", usage(10, 2, 3), 3100) +
-    event("event_msg", usage(6, 0, 2), 3200) +
-    event("event_msg", usage(7, 0, 1), 5000) +
-    event("noise", { text: "x".repeat(256) }, 5500))
+      event("turn_context", { model: "gpt-test" }, 3010) +
+      event("event_msg", usage(10, 2, 3), 3100) +
+      event("event_msg", usage(6, 0, 2), 3200) +
+      event("event_msg", usage(7, 0, 1), 5000) +
+      event("noise", { text: "x".repeat(256) }, 5500),
+  )
 
   const script = `
     import { appendFileSync, readFileSync, writeFileSync } from "node:fs"

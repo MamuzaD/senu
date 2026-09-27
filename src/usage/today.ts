@@ -5,10 +5,22 @@
  * turn_context; unchanged re-emits are skipped and copied fork history is filtered heuristically.
  * Costs use LiteLLM's public price table.
  */
-import { closeSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs"
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { join } from "node:path"
-import type { UsageProfile } from "../config.ts"
-import { cacheDir, selfCommand } from "../paths.ts"
+
+import type { UsageProfile } from "~/config.ts"
+import { cacheDir, selfCommand } from "~/paths.ts"
+
 import { claimLockFile, profileKey, releaseLockFile } from "./cache.ts"
 import { nowSeconds } from "./types.ts"
 
@@ -38,7 +50,8 @@ export interface ModelDay {
 const FRESH_TTL_SECONDS = 60
 const LOCK_TTL_SECONDS = 120
 
-const RATES_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+const RATES_URL =
+  "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 const RATES_TTL_SECONDS = 24 * 60 * 60
 const RATES_TIMEOUT_MS = 10_000
 const SCAN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
@@ -70,7 +83,10 @@ export function localDay(at = new Date()): { startMs: number; day: string } {
   const start = new Date(at)
   start.setHours(0, 0, 0, 0)
   const pad = (n: number) => String(n).padStart(2, "0")
-  return { startMs: start.getTime(), day: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}` }
+  return {
+    startMs: start.getTime(),
+    day: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
+  }
 }
 
 /** USD per token, ordered as input, output, cache read, cache creation. */
@@ -82,7 +98,8 @@ interface RatesCache {
   rates: Rates
 }
 
-const finite = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
+const finite = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null
 const bareName = (key: string) => key.slice(key.lastIndexOf("/") + 1)
 
 function parseRates(doc: unknown): Rates {
@@ -135,7 +152,15 @@ function lookupRate(rates: Rates, model: string): Rate | null {
   return rates[key] ?? null
 }
 
-type UsageRecord = [ts: number, model: string, uncached: number, cached: number, creation: number, output: number, key: string | null]
+type UsageRecord = [
+  ts: number,
+  model: string,
+  uncached: number,
+  cached: number,
+  creation: number,
+  output: number,
+  key: string | null,
+]
 
 interface CodexState {
   model: string
@@ -155,7 +180,8 @@ const initialCodexState = (): CodexState => ({
 
 const FORK_COPY_MAX_GAP_MS = 1000
 
-const int = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0)
+const int = (v: unknown) =>
+  typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0
 const parseTs = (v: unknown) => (typeof v === "string" ? Date.parse(v) : NaN)
 
 function parseClaudeLine(line: string): UsageRecord | null {
@@ -293,7 +319,10 @@ function readGuard(fd: number, offset: number, length: number): number | null {
   return readSync(fd, buf, 0, length, offset - length) === length ? fnv1a(buf) : null
 }
 
-function listFiles(root: string, sinceMs: number): { path: string; size: number; mtimeMs: number }[] {
+function listFiles(
+  root: string,
+  sinceMs: number,
+): { path: string; size: number; mtimeMs: number }[] {
   const found: { path: string; size: number; mtimeMs: number }[] = []
   const walk = (dir: string) => {
     let entries
@@ -318,7 +347,9 @@ function listFiles(root: string, sinceMs: number): { path: string; size: number;
 }
 
 const CLAUDE_NEEDLE = Buffer.from('"usage"')
-const CODEX_NEEDLES = ['"token_count"', '"turn_context"', '"session_meta"'].map((n) => Buffer.from(n))
+const CODEX_NEEDLES = ['"token_count"', '"turn_context"', '"session_meta"'].map((n) =>
+  Buffer.from(n),
+)
 
 // Leave an unterminated final line for the next scan: the CLI may still be writing it.
 function readFile(
@@ -337,9 +368,15 @@ function readFile(
     let start = 0
     let state = initialCodexState()
     let resumed = false
-    if (resume && resume.o > 0 && (kind !== "codex" || resume.cs) && readGuard(fd, resume.o, resume.gl) === resume.gh) {
+    if (
+      resume &&
+      resume.o > 0 &&
+      (kind !== "codex" || resume.cs) &&
+      readGuard(fd, resume.o, resume.gl) === resume.gh
+    ) {
       start = resume.o
-      if (resume.cs) state = { ...resume.cs, forkCopy: resume.cs.forkCopy && { ...resume.cs.forkCopy } }
+      if (resume.cs)
+        state = { ...resume.cs, forkCopy: resume.cs.forkCopy && { ...resume.cs.forkCopy } }
       resumed = true
     }
 
@@ -405,7 +442,8 @@ function dedupe(records: UsageRecord[]): UsageRecord[] {
 
 function scanProfileFiles(p: UsageProfile, startMs: number): UsageRecord[][] {
   const loaded = readJson<ScanCache>(scanPath(p))
-  const cache: ScanCache = loaded?.version === SCAN_CACHE_VERSION ? loaded : { version: SCAN_CACHE_VERSION, files: {} }
+  const cache: ScanCache =
+    loaded?.version === SCAN_CACHE_VERSION ? loaded : { version: SCAN_CACHE_VERSION, files: {} }
   const root = join(p.home, p.kind === "claude" ? "projects" : "sessions")
   const files = listFiles(root, startMs)
 
@@ -423,7 +461,8 @@ function scanProfileFiles(p: UsageProfile, startMs: number): UsageRecord[][] {
       continue
     }
     const base = parsed.resumed && hit ? hit.r.filter((r) => r[0] >= startMs) : []
-    const records = p.kind === "claude" ? dedupe([...base, ...parsed.records]) : [...base, ...parsed.records]
+    const records =
+      p.kind === "claude" ? dedupe([...base, ...parsed.records]) : [...base, ...parsed.records]
     cache.files[file.path] = { s: file.size, m: file.mtimeMs, ...parsed.entry, r: records }
     perFile.push(records)
   }
@@ -437,7 +476,10 @@ function scanProfileFiles(p: UsageProfile, startMs: number): UsageRecord[][] {
   return perFile
 }
 
-function aggregateUsage(perFile: UsageRecord[][], kind: UsageProfile["kind"]): Map<string, [number, number, number, number]> {
+function aggregateUsage(
+  perFile: UsageRecord[][],
+  kind: UsageProfile["kind"],
+): Map<string, [number, number, number, number]> {
   const seen = new Set<string>()
   const byModel = new Map<string, [number, number, number, number]>()
   for (const records of perFile) {
@@ -490,7 +532,15 @@ export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today
     models.push({ model, tokens: total, cachedTokens: cached, costUsd: spent })
   }
   models.sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0) || b.tokens - a.tokens)
-  return { day, updatedAt: nowSeconds(), tokens, cachedTokens, costUsd: rates ? cost : null, unpricedTokens, models }
+  return {
+    day,
+    updatedAt: nowSeconds(),
+    tokens,
+    cachedTokens,
+    costUsd: rates ? cost : null,
+    unpricedTokens,
+    models,
+  }
 }
 
 /** Reads cached totals for the current local day; returns null without scanning when absent or stale by date. */
@@ -499,7 +549,8 @@ export function readToday(p: UsageProfile, at = new Date()): Today | null {
   return today && today.day === localDay(at).day ? today : null
 }
 
-export const todayIsFresh = (t: Today | null) => t?.models != null && nowSeconds() - t.updatedAt <= FRESH_TTL_SECONDS
+export const todayIsFresh = (t: Today | null) =>
+  t?.models != null && nowSeconds() - t.updatedAt <= FRESH_TTL_SECONDS
 
 export const claimTodayLock = (p: UsageProfile) => claimLockFile(lockPath(p), LOCK_TTL_SECONDS)
 
@@ -523,10 +574,13 @@ export function spawnTodayRefresh(profiles: UsageProfile[]): UsageProfile[] {
   if (!claimed.length) return []
   try {
     // Transcript parsing is synchronous, so run it outside the animated popup.
-    const child = Bun.spawn([...selfCommand(), "vision", "today", ...claimed.map(profileKey), "--refresh", "--locked"], {
-      stdio: ["ignore", "ignore", "ignore"],
-      detached: true,
-    })
+    const child = Bun.spawn(
+      [...selfCommand(), "vision", "today", ...claimed.map(profileKey), "--refresh", "--locked"],
+      {
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: true,
+      },
+    )
     child.unref()
     return claimed
   } catch {

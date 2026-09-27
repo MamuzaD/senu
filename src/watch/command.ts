@@ -1,5 +1,6 @@
-import type { Config } from "../config.ts"
-import { useTmuxSocket } from "../detect/panes.ts"
+import type { Config } from "~/config.ts"
+import { useTmuxSocket } from "~/detect/panes.ts"
+
 import { runDaemon, Watcher } from "./daemon.ts"
 import { play, resolveSound } from "./sounds.ts"
 import type { SoundKind } from "./state.ts"
@@ -33,8 +34,10 @@ async function testSounds(args: string[], config: Config): Promise<number> {
     const path = resolveSound(kind, config.sound[kind])
     console.log(`${kind.padEnd(8)} -> ${path ?? "none"}`)
     const proc = path ? play(path) : null
-    if (!proc || await proc.exited !== 0) {
-      console.error(`senu watch test: could not play ${kind} (check the sound file and installed audio player)`)
+    if (!proc || (await proc.exited) !== 0) {
+      console.error(
+        `senu watch test: could not play ${kind} (check the sound file and installed audio player)`,
+      )
       failed = true
     }
   }

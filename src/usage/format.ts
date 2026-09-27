@@ -1,5 +1,7 @@
 import type { RGBA } from "@opentui/core"
-import { colors } from "../ui/theme.ts"
+
+import { colors } from "~/ui/theme.ts"
+
 import { nowSeconds } from "./types.ts"
 
 export const BAR_WIDTH = 24
@@ -47,7 +49,10 @@ export function colorFor(left: number | null): RGBA {
 }
 
 /** Remaining-window percentage at an even spending pace; null when reset or window length is unavailable or past. */
-export function evenLeft(resetsAt: number | null, windowMs: number | null | undefined): number | null {
+export function evenLeft(
+  resetsAt: number | null,
+  windowMs: number | null | undefined,
+): number | null {
   if (resetsAt == null || !windowMs) return null
   const remaining = resetsAt - nowSeconds()
   if (remaining <= 0) return null
@@ -56,9 +61,10 @@ export function evenLeft(resetsAt: number | null, windowMs: number | null | unde
 
 export const PACE_SLACK = 5
 
-export const markCell = (even: number) => Math.min(BAR_WIDTH - 1, Math.floor((even * BAR_WIDTH) / 100))
+export const markCell = (even: number) =>
+  Math.min(BAR_WIDTH - 1, Math.floor((even * BAR_WIDTH) / 100))
 
-const EIGHTHS =["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+const EIGHTHS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
 
 export function bar(left: number | null): string {
   if (left == null) return "░".repeat(BAR_WIDTH)
@@ -69,7 +75,8 @@ export function bar(left: number | null): string {
 }
 
 export function formatTokens(n: number): string {
-  const short = (v: number, unit: string) => `${v < 9.95 ? v.toFixed(1).replace(/\.0$/, "") : Math.round(v)}${unit}`
+  const short = (v: number, unit: string) =>
+    `${v < 9.95 ? v.toFixed(1).replace(/\.0$/, "") : Math.round(v)}${unit}`
   if (n >= 999_500_000) return short(n / 1e9, "B")
   if (n >= 999_500) return short(n / 1e6, "M")
   if (n >= 1000) return short(n / 1e3, "k")

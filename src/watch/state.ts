@@ -1,5 +1,5 @@
-import type { Detection } from "../detect/engine.ts"
-import type { AgentState } from "../detect/manifest.ts"
+import type { Detection } from "~/detect/engine.ts"
+import type { AgentState } from "~/detect/manifest.ts"
 
 export type PaneState = "idle" | "working" | "blocked"
 /** What `@ai_state` shows. `done` is idle that you haven't looked at yet. */
@@ -114,7 +114,8 @@ export function step(windows: Map<string, WindowTrack>, inputs: WindowInput[]): 
         if (!w.focused) track.done = true
         sounds.push({ kind: "done", window: w.id, focused: w.focused })
       }
-      if (raw === "blocked" && prev.raw !== "blocked") sounds.push({ kind: "request", window: w.id, focused: w.focused })
+      if (raw === "blocked" && prev.raw !== "blocked")
+        sounds.push({ kind: "request", window: w.id, focused: w.focused })
     }
     if (raw !== "idle" || w.focused) track.done = false
     track.raw = raw

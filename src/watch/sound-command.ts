@@ -1,4 +1,5 @@
-import type { Config } from "../config.ts"
+import type { Config } from "~/config.ts"
+
 import { clearSoundOverride, effectiveSoundEnabled, setSoundEnabled } from "./sound-state.ts"
 
 const HELP = `usage: senu sound [status|toggle|on|off|reset]

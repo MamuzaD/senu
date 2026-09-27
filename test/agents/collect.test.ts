@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+
 import {
   HEARTBEAT_STALE_SECONDS,
   attentionOf,
@@ -13,11 +14,17 @@ import {
   trustsState,
   type AgentRow,
   type Attention,
-} from "../../src/agents/collect.ts"
+} from "~/agents/collect.ts"
 
-const fixture = (name: string) => readFileSync(join(import.meta.dir, "../fixtures/detect", name), "utf8")
+const fixture = (name: string) =>
+  readFileSync(join(import.meta.dir, "../fixtures/detect", name), "utf8")
 
-function row(windowId: string, state: Attention, activity: number, extra: Partial<AgentRow & { active: boolean }> = {}) {
+function row(
+  windowId: string,
+  state: Attention,
+  activity: number,
+  extra: Partial<AgentRow & { active: boolean }> = {},
+) {
   return {
     windowId,
     session: "s",
@@ -62,7 +69,10 @@ describe("foldWindows", () => {
   })
 
   test("a tie goes to the active pane", () => {
-    const rows = foldWindows([row("w", "idle", 1, { paneId: "%1" }), row("w", "idle", 1, { paneId: "%2", active: true })])
+    const rows = foldWindows([
+      row("w", "idle", 1, { paneId: "%1" }),
+      row("w", "idle", 1, { paneId: "%2", active: true }),
+    ])
     expect(rows[0]!.paneId).toBe("%2")
     expect("active" in rows[0]!).toBe(false)
   })
@@ -122,7 +132,9 @@ describe("titleTask", () => {
   })
 
   test("codex: `<task> | <dir>`, and nothing from a bare dir or a blocker", () => {
-    expect(titleTask("⠋ Update tmux popup binary | dotfiles", "codex", "x")).toBe("Update tmux popup binary")
+    expect(titleTask("⠋ Update tmux popup binary | dotfiles", "codex", "x")).toBe(
+      "Update tmux popup binary",
+    )
     expect(titleTask("preparation", "codex", "x")).toBeNull()
     expect(titleTask("Action Required | dotfiles", "codex", "x")).toBeNull()
   })

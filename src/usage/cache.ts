@@ -1,7 +1,18 @@
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { dirname, join } from "node:path"
-import type { UsageProfile } from "../config.ts"
-import { cacheDir, selfCommand } from "../paths.ts"
+
+import type { UsageProfile } from "~/config.ts"
+import { cacheDir, selfCommand } from "~/paths.ts"
+
 import { fetchClaude } from "./claude.ts"
 import { fetchCodex } from "./codex.ts"
 import { nowSeconds, type Snapshot } from "./types.ts"
@@ -49,8 +60,7 @@ export function claimLockFile(path: string, ttlSeconds = LOCK_TTL_SECONDS): bool
         const ageMs = Date.now() - statSync(path).mtimeMs
         if (ageMs < ttlSeconds * 1000) return false
         unlinkSync(path)
-      } catch {
-      }
+      } catch {}
     }
   }
   return false

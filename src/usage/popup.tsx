@@ -1,13 +1,24 @@
 import { TextAttributes, createCliRenderer, type RGBA } from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import type { UsageProfile, UsageScene } from "../config.ts"
-import { sceneCols, type SceneTime } from "../ui/desert.ts"
-import { Line } from "../ui/line.tsx"
-import { FPS, easeInOut, easeOut, now, reducedMotion, running, tween, useTicker } from "../ui/motion.ts"
-import { flightDone, leaveAfter, type FlightPlan } from "../ui/senu.ts"
-import { Sky } from "../ui/sky.tsx"
-import { brand, colors, icons, mix, noColor } from "../ui/theme.ts"
+
+import type { UsageProfile, UsageScene } from "~/config.ts"
+import { sceneCols, type SceneTime } from "~/ui/desert.ts"
+import { Line } from "~/ui/line.tsx"
+import {
+  FPS,
+  easeInOut,
+  easeOut,
+  now,
+  reducedMotion,
+  running,
+  tween,
+  useTicker,
+} from "~/ui/motion.ts"
+import { flightDone, leaveAfter, type FlightPlan } from "~/ui/senu.ts"
+import { Sky } from "~/ui/sky.tsx"
+import { brand, colors, icons, mix, noColor } from "~/ui/theme.ts"
+
 import { getSnapshot, readCache } from "./cache.ts"
 import {
   BAR_WIDTH,
@@ -63,11 +74,19 @@ function Clock({ at, used, right }: { at: number | null; used: number; right: nu
   return <span fg={colors.dim}>{clockSuffix(clock)}</span>
 }
 
-function Row({ label, left, resetsAt, windowMs, fill, right, children }: {
+function Row({
+  label,
+  left,
+  resetsAt,
+  windowMs,
+  fill,
+  right,
+  children,
+}: {
   label: string
   left: number | null
   resetsAt: number | null
-  windowMs?: number | null
+  windowMs?: number | null | undefined
   fill: number
   right: number
   children?: ReactNode
@@ -80,7 +99,13 @@ function Row({ label, left, resetsAt, windowMs, fill, right, children }: {
   const behind = even != null && left! < even - PACE_SLACK
   const cells = bar(shown)
   const at = even == null ? null : markCell(even)
-  const used = INDENT.length + Math.max(label.length, LABEL_WIDTH) + BAR_WIDTH + 5 + "  resets ".length + (reset?.length ?? 0)
+  const used =
+    INDENT.length +
+    Math.max(label.length, LABEL_WIDTH) +
+    BAR_WIDTH +
+    5 +
+    "  resets ".length +
+    (reset?.length ?? 0)
   return (
     <Line>
       {INDENT + label.padEnd(LABEL_WIDTH)}
@@ -124,7 +149,9 @@ function SpendRow({ spend, fill, cols }: { spend: Spend; fill: number; cols: num
       <span fg={colors.muted}>{`/$${spend.limit.toFixed(0)}`}</span>
       {spend.reached ? <span fg={colors.bad}> cap reached</span> : null}
       {reset ? <span fg={brand.papyrus}>{gap + reset}</span> : null}
-      {reset ? <Clock at={spend.resetsAt} used={used + gap.length + reset.length} right={cols - 1} /> : null}
+      {reset ? (
+        <Clock at={spend.resetsAt} used={used + gap.length + reset.length} right={cols - 1} />
+      ) : null}
     </Line>
   )
 }
@@ -141,12 +168,18 @@ function BankedRow({ banked, right }: { banked: Banked; right: number }) {
   }
   const expiries = banked.credits.map((c) => c.expiresAt).filter((e): e is number => e != null)
   const soonest = expiries.length ? Math.min(...expiries) : null
-  const titles = [...new Set(banked.credits.map((c) => c.title).filter((t): t is string => !!t))].sort()
+  const titles = [
+    ...new Set(banked.credits.map((c) => c.title).filter((t): t is string => !!t)),
+  ].sort()
   const expires = soonest != null ? formatUntil(soonest)! : null
   const tail = titles.length ? "  " + titles.join(" · ") : ""
   const used =
-    label.length + banked.available + ` ${banked.available}`.length + (banked.available === 1 ? 6 : 7) +
-    (expires ? "  expires ".length + expires.length : 0) + tail.length
+    label.length +
+    banked.available +
+    ` ${banked.available}`.length +
+    (banked.available === 1 ? 6 : 7) +
+    (expires ? "  expires ".length + expires.length : 0) +
+    tail.length
   return (
     <Line>
       {label}
@@ -165,16 +198,30 @@ function BankedRow({ banked, right }: { banked: Banked; right: number }) {
   )
 }
 
-function freshness(section: Section, dots: string, glow: (fg: RGBA) => RGBA): { text: string; fg: RGBA } {
+function freshness(
+  section: Section,
+  dots: string,
+  glow: (fg: RGBA) => RGBA,
+): { text: string; fg: RGBA } {
   const { snapshot } = section
   if (!snapshot) return { text: `fetching${dots}`, fg: colors.muted }
   if (section.justUpdated) return { text: "✓ now updated", fg: glow(colors.good) }
   const age = nowSeconds() - snapshot.updatedAt
-  if (section.refreshing) return { text: `${formatDuration(age)} old · refreshing${dots}`, fg: colors.warn }
-  return { text: `✓ updated ${age < 60 ? "just now" : `${formatDuration(age)} ago`}`, fg: glow(colors.muted) }
+  if (section.refreshing)
+    return { text: `${formatDuration(age)} old · refreshing${dots}`, fg: colors.warn }
+  return {
+    text: `✓ updated ${age < 60 ? "just now" : `${formatDuration(age)} ago`}`,
+    fg: glow(colors.muted),
+  }
 }
 
-function ProfileSection({ profile, section, dots, fillFrom, right }: {
+function ProfileSection({
+  profile,
+  section,
+  dots,
+  fillFrom,
+  right,
+}: {
   profile: UsageProfile
   section: Section
   dots: string
@@ -188,25 +235,44 @@ function ProfileSection({ profile, section, dots, fillFrom, right }: {
   const lit = vision(section.landedAt)
   const glow = (fg: RGBA) => mix(fg, brand.gold, lit)
   const fresh = freshness(section, dots, glow)
-  const pad = Math.max(2, right - HEADER.length - [...title].length - plan.length - [...fresh.text].length)
+  const pad = Math.max(
+    2,
+    right - HEADER.length - [...title].length - plan.length - [...fresh.text].length,
+  )
   const fill = tween(fillFrom, FILL_MS, easeOut)
   return (
     <box flexDirection="column" flexShrink={0}>
       <Line>
         {HEADER}
-        <span fg={glow(codex ? colors.codex : colors.claude)} attributes={TextAttributes.BOLD}>{title}</span>
+        <span fg={glow(codex ? colors.codex : colors.claude)} attributes={TextAttributes.BOLD}>
+          {title}
+        </span>
         {plan ? <span fg={colors.muted}>{plan}</span> : null}
         {" ".repeat(pad)}
         <span fg={fresh.fg}>{fresh.text}</span>
       </Line>
-      {snapshot && !snapshot.ok ? <Line fg={colors.bad}>{`${INDENT}✗ ${snapshot.error ?? "unknown"}`}</Line> : null}
+      {snapshot && !snapshot.ok ? (
+        <Line fg={colors.bad}>{`${INDENT}✗ ${snapshot.error ?? "unknown"}`}</Line>
+      ) : null}
       {snapshot?.ok
         ? snapshot.limits.map((l) => (
-            <Row key={l.label} label={l.label} left={l.left} resetsAt={l.resetsAt} windowMs={l.windowMs} fill={fill} right={right} />
+            <Row
+              key={l.label}
+              label={l.label}
+              left={l.left}
+              resetsAt={l.resetsAt}
+              windowMs={l.windowMs}
+              fill={fill}
+              right={right}
+            />
           ))
         : null}
-      {snapshot?.ok && snapshot.spend ? <SpendRow spend={snapshot.spend} fill={fill} cols={right + 1} /> : null}
-      {snapshot?.ok && snapshot.banked ? <BankedRow banked={snapshot.banked} right={right} /> : null}
+      {snapshot?.ok && snapshot.spend ? (
+        <SpendRow spend={snapshot.spend} fill={fill} cols={right + 1} />
+      ) : null}
+      {snapshot?.ok && snapshot.banked ? (
+        <BankedRow banked={snapshot.banked} right={right} />
+      ) : null}
     </box>
   )
 }
@@ -243,7 +309,14 @@ const TOP_MODELS = 3
 const usd = (v: number | null) => (v == null ? "—" : `$${v.toFixed(2)}`)
 const modelName = (m: string) => m.replace(/-\d{8}$/, "")
 
-function CostSection({ profile, plan, today, watching, dots, right }: {
+function CostSection({
+  profile,
+  plan,
+  today,
+  watching,
+  dots,
+  right,
+}: {
   profile: UsageProfile
   plan: string | null
   today: Today | null
@@ -257,8 +330,17 @@ function CostSection({ profile, plan, today, watching, dots, right }: {
   const age = today ? nowSeconds() - today.updatedAt : null
   const fresh = watching
     ? { text: `scanning${dots}`, fg: colors.warn }
-    : { text: age == null ? "no transcripts today" : `✓ scanned ${age < 60 ? "just now" : `${formatDuration(age)} ago`}`, fg: colors.muted }
-  const pad = Math.max(2, right - HEADER.length - [...title].length - planText.length - [...fresh.text].length)
+    : {
+        text:
+          age == null
+            ? "no transcripts today"
+            : `✓ scanned ${age < 60 ? "just now" : `${formatDuration(age)} ago`}`,
+        fg: colors.muted,
+      }
+  const pad = Math.max(
+    2,
+    right - HEADER.length - [...title].length - planText.length - [...fresh.text].length,
+  )
   const models = (today?.models ?? []).slice(0, TOP_MODELS)
   const row = (name: string, cost: string, tokens: number, cached: number) => ({
     name: (INDENT + name).padEnd(INDENT.length + MODEL_WIDTH).slice(0, INDENT.length + MODEL_WIDTH),
@@ -267,13 +349,20 @@ function CostSection({ profile, plan, today, watching, dots, right }: {
     cached: tokens ? `  ${Math.round((100 * cached) / tokens)}% cached` : "",
   })
   const total = today
-    ? row("Today", `${usd(today.costUsd)}${today.unpricedTokens && today.costUsd != null ? "+" : ""}`, today.tokens, today.cachedTokens)
+    ? row(
+        "Today",
+        `${usd(today.costUsd)}${today.unpricedTokens && today.costUsd != null ? "+" : ""}`,
+        today.tokens,
+        today.cachedTokens,
+      )
     : null
   return (
     <box flexDirection="column" flexShrink={0}>
       <Line>
         {HEADER}
-        <span fg={codex ? colors.codex : colors.claude} attributes={TextAttributes.BOLD}>{title}</span>
+        <span fg={codex ? colors.codex : colors.claude} attributes={TextAttributes.BOLD}>
+          {title}
+        </span>
         {planText ? <span fg={colors.muted}>{planText}</span> : null}
         {" ".repeat(pad)}
         <span fg={fresh.fg}>{fresh.text}</span>
@@ -283,7 +372,9 @@ function CostSection({ profile, plan, today, watching, dots, right }: {
       ) : total ? (
         <Line>
           {total.name}
-          <span fg={brand.papyrus} attributes={TextAttributes.BOLD}>{total.cost}</span>
+          <span fg={brand.papyrus} attributes={TextAttributes.BOLD}>
+            {total.cost}
+          </span>
           <span fg={colors.fg}>{total.tokens}</span>
           <span fg={colors.muted}>{total.cached}</span>
         </Line>
@@ -309,7 +400,13 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
   const [sections, setSections] = useState<Section[]>(() =>
-    profiles.map(() => ({ snapshot: null, refreshing: false, justUpdated: false, loadedAt: null, landedAt: null })),
+    profiles.map(() => ({
+      snapshot: null,
+      refreshing: false,
+      justUpdated: false,
+      loadedAt: null,
+      landedAt: null,
+    })),
   )
   const [tick, setTick] = useState(0)
   const [startedAt] = useState(() => Date.now())
@@ -398,7 +495,10 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   const plan: FlightPlan = {
     t: t - openedAt,
     busy: busy && !reducedMotion,
-    marks: sections.map((s) => s.landedAt).filter((at): at is number => at != null).map((at) => at - openedAt),
+    marks: sections
+      .map((s) => s.landedAt)
+      .filter((at): at is number => at != null)
+      .map((at) => at - openedAt),
     leave: leave.current,
     perched: reducedMotion || noColor,
     time,
@@ -406,17 +506,25 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   }
   const flying = !noColor && !flightDone(plan)
 
-  const fillFrom = sections.map((s, i) =>
-    s.landedAt ?? (s.loadedAt == null ? null : Math.max(s.loadedAt, openedAt + STAGGER_MS * (i + 1))),
+  const fillFrom = sections.map(
+    (s, i) =>
+      s.landedAt ??
+      (s.loadedAt == null ? null : Math.max(s.loadedAt, openedAt + STAGGER_MS * (i + 1))),
   )
   const tweening =
-    fillFrom.some((from) => running(from, FILL_MS, t)) || sections.some((s) => running(s.landedAt, VISION_MS, t))
+    fillFrom.some((from) => running(from, FILL_MS, t)) ||
+    sections.some((s) => running(s.landedAt, VISION_MS, t))
   useTicker(flying || tweening ? FPS : busy ? 1000 / DOTS_MS : 0)
 
   const dots = reducedMotion ? "..." : ".".repeat((Math.floor((t - openedAt) / DOTS_MS) % 3) + 1)
   const right = Math.min(cols, width) - 1
-  const note = busy ? "senu is circling" : flightDone(plan) ? "senu keeps watch" : "senu comes in to land"
-  const hint = view === "limits" ? "c cost · any other key closes" : "l limits · any other key closes"
+  const note = busy
+    ? "senu is circling"
+    : flightDone(plan)
+      ? "senu keeps watch"
+      : "senu comes in to land"
+  const hint =
+    view === "limits" ? "c cost · any other key closes" : "l limits · any other key closes"
 
   return (
     <box flexDirection="column" height={height} gap={1}>
@@ -447,7 +555,9 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
       </box>
       <Line>
         {HEADER}
-        <span fg={colors.muted} attributes={TextAttributes.DIM}>{hint}</span>
+        <span fg={colors.muted} attributes={TextAttributes.DIM}>
+          {hint}
+        </span>
         {" ".repeat(Math.max(2, right - HEADER.length - hint.length - note.length))}
         <span fg={busy ? brand.dusk : brand.shadow}>{note}</span>
       </Line>

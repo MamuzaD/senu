@@ -1,4 +1,5 @@
 import type { RGBA } from "@opentui/core"
+
 import { Braille, Quad, type Canvas } from "./canvas.tsx"
 import { clamp, easeInOut, easeOut } from "./motion.ts"
 import { QUAD_AT, TONES, flyingPixels, landingPixels, putQuads } from "./senu.ts"
@@ -17,22 +18,14 @@ export interface DivePlan {
   target: { x: number; y: number }
 }
 
-const STOOP = [
-  "......ww",
-  "....wwww",
-  "..hwww..",
-  ".hhw....",
-  "hh......",
-]
-const SWEEP = [
-  "...www....",
-  ".hhwwwwww.",
-  "hh..www...",
-]
+const STOOP = ["......ww", "....wwww", "..hwww..", ".hhw....", "hh......"]
+const SWEEP = ["...www....", ".hhwwwwww.", "hh..www..."]
 
 function spritePixels(rows: string[], ox: number, oy: number): [number, number, boolean][] {
   const out: [number, number, boolean][] = []
-  rows.forEach((row, j) => [...row].forEach((ch, i) => ch !== "." && out.push([i - ox, j - oy, ch === "w"])))
+  rows.forEach((row, j) =>
+    [...row].forEach((ch, i) => ch !== "." && out.push([i - ox, j - oy, ch === "w"])),
+  )
   return out
 }
 const STOOP_PX = spritePixels(STOOP, 1, 4)
@@ -107,13 +100,21 @@ export function paintSenu(c: Canvas, plan: DivePlan) {
       const r = 2 + 5 * easeOut(k)
       const cx = plan.target.x * 2 + 1
       const cy = plan.target.y * 4 + 2
-      for (let a = 0; a < Math.PI * 2; a += 0.2) trail.dot(cx + r * Math.cos(a), cy + r * 0.9 * Math.sin(a), mix(brand.gold, brand.shadow, k), 20)
+      for (let a = 0; a < Math.PI * 2; a += 0.2)
+        trail.dot(
+          cx + r * Math.cos(a),
+          cy + r * 0.9 * Math.sin(a),
+          mix(brand.gold, brand.shadow, k),
+          20,
+        )
     }
   }
 
   const glint = t == null ? 0 : clamp(t / (LAUNCH_MS + STOOP_MS))
   const color = mix(body, brand.gold, glint * 0.6)
-  if (pixels) for (const [dx, dy, w] of pixels) quad.set(at.x + dx, at.y + dy, w ? mix(color, tone.wing, 0.5) : color)
+  if (pixels)
+    for (const [dx, dy, w] of pixels)
+      quad.set(at.x + dx, at.y + dy, w ? mix(color, tone.wing, 0.5) : color)
 
   for (let r = 0; r < c.height; r++)
     for (let x = 0; x < c.width; x++) {
@@ -130,6 +131,7 @@ export function paintSenu(c: Canvas, plan: DivePlan) {
       }
       const bits = trail.bits[r]?.[x] ?? 0
       const under = c.cells[r]![x]
-      if (bits && (!under || under.ch === " ")) c.put(x, r, String.fromCharCode(0x2800 + bits), trail.color[r]![x]!)
+      if (bits && (!under || under.ch === " "))
+        c.put(x, r, String.fromCharCode(0x2800 + bits), trail.color[r]![x]!)
     }
 }

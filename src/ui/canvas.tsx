@@ -1,4 +1,5 @@
 import type { RGBA } from "@opentui/core"
+
 import { Line } from "./line.tsx"
 
 export interface Cell {
@@ -10,16 +11,23 @@ export interface Cell {
 }
 
 export class Canvas {
+  readonly width: number
+  readonly height: number
   readonly cells: (Cell | null)[][]
 
-  constructor(
-    readonly width: number,
-    readonly height: number,
-  ) {
+  constructor(width: number, height: number) {
+    this.width = width
+    this.height = height
     this.cells = Array.from({ length: height }, () => Array<Cell | null>(width).fill(null))
   }
 
-  put(x: number, y: number, ch: string, fg: RGBA, opts: { bg?: RGBA | null; attrs?: number } = {}) {
+  put(
+    x: number,
+    y: number,
+    ch: string,
+    fg: RGBA,
+    opts: { bg?: RGBA | null; attrs?: number | undefined } = {},
+  ) {
     x = Math.round(x)
     y = Math.round(y)
     if (x < 0 || y < 0 || x >= this.width || y >= this.height) return
@@ -31,7 +39,13 @@ export class Canvas {
    * default). A wide character takes two cells, the second left empty so
    * the row keeps its width. Returns the column after the text.
    */
-  text(x: number, y: number, s: string, fg: RGBA, opts: { attrs?: number; max?: number } = {}): number {
+  text(
+    x: number,
+    y: number,
+    s: string,
+    fg: RGBA,
+    opts: { attrs?: number; max?: number } = {},
+  ): number {
     const max = Math.min(opts.max ?? this.width, this.width)
     for (const { segment } of graphemes.segment(s)) {
       const w = Bun.stringWidth(segment)
@@ -59,7 +73,8 @@ export function CanvasView({ canvas, from = 0 }: { canvas: Canvas; from?: number
           const bg = cell?.bg ?? null
           const attrs = cell?.attrs ?? 0
           const last = runs.at(-1)
-          if (last && same(last.fg, fg) && same(last.bg, bg) && last.attrs === attrs) last.text += cell?.ch ?? " "
+          if (last && same(last.fg, fg) && same(last.bg, bg) && last.attrs === attrs)
+            last.text += cell?.ch ?? " "
           else runs.push({ text: cell?.ch ?? " ", fg, bg, attrs })
         }
         while (runs.length && !runs.at(-1)!.fg && !runs.at(-1)!.bg) runs.pop()
@@ -69,7 +84,12 @@ export function CanvasView({ canvas, from = 0 }: { canvas: Canvas; from?: number
               ? " "
               : runs.map((r, i) =>
                   r.fg || r.bg ? (
-                    <span key={i} fg={r.fg ?? undefined} bg={r.bg ?? undefined} attributes={r.attrs || undefined}>
+                    <span
+                      key={i}
+                      {...(r.fg ? { fg: r.fg } : {})}
+                      {...(r.bg ? { bg: r.bg } : {})}
+                      attributes={r.attrs}
+                    >
                       {r.text}
                     </span>
                   ) : (
@@ -85,12 +105,13 @@ export function CanvasView({ canvas, from = 0 }: { canvas: Canvas; from?: number
 
 /** One pixel per column and two per terminal row; dimensions are pixel counts. */
 export class Pixels {
+  readonly width: number
+  readonly height: number
   readonly px: (RGBA | null)[][]
 
-  constructor(
-    readonly width: number,
-    readonly height: number,
-  ) {
+  constructor(width: number, height: number) {
+    this.width = width
+    this.height = height
     this.px = Array.from({ length: height }, () => Array<RGBA | null>(width).fill(null))
   }
 
@@ -114,14 +135,15 @@ const BRAILLE = [
 
 /** Braille dots at two columns and four rows per terminal cell. */
 export class Braille {
+  readonly cols: number
+  readonly rows: number
   readonly bits: number[][]
   readonly color: (RGBA | null)[][]
   private readonly weight: number[][]
 
-  constructor(
-    readonly cols: number,
-    readonly rows: number,
-  ) {
+  constructor(cols: number, rows: number) {
+    this.cols = cols
+    this.rows = rows
     this.bits = Array.from({ length: rows }, () => Array<number>(cols).fill(0))
     this.color = Array.from({ length: rows }, () => Array<RGBA | null>(cols).fill(null))
     this.weight = Array.from({ length: rows }, () => Array<number>(cols).fill(-1))
@@ -144,12 +166,13 @@ export class Braille {
 
 /** Quadrant pixels at two columns and two rows per terminal cell. */
 export class Quad {
+  readonly cols: number
+  readonly rows: number
   readonly px: (RGBA | null)[][]
 
-  constructor(
-    readonly cols: number,
-    readonly rows: number,
-  ) {
+  constructor(cols: number, rows: number) {
+    this.cols = cols
+    this.rows = rows
     this.px = Array.from({ length: rows * 2 }, () => Array<RGBA | null>(cols * 2).fill(null))
   }
 

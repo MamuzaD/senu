@@ -1,4 +1,5 @@
 import { RGBA } from "@opentui/core"
+
 import { Pixels, type Canvas } from "./canvas.tsx"
 import { clamp, smooth } from "./motion.ts"
 import { brand, hex, mix } from "./theme.ts"
@@ -13,7 +14,9 @@ export const sceneShift = (cols: number) => Math.floor((cols - SCENE_COLS) / 2)
 function tile(stars: [number, number, string][], cols: number) {
   const n = Math.ceil(sceneShift(cols) / SCENE_COLS)
   const at = Array.from({ length: 2 * n + 1 }, (_, i) => (i - n) * SCENE_COLS + sceneShift(cols))
-  return stars.flatMap(([x, y, ch]) => at.map((k): [number, number, string] => [x + k, y, ch])).filter(([x]) => x >= 0 && x < cols)
+  return stars
+    .flatMap(([x, y, ch]) => at.map((k): [number, number, string] => [x + k, y, ch]))
+    .filter(([x]) => x >= 0 && x < cols)
 }
 
 export type SceneTime = "night" | "dawn" | "day" | "dusk"
@@ -29,8 +32,21 @@ const PYRAMIDS = [
 const FIRE = 8
 
 const STARS: [number, number, string][] = [
-  [3, 1, "·"], [9, 4, "✦"], [15, 0, "·"], [21, 2, "·"], [27, 5, "⋆"], [31, 1, "·"], [36, 3, "·"],
-  [42, 0, "✦"], [46, 2, "·"], [66, 1, "·"], [69, 4, "⋆"], [62, 6, "·"], [12, 7, "·"], [4, 6, "·"], [39, 6, "·"],
+  [3, 1, "·"],
+  [9, 4, "✦"],
+  [15, 0, "·"],
+  [21, 2, "·"],
+  [27, 5, "⋆"],
+  [31, 1, "·"],
+  [36, 3, "·"],
+  [42, 0, "✦"],
+  [46, 2, "·"],
+  [66, 1, "·"],
+  [69, 4, "⋆"],
+  [62, 6, "·"],
+  [12, 7, "·"],
+  [4, 6, "·"],
+  [39, 6, "·"],
 ]
 
 // Scene pixels: # bark, + lit bark, : twig, f ground anchor, p talon anchor, . empty.
@@ -70,7 +86,12 @@ interface Palette {
   smoke: RGBA
 }
 
-const NIGHT_BARK = { "#": hex("#2b2430"), "+": hex("#6a5a5c"), ":": hex("#54484f"), f: hex("#2b2430") }
+const NIGHT_BARK = {
+  "#": hex("#2b2430"),
+  "+": hex("#6a5a5c"),
+  ":": hex("#54484f"),
+  f: hex("#2b2430"),
+}
 
 const PALETTES: Record<SceneTime, Palette> = {
   night: {
@@ -160,7 +181,11 @@ const PALETTES: Record<SceneTime, Palette> = {
 }
 
 const FAINT_STARS: [number, number, string][] = [
-  [6, 0, "·"], [21, 1, "·"], [38, 0, "⋆"], [47, 1, "·"], [64, 0, "·"],
+  [6, 0, "·"],
+  [21, 1, "·"],
+  [38, 0, "⋆"],
+  [47, 1, "·"],
+  [64, 0, "·"],
 ]
 
 function screen(a: RGBA, b: RGBA, k: number): RGBA {
@@ -216,7 +241,10 @@ export const PERCH = (() => {
 })()
 
 /** Paints the scene; `busy` animates stars, fire, and smoke, while idle is still. */
-export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime; cols: number }): Desert {
+export function desert(
+  c: Canvas,
+  o: { t: number; busy: boolean; time: SceneTime; cols: number },
+): Desert {
   const { t, busy } = o
   const pal = PALETTES[o.time]
   const PW = o.cols
@@ -224,8 +252,13 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
   const ox = sceneShift(PW)
   const px = new Pixels(PW, PH)
   const s = PH / 24
-  const rolling = (x: number) => PH * 0.7 + s * (1.1 * Math.sin((x - ox) / 13 + 1) + 0.7 * Math.sin((x - ox) / 6.1))
-  const plateaus = PYRAMIDS.map(({ x, size }) => ({ x: x + ox, size, y: Math.round(rolling(x + ox)) + 1 }))
+  const rolling = (x: number) =>
+    PH * 0.7 + s * (1.1 * Math.sin((x - ox) / 13 + 1) + 0.7 * Math.sin((x - ox) / 6.1))
+  const plateaus = PYRAMIDS.map(({ x, size }) => ({
+    x: x + ox,
+    size,
+    y: Math.round(rolling(x + ox)) + 1,
+  }))
   const far = (x: number) => {
     let at = { w: 0, y: 0 }
     for (const p of plateaus) {
@@ -234,7 +267,8 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
     }
     return rolling(x) + (at.y - rolling(x)) * at.w
   }
-  const mid = (x: number) => PH * 0.81 + s * (1.6 * Math.sin((x - ox) / 10 + 2.4) + 0.4 * Math.sin((x - ox) / 4.1))
+  const mid = (x: number) =>
+    PH * 0.81 + s * (1.6 * Math.sin((x - ox) / 10 + 2.4) + 0.4 * Math.sin((x - ox) / 4.1))
   const nearAt = (x: number) => near(x - ox)
 
   const glyphs: Glyph[] = []
@@ -248,7 +282,8 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
         let col = along(sky, (y / (PH * 0.72)) ** (sky.length > 2 ? 1.6 : 1.4))
         if (pal.glow) {
           const d = Math.sqrt((x - m.x) ** 2 + ((y - m.y) * 1.3) ** 2) - m.r
-          if (d < pal.glowR) col = screen(col, pal.glow, 0.6 * (1 - Math.max(0, d) / pal.glowR) ** 1.5)
+          if (d < pal.glowR)
+            col = screen(col, pal.glow, 0.6 * (1 - Math.max(0, d) / pal.glowR) ** 1.5)
         }
         px.set(x, y, col)
       }
@@ -272,7 +307,11 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
       const ly = (y - m.y) / m.r
       let col = mix(pal.orb[0], pal.orb[1], clamp(0.75 + 0.25 * (lx * 0.6 - ly * 0.8)))
       if (pal.maria)
-        for (const [mx, my, mr] of [[-3.2, 0.8, 2.1], [2.4, 2.4, 1.9], [-0.8, 4.8, 1.5]] as const)
+        for (const [mx, my, mr] of [
+          [-3.2, 0.8, 2.1],
+          [2.4, 2.4, 1.9],
+          [-0.8, 4.8, 1.5],
+        ] as const)
           if ((x - m.x - mx) ** 2 + (y - m.y - my) ** 2 < mr * mr) col = mix(col, pal.maria, 0.28)
       px.set(x, y, col)
     }
@@ -289,7 +328,8 @@ export function desert(c: Canvas, o: { t: number; busy: boolean; time: SceneTime
     const tops = [far(x), mid(x), nearAt(x)]
     tops.forEach((top, i) => {
       const [crest, base] = pal.dunes[i]!
-      for (let y = Math.round(top); y < PH; y++) px.set(x, y, mix(crest, base, clamp((y - top) / 2.5)))
+      for (let y = Math.round(top); y < PH; y++)
+        px.set(x, y, mix(crest, base, clamp((y - top) / 2.5)))
     })
   }
 

@@ -1,11 +1,13 @@
 import { TextAttributes, createCliRenderer, type RGBA } from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useRef, useState } from "react"
-import { Canvas, CanvasView } from "../ui/canvas.tsx"
-import { DIVE_MS, paintSenu, rowGlow, type DivePlan } from "../ui/dive.ts"
-import { FPS, now, reducedMotion, useTicker } from "../ui/motion.ts"
-import { brand, colors, hex, icons, mix, noColor, states } from "../ui/theme.ts"
-import { formatDuration } from "../usage/format.ts"
+
+import { Canvas, CanvasView } from "~/ui/canvas.tsx"
+import { DIVE_MS, paintSenu, rowGlow, type DivePlan } from "~/ui/dive.ts"
+import { FPS, now, reducedMotion, useTicker } from "~/ui/motion.ts"
+import { brand, colors, hex, icons, mix, noColor, states } from "~/ui/theme.ts"
+import { formatDuration } from "~/usage/format.ts"
+
 import { jump, kill } from "./actions.ts"
 import { type AgentRow, type Attention, type Collected, type Collector } from "./collect.ts"
 
@@ -22,7 +24,12 @@ const BOLD = TextAttributes.BOLD
 const faint = hex("#3b3d57")
 
 const STARS: [number, number, string][] = [
-  [0.14, 0, "·"], [0.31, 1, "·"], [0.47, 0, "✦"], [0.6, 2, "·"], [0.72, 0, "·"], [0.83, 1, "⋆"],
+  [0.14, 0, "·"],
+  [0.31, 1, "·"],
+  [0.47, 0, "✦"],
+  [0.6, 2, "·"],
+  [0.72, 0, "·"],
+  [0.83, 1, "⋆"],
 ]
 
 function age(activity: number, nowSeconds: number) {
@@ -56,13 +63,18 @@ function paint(v: View): Canvas {
   const nowS = Date.now() / 1000
   const right = W - 2
 
-  if (!noColor) for (const [fx, y, ch] of STARS) c.put(Math.round(fx * (W - 10)), y, ch, mix(faint, brand.papyrus, ch === "·" ? 0.25 : 0.45))
+  if (!noColor)
+    for (const [fx, y, ch] of STARS)
+      c.put(Math.round(fx * (W - 10)), y, ch, mix(faint, brand.papyrus, ch === "·" ? 0.25 : 0.45))
   let x = c.text(1, RULE_ROW - 1, "agents", brand.sand, { attrs: BOLD })
   x += 1
   for (const s of ["blocked", "working", "done", "idle"] as Attention[]) {
     const n = rows.filter((r) => r.state === s).length
     if (!n) continue
-    x = c.text(x + 1, RULE_ROW - 1, states[s].glyph, states[s].fg, { attrs: states[s].bold ? BOLD : 0 }) + (s === "idle" ? 1 : 0)
+    x =
+      c.text(x + 1, RULE_ROW - 1, states[s].glyph, states[s].fg, {
+        attrs: states[s].bold ? BOLD : 0,
+      }) + (s === "idle" ? 1 : 0)
     x = c.text(x + 1, RULE_ROW - 1, String(n), colors.muted)
   }
   for (let i = 1; i < W - 1; i++) c.put(i, RULE_ROW, "─", colors.rule)
@@ -77,9 +89,11 @@ function paint(v: View): Canvas {
     const killing = v.confirming?.paneId === r.paneId
     const st = states[r.state]
     const when = age(r.activity, nowS)
-    const lit = (fg: RGBA, col: number) => (selected && col >= glow.from ? mix(fg, brand.gold, glow.k) : fg)
+    const lit = (fg: RGBA, col: number) =>
+      selected && col >= glow.from ? mix(fg, brand.gold, glow.k) : fg
 
-    if (selected) for (const dy of [0, 1]) c.put(BAR_X, y + dy, "▌", killing ? colors.bad : brand.gold)
+    if (selected)
+      for (const dy of [0, 1]) c.put(BAR_X, y + dy, "▌", killing ? colors.bad : brand.gold)
     if (killing) c.put(DOT_X, y, "✕", colors.bad, { attrs: BOLD })
     else c.put(DOT_X, y, st.glyph, lit(st.fg, DOT_X), { attrs: st.bold ? BOLD : 0 })
 
@@ -89,9 +103,13 @@ function paint(v: View): Canvas {
     let lx = TEXT_X
     for (const { segment } of new Intl.Segmenter().segment(label)) {
       const fg = selected ? brand.papyrus : colors.fg
-      const next = c.text(lx, y, segment, lit(fg, lx), { attrs: selected ? BOLD : 0, max: labelMax })
+      const next = c.text(lx, y, segment, lit(fg, lx), {
+        attrs: selected ? BOLD : 0,
+        max: labelMax,
+      })
       if (next === lx) {
-        if (lx > TEXT_X) c.put(Math.min(lx, labelMax - 1), y, "…", selected ? brand.papyrus : colors.muted)
+        if (lx > TEXT_X)
+          c.put(Math.min(lx, labelMax - 1), y, "…", selected ? brand.papyrus : colors.muted)
         break
       }
       lx = next
@@ -119,13 +137,22 @@ function paint(v: View): Canvas {
   }
 
   const fy = H - 1
-  const more = [v.top > 0 ? `↑${v.top}` : "", rows.length > v.top + visible ? `↓${rows.length - v.top - visible}` : ""].filter(Boolean).join(" ")
+  const more = [
+    v.top > 0 ? `↑${v.top}` : "",
+    rows.length > v.top + visible ? `↓${rows.length - v.top - visible}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
   const live = v.daemon === "dead" || rows.some((r) => r.source === "live")
   const note = v.dive ? "senu dives" : live ? "senu scouts live" : "senu keeps watch"
   const noteFg = v.dive ? brand.gold : live ? brand.dusk : brand.shadow
   const keys = v.confirming
     ? "y kill · any other key keeps it"
-    : [..."j/k move · ⏎ jump · x kill · r refresh · q quit"].length + more.length + note.length + 6 <= W
+    : [..."j/k move · ⏎ jump · x kill · r refresh · q quit"].length +
+          more.length +
+          note.length +
+          6 <=
+        W
       ? "j/k move · ⏎ jump · x kill · r refresh · q quit"
       : "⏎ jump · x kill · q quit"
   c.text(1, fy, keys, colors.dim)
@@ -142,11 +169,22 @@ function paint(v: View): Canvas {
   return c
 }
 
-function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector; initial: Collected; raiseGhosttyTab: boolean }) {
+function Picker({
+  collector,
+  initial,
+  raiseGhosttyTab,
+}: {
+  collector: Collector
+  initial: Collected
+  raiseGhosttyTab: boolean
+}) {
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
   const [data, setData] = useState(initial)
-  const [cursor, setCursor] = useState<{ id: string | null; index: number }>({ id: initial.rows[0]?.windowId ?? null, index: 0 })
+  const [cursor, setCursor] = useState<{ id: string | null; index: number }>({
+    id: initial.rows[0]?.windowId ?? null,
+    index: 0,
+  })
   const [confirming, setConfirmingState] = useState<AgentRow | null>(null)
   // Key events can arrive before React renders; refs keep confirmation and cursor updates synchronous.
   const confirmingRef = useRef<AgentRow | null>(null)
@@ -192,7 +230,10 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
   cursorRef.current = cursor
   const move = (to: (i: number, n: number) => number) => {
     const list = rowsRef.current
-    const k = Math.max(0, Math.min(to(indexOf(cursorRef.current, list), list.length), list.length - 1))
+    const k = Math.max(
+      0,
+      Math.min(to(indexOf(cursorRef.current, list), list.length), list.length - 1),
+    )
     cursorRef.current = { id: list[k]?.windowId ?? null, index: k }
     setCursor(cursorRef.current)
   }
@@ -237,8 +278,10 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
     else if (k === "g" || k === "home") move(() => 0)
     else if (k === "G" || k === "end") move((_, n) => n - 1)
     else if (k === "r") void refresh()
-    else if ((k === "x" || k === "d") && rowsRef.current.length) setConfirming(rowsRef.current[indexOf(cursorRef.current, rowsRef.current)]!)
-    else if (k === "return" && rowsRef.current.length) go(rowsRef.current[indexOf(cursorRef.current, rowsRef.current)]!)
+    else if ((k === "x" || k === "d") && rowsRef.current.length)
+      setConfirming(rowsRef.current[indexOf(cursorRef.current, rowsRef.current)]!)
+    else if (k === "return" && rowsRef.current.length)
+      go(rowsRef.current[indexOf(cursorRef.current, rowsRef.current)]!)
   })
 
   const diving = diveAt != null
@@ -246,19 +289,37 @@ function Picker({ collector, initial, raiseGhosttyTab }: { collector: Collector;
   void minute
 
   const plan: DivePlan | null = diving
-    ? { t: now() - diveAt, perch: { x: width - 5, y: RULE_ROW }, target: { x: DOT_X, y: LIST_TOP + (sel - top) * PER_ROW } }
+    ? {
+        t: now() - diveAt,
+        perch: { x: width - 5, y: RULE_ROW },
+        target: { x: DOT_X, y: LIST_TOP + (sel - top) * PER_ROW },
+      }
     : null
-  const canvas = paint({ rows, daemon: data.daemon, sel, top, confirming, dive: plan, width, height })
+  const canvas = paint({
+    rows,
+    daemon: data.daemon,
+    sel,
+    top,
+    confirming,
+    dive: plan,
+    width,
+    height,
+  })
   return <CanvasView canvas={canvas} />
 }
 
-export async function runPicker(collector: Collector, opts: { raiseGhosttyTab: boolean }): Promise<number> {
+export async function runPicker(
+  collector: Collector,
+  opts: { raiseGhosttyTab: boolean },
+): Promise<number> {
   const { promise: closed, resolve } = Promise.withResolvers<void>()
   const [initial, renderer] = await Promise.all([
     collector.collect(),
     createCliRenderer({ useMouse: false, onDestroy: resolve }),
   ])
-  createRoot(renderer).render(<Picker collector={collector} initial={initial} raiseGhosttyTab={opts.raiseGhosttyTab} />)
+  createRoot(renderer).render(
+    <Picker collector={collector} initial={initial} raiseGhosttyTab={opts.raiseGhosttyTab} />,
+  )
   await closed
   process.exit(0)
 }

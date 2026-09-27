@@ -1,11 +1,20 @@
 import { statSync } from "node:fs"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { loadConfig } from "../config.ts"
-import { classify } from "../detect/engine.ts"
-import { AGENTS, overridePath, reloadManifests, type Agent } from "../detect/manifest.ts"
-import { capturePanes, identifyAgents, listPanes, tmux, type AgentPane, type Pane } from "../detect/panes.ts"
-import { stateDir } from "../paths.ts"
+
+import { loadConfig } from "~/config.ts"
+import { classify } from "~/detect/engine.ts"
+import { AGENTS, overridePath, reloadManifests, type Agent } from "~/detect/manifest.ts"
+import {
+  capturePanes,
+  identifyAgents,
+  listPanes,
+  tmux,
+  type AgentPane,
+  type Pane,
+} from "~/detect/panes.ts"
+import { stateDir } from "~/paths.ts"
+
 import { claimPidFile, releasePidFile } from "./lock.ts"
 import { effectiveSoundEnabled } from "./sound-state.ts"
 import { play, resolveSound } from "./sounds.ts"
@@ -29,10 +38,15 @@ const SERVER_GONE_MS = 30_000
 /** tmux option stamped with epoch seconds so clients can detect a stale watcher. */
 export const HEARTBEAT_OPTION = "@ai_watch_heartbeat"
 
-export function optionCommands(current: Map<string, string>, wanted: Map<string, WindowState>): string[][] {
+export function optionCommands(
+  current: Map<string, string>,
+  wanted: Map<string, WindowState>,
+): string[][] {
   const cmds: string[][] = []
-  for (const [id, state] of wanted) if (current.get(id) !== state) cmds.push(["set-option", "-w", "-t", id, "@ai_state", state])
-  for (const [id, state] of current) if (state && !wanted.has(id)) cmds.push(["set-option", "-uw", "-t", id, "@ai_state"])
+  for (const [id, state] of wanted)
+    if (current.get(id) !== state) cmds.push(["set-option", "-w", "-t", id, "@ai_state", state])
+  for (const [id, state] of current)
+    if (state && !wanted.has(id)) cmds.push(["set-option", "-uw", "-t", id, "@ai_state"])
   return cmds
 }
 
@@ -96,7 +110,9 @@ export class Watcher {
       })
     }
 
-    const toRead = full ? agentPanes : agentPanes.filter((p) => this.panes.has(p.id) && isPending(this.panes.get(p.id)!))
+    const toRead = full
+      ? agentPanes
+      : agentPanes.filter((p) => this.panes.has(p.id) && isPending(this.panes.get(p.id)!))
     const screens = await capturePanes(toRead.map((p) => p.id))
     for (const p of toRead) {
       const screen = screens.get(p.id)
@@ -142,10 +158,14 @@ async function chime(events: SoundEvent[]) {
 }
 
 export async function clearStates() {
-  await tmuxBatch([...optionCommands(currentStates(await listPanes()), new Map()), ["set-option", "-gu", HEARTBEAT_OPTION]])
+  await tmuxBatch([
+    ...optionCommands(currentStates(await listPanes()), new Map()),
+    ["set-option", "-gu", HEARTBEAT_OPTION],
+  ])
 }
 
-export const pidPath = (socket: string) => join(stateDir, "watch", `${socket.replace(/[^\w.-]/g, "_")}.pid`)
+export const pidPath = (socket: string) =>
+  join(stateDir, "watch", `${socket.replace(/[^\w.-]/g, "_")}.pid`)
 
 /** Returns 0 immediately when another daemon already holds this tmux server's lock. */
 export async function runDaemon(): Promise<number> {

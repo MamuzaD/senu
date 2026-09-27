@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { extname, join } from "node:path"
-import { expandHome, stateDir } from "../paths.ts"
+
+import { expandHome, stateDir } from "~/paths.ts"
+
 import type { SoundKind } from "./state.ts"
 
 export const SYSTEM_SOUNDS: Record<SoundKind, string> = {
@@ -9,7 +11,11 @@ export const SYSTEM_SOUNDS: Record<SoundKind, string> = {
 }
 
 /** Chooses an existing custom file, then the fallback; returns null if neither exists. */
-export function pickSound(custom: string, fallback: string, exists: (p: string) => boolean = existsSync): string | null {
+export function pickSound(
+  custom: string,
+  fallback: string,
+  exists: (p: string) => boolean = existsSync,
+): string | null {
   const path = custom.trim() ? expandHome(custom.trim()) : ""
   for (const p of [path, fallback]) if (p && exists(p)) return p
   return null
@@ -40,7 +46,10 @@ export function defaultSoundFile(kind: SoundKind, dir = join(stateDir, "sounds")
     const progress = i / samples
     const envelope = Math.min(1, i / 180) * Math.min(1, (samples - i) / 1200)
     const frequency = notes[progress < 0.5 ? 0 : 1]!
-    wav.writeInt16LE(Math.round(Math.sin(2 * Math.PI * frequency * i / sampleRate) * envelope * 9000), 44 + i * 2)
+    wav.writeInt16LE(
+      Math.round(Math.sin((2 * Math.PI * frequency * i) / sampleRate) * envelope * 9000),
+      44 + i * 2,
+    )
   }
   mkdirSync(dir, { recursive: true })
   writeFileSync(path, wav)
@@ -78,15 +87,22 @@ function windowsPath(path: string): string | null {
 
 export const powershellString = (value: string) => `'${value.replaceAll("'", "''")}'`
 
-const MEDIA_PLAY = "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName PresentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([uri]$env:SENU_SOUND_FILE); $p.Play(); $i = 0; while (-not $p.NaturalDuration.HasTimeSpan -and $i -lt 50) { Start-Sleep -Milliseconds 100; $i++ }; if (-not $p.NaturalDuration.HasTimeSpan) { throw 'Cannot play sound' }; Start-Sleep -Milliseconds ([math]::Ceiling($p.NaturalDuration.TimeSpan.TotalMilliseconds)); $p.Close()"
+const MEDIA_PLAY =
+  "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName PresentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([uri]$env:SENU_SOUND_FILE); $p.Play(); $i = 0; while (-not $p.NaturalDuration.HasTimeSpan -and $i -lt 50) { Start-Sleep -Milliseconds 100; $i++ }; if (-not $p.NaturalDuration.HasTimeSpan) { throw 'Cannot play sound' }; Start-Sleep -Milliseconds ([math]::Ceiling($p.NaturalDuration.TimeSpan.TotalMilliseconds)); $p.Close()"
 
-export function playerCommand(path: string, platform = process.platform, which: (name: string) => string | null = Bun.which, wsl = isWsl()): string[] | null {
+export function playerCommand(
+  path: string,
+  platform = process.platform,
+  which: (name: string) => string | null = Bun.which,
+  wsl = isWsl(),
+): string[] | null {
   if (platform === "darwin") return which("afplay") ? ["afplay", path] : null
   if (platform === "win32") {
     if (!which("powershell.exe")) return null
-    const script = extname(path).toLowerCase() === ".wav"
-      ? "$ErrorActionPreference = 'Stop'; (New-Object System.Media.SoundPlayer $env:SENU_SOUND_FILE).PlaySync()"
-      : MEDIA_PLAY
+    const script =
+      extname(path).toLowerCase() === ".wav"
+        ? "$ErrorActionPreference = 'Stop'; (New-Object System.Media.SoundPlayer $env:SENU_SOUND_FILE).PlaySync()"
+        : MEDIA_PLAY
     return ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]
   }
   if (platform === "linux") {
@@ -127,7 +143,7 @@ export function play(path: string): Bun.Subprocess | null {
   try {
     const proc = Bun.spawn(command, {
       stdio: ["ignore", "ignore", "ignore"],
-      env: process.platform === "win32" ? { ...process.env, SENU_SOUND_FILE: path } : undefined,
+      ...(process.platform === "win32" ? { env: { ...process.env, SENU_SOUND_FILE: path } } : {}),
     })
     proc.unref()
     return proc

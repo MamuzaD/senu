@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { configDir } from "../paths.ts"
+
+import { configDir } from "~/paths.ts"
+
 import claudeToml from "./manifests/claude.toml" with { type: "text" }
 import codexToml from "./manifests/codex.toml" with { type: "text" }
 import { compileRustRegex } from "./regex.ts"
@@ -27,7 +29,11 @@ export const overrideDir = join(configDir, "detection")
 export const overridePath = (agent: Agent) => join(overrideDir, `${agent}.toml`)
 
 /** The vendored manifest, ignoring any override. */
-export const bundledManifest = (agent: Agent): LoadedManifest => ({ manifest: parseManifest(BUNDLED[agent]), source: "bundled", warning: null })
+export const bundledManifest = (agent: Agent): LoadedManifest => ({
+  manifest: parseManifest(BUNDLED[agent]),
+  source: "bundled",
+  warning: null,
+})
 
 /** A matcher tree. Every matcher present must hold: all of `contains`, `regex`, `line_regex` and `all`, one of `any`, none of `not`. */
 export interface Gate {
@@ -81,7 +87,14 @@ const MAX_MATCHER_CHARS = 512
 const TOP_NON_EMPTY_LINES_ENGINE_VERSION = 3
 
 const STATES: AgentState[] = ["idle", "working", "blocked", "unknown"]
-const MANIFEST_KEYS = new Set(["id", "version", "min_engine_version", "updated_at", "aliases", "rules"])
+const MANIFEST_KEYS = new Set([
+  "id",
+  "version",
+  "min_engine_version",
+  "updated_at",
+  "aliases",
+  "rules",
+])
 const GATE_KEYS = ["all", "any", "not", "contains", "regex", "line_regex"]
 const RULE_KEYS = new Set([
   "id",
@@ -107,7 +120,8 @@ const U32_MAX = 2 ** 32 - 1
  * An integer in range, as serde checks i32 and u32. TOML's `1.0` parses to the
  * same number as `1`, so a whole float slips through here where herdr rejects it.
  */
-const isInt = (v: unknown, min: number, max: number): v is number => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max
+const isInt = (v: unknown, min: number, max: number): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v >= min && v <= max
 
 /** herdr's ManifestVersion: a string of dot-separated digits, each segment fitting a u64. */
 function parseVersion(v: unknown): string {
@@ -115,19 +129,25 @@ function parseVersion(v: unknown): string {
   const t = v.trim()
   if (!t) throw new ManifestError("manifest: version must not be empty")
   for (const seg of t.split(".")) {
-    if (!/^[0-9]+$/.test(seg)) throw new ManifestError(`manifest: version ${JSON.stringify(t)} must be dotted numeric`)
-    if (BigInt(seg) > 2n ** 64n - 1n) throw new ManifestError(`manifest: version ${JSON.stringify(t)} contains an oversized segment`)
+    if (!/^[0-9]+$/.test(seg))
+      throw new ManifestError(`manifest: version ${JSON.stringify(t)} must be dotted numeric`)
+    if (BigInt(seg) > 2n ** 64n - 1n)
+      throw new ManifestError(
+        `manifest: version ${JSON.stringify(t)} contains an oversized segment`,
+      )
   }
   return t
 }
 
 function denyUnknown(t: Table, allowed: Set<string>, where: string) {
-  for (const k of Object.keys(t)) if (!allowed.has(k)) throw new ManifestError(`${where}: unknown field "${k}"`)
+  for (const k of Object.keys(t))
+    if (!allowed.has(k)) throw new ManifestError(`${where}: unknown field "${k}"`)
 }
 
 function strings(v: unknown, where: string): string[] {
   if (v === undefined) return []
-  if (!Array.isArray(v) || !v.every((s) => typeof s === "string")) throw new ManifestError(`${where}: expected an array of strings`)
+  if (!Array.isArray(v) || !v.every((s) => typeof s === "string"))
+    throw new ManifestError(`${where}: expected an array of strings`)
   return v
 }
 
@@ -147,7 +167,9 @@ function compileRegexes(patterns: string[], where: string): RegExp[] {
     try {
       return compileRustRegex(p)
     } catch (err) {
-      throw new ManifestError(`${where}: invalid pattern ${JSON.stringify(p)}: ${err instanceof Error ? err.message : err}`)
+      throw new ManifestError(
+        `${where}: invalid pattern ${JSON.stringify(p)}: ${err instanceof Error ? err.message : err}`,
+      )
     }
   })
 }
@@ -156,19 +178,30 @@ function compileRegexes(patterns: string[], where: string): RegExp[] {
  * Compiles and validates one gate. A gate directly inside `not` may be made of
  * nothing but a nested `not`; every other gate needs a positive matcher.
  */
-function compileGate(t: Table, where: string, depth: number, budget: Budget, negated: boolean): Gate {
-  if (depth > MAX_GATE_DEPTH) throw new ManifestError(`${where}: exceeds max gate depth ${MAX_GATE_DEPTH}`)
-  if (++budget.gates > MAX_TOTAL_GATES) throw new ManifestError(`manifest exceeds max gate count ${MAX_TOTAL_GATES}`)
+function compileGate(
+  t: Table,
+  where: string,
+  depth: number,
+  budget: Budget,
+  negated: boolean,
+): Gate {
+  if (depth > MAX_GATE_DEPTH)
+    throw new ManifestError(`${where}: exceeds max gate depth ${MAX_GATE_DEPTH}`)
+  if (++budget.gates > MAX_TOTAL_GATES)
+    throw new ManifestError(`manifest exceeds max gate count ${MAX_TOTAL_GATES}`)
 
   const contains = strings(t.contains, `${where}.contains`)
   const regex = strings(t.regex, `${where}.regex`)
   const lineRegex = strings(t.line_regex, `${where}.line_regex`)
   const direct = [...contains, ...regex, ...lineRegex]
   if (direct.length > MAX_MATCHERS_PER_GATE) {
-    throw new ManifestError(`${where}: has ${direct.length} direct matchers, max is ${MAX_MATCHERS_PER_GATE}`)
+    throw new ManifestError(
+      `${where}: has ${direct.length} direct matchers, max is ${MAX_MATCHERS_PER_GATE}`,
+    )
   }
   budget.matchers += direct.length
-  if (budget.matchers > MAX_TOTAL_MATCHERS) throw new ManifestError(`manifest exceeds max matcher count ${MAX_TOTAL_MATCHERS}`)
+  if (budget.matchers > MAX_TOTAL_MATCHERS)
+    throw new ManifestError(`manifest exceeds max matcher count ${MAX_TOTAL_MATCHERS}`)
   if (direct.some((m) => [...m].length > MAX_MATCHER_CHARS)) {
     throw new ManifestError(`${where}: matcher exceeds max length ${MAX_MATCHER_CHARS}`)
   }
@@ -176,7 +209,8 @@ function compileGate(t: Table, where: string, depth: number, budget: Budget, neg
   const nested = (key: "all" | "any" | "not"): Table[] => {
     const v = t[key]
     if (v === undefined) return []
-    if (!Array.isArray(v) || !v.every(isTable)) throw new ManifestError(`${where}.${key}: expected an array of tables`)
+    if (!Array.isArray(v) || !v.every(isTable))
+      throw new ManifestError(`${where}.${key}: expected an array of tables`)
     for (const g of v) denyUnknown(g, new Set(GATE_KEYS), `${where}.${key}`)
     return v
   }
@@ -212,15 +246,18 @@ export function parseManifest(text: string): Manifest {
 
   if (typeof data.id !== "string") throw new ManifestError("manifest: id must be a string")
   const version = data.version === undefined ? null : parseVersion(data.version)
-  if (data.updated_at !== undefined && typeof data.updated_at !== "string") throw new ManifestError("manifest: updated_at must be a string")
+  if (data.updated_at !== undefined && typeof data.updated_at !== "string")
+    throw new ManifestError("manifest: updated_at must be a string")
   const minEngine = data.min_engine_version
   if (minEngine !== undefined && !isInt(minEngine, 0, U32_MAX)) {
     throw new ManifestError("manifest: min_engine_version must be an integer from 0 to 2^32-1")
   }
   const rawRules = data.rules ?? []
-  if (!Array.isArray(rawRules) || !rawRules.every(isTable)) throw new ManifestError("manifest: rules must be [[rules]] tables")
+  if (!Array.isArray(rawRules) || !rawRules.every(isTable))
+    throw new ManifestError("manifest: rules must be [[rules]] tables")
   if (rawRules.length === 0) throw new ManifestError("manifest must contain at least one rule")
-  if (rawRules.length > MAX_RULES) throw new ManifestError(`manifest contains ${rawRules.length} rules, max is ${MAX_RULES}`)
+  if (rawRules.length > MAX_RULES)
+    throw new ManifestError(`manifest contains ${rawRules.length} rules, max is ${MAX_RULES}`)
 
   const budget: Budget = { gates: 0, matchers: 0 }
   const rules = rawRules.map((r): Rule => {
@@ -231,13 +268,22 @@ export function parseManifest(text: string): Manifest {
 
     // herdr treats a missing state as unknown
     const state = r.state === undefined ? "unknown" : r.state
-    if (typeof state !== "string" || !STATES.includes(state as AgentState)) throw new ManifestError(`${where}: invalid state`)
+    if (typeof state !== "string" || !STATES.includes(state as AgentState))
+      throw new ManifestError(`${where}: invalid state`)
     const priority = r.priority ?? 0
-    if (!isInt(priority, I32_MIN, I32_MAX)) throw new ManifestError(`${where}: priority must be a 32-bit integer`)
+    if (!isInt(priority, I32_MIN, I32_MAX))
+      throw new ManifestError(`${where}: priority must be a 32-bit integer`)
     const region = r.region ?? "whole_recent"
-    if (typeof region !== "string" || !isValidRegion(region)) throw new ManifestError(`${where} uses invalid region: ${region}`)
-    if (region.trim().startsWith("top_non_empty_lines(") && typeof minEngine === "number" && minEngine < TOP_NON_EMPTY_LINES_ENGINE_VERSION) {
-      throw new ManifestError(`${where} uses top_non_empty_lines but min_engine_version is below ${TOP_NON_EMPTY_LINES_ENGINE_VERSION}`)
+    if (typeof region !== "string" || !isValidRegion(region))
+      throw new ManifestError(`${where} uses invalid region: ${region}`)
+    if (
+      region.trim().startsWith("top_non_empty_lines(") &&
+      typeof minEngine === "number" &&
+      minEngine < TOP_NON_EMPTY_LINES_ENGINE_VERSION
+    ) {
+      throw new ManifestError(
+        `${where} uses top_non_empty_lines but min_engine_version is below ${TOP_NON_EMPTY_LINES_ENGINE_VERSION}`,
+      )
     }
 
     const rule: Rule = {
@@ -254,7 +300,8 @@ export function parseManifest(text: string): Manifest {
     }
     if (rule.skipStateUpdate) {
       // a rule that says "leave the state alone" must say state = "unknown", and nothing visible
-      if (r.state !== "unknown") throw new ManifestError(`${where} uses skip_state_update without state = "unknown"`)
+      if (r.state !== "unknown")
+        throw new ManifestError(`${where} uses skip_state_update without state = "unknown"`)
       if (rule.visibleIdle || rule.visibleBlocker || rule.visibleWorking) {
         throw new ManifestError(`${where} uses skip_state_update with visible state evidence`)
       }
@@ -271,7 +318,8 @@ export function parseManifest(text: string): Manifest {
   }
 }
 
-export const matchesAgent = (m: Manifest, agent: Agent) => [m.id, ...m.aliases].some((name) => parseAgent(name) === agent)
+export const matchesAgent = (m: Manifest, agent: Agent) =>
+  [m.id, ...m.aliases].some((name) => parseAgent(name) === agent)
 
 /**
  * The override if it's usable, else the bundled manifest with a warning saying
@@ -280,7 +328,10 @@ export const matchesAgent = (m: Manifest, agent: Agent) => [m.id, ...m.aliases].
  */
 export function resolveManifest(agent: Agent, path = overridePath(agent)): LoadedManifest {
   if (!existsSync(path)) return bundledManifest(agent)
-  const ignored = (why: string): LoadedManifest => ({ ...bundledManifest(agent), warning: `ignored override ${path}: ${why}` })
+  const ignored = (why: string): LoadedManifest => ({
+    ...bundledManifest(agent),
+    warning: `ignored override ${path}: ${why}`,
+  })
 
   let manifest: Manifest
   try {
@@ -288,9 +339,12 @@ export function resolveManifest(agent: Agent, path = overridePath(agent)): Loade
   } catch (err) {
     return ignored(err instanceof Error ? err.message : String(err))
   }
-  if (!matchesAgent(manifest, agent)) return ignored(`manifest id ${manifest.id} does not match ${agent}`)
+  if (!matchesAgent(manifest, agent))
+    return ignored(`manifest id ${manifest.id} does not match ${agent}`)
   if ((manifest.minEngineVersion ?? 0) > ENGINE_VERSION) {
-    return ignored(`it requires engine ${manifest.minEngineVersion}, this is engine ${ENGINE_VERSION}`)
+    return ignored(
+      `it requires engine ${manifest.minEngineVersion}, this is engine ${ENGINE_VERSION}`,
+    )
   }
   return { manifest, source: path, warning: null }
 }

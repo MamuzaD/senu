@@ -1,4 +1,11 @@
-import { loadManifest, type Agent, type AgentState, type Gate, type LoadedManifest, type Rule } from "./manifest.ts"
+import {
+  loadManifest,
+  type Agent,
+  type AgentState,
+  type Gate,
+  type LoadedManifest,
+  type Rule,
+} from "./manifest.ts"
 import { lines, region, type DetectionInput } from "./regions.ts"
 
 /**
@@ -51,9 +58,15 @@ function gateMatches(g: Gate, text: string, lower: string): boolean {
   return true
 }
 
-export const ruleMatches = (rule: Rule, text: string) => gateMatches(rule.gate, text, text.toLowerCase())
+export const ruleMatches = (rule: Rule, text: string) =>
+  gateMatches(rule.gate, text, text.toLowerCase())
 
-export function explainWith(loaded: LoadedManifest, agent: Agent, input: DetectionInput, previous: AgentState | null = null): Explanation {
+export function explainWith(
+  loaded: LoadedManifest,
+  agent: Agent,
+  input: DetectionInput,
+  previous: AgentState | null = null,
+): Explanation {
   const regions = new Map<string, string>()
   const evaluated: EvaluatedRule[] = []
   let winner: Rule | null = null
@@ -104,11 +117,23 @@ export function explainWith(loaded: LoadedManifest, agent: Agent, input: Detecti
  * Classifies one screen. `previous` is what the caller last showed for this
  * pane; it's kept when the winning rule says `skip_state_update`.
  */
-export function classify(agent: Agent, input: DetectionInput, previous: AgentState | null = null): Detection {
-  const { loaded: _loaded, evaluated: _evaluated, ...detection } = explainWith(loadManifest(agent), agent, input, previous)
+export function classify(
+  agent: Agent,
+  input: DetectionInput,
+  previous: AgentState | null = null,
+): Detection {
+  const {
+    loaded: _loaded,
+    evaluated: _evaluated,
+    ...detection
+  } = explainWith(loadManifest(agent), agent, input, previous)
   return detection
 }
 
-export function explain(agent: Agent, input: DetectionInput, previous: AgentState | null = null): Explanation {
+export function explain(
+  agent: Agent,
+  input: DetectionInput,
+  previous: AgentState | null = null,
+): Explanation {
   return explainWith(loadManifest(agent), agent, input, previous)
 }

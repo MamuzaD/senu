@@ -1,4 +1,12 @@
-import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs"
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs"
 import { dirname } from "node:path"
 
 function alive(pid: number): boolean {
@@ -30,7 +38,10 @@ function olderThan(path: string, ms: number): boolean {
 }
 
 /** Claims the lock atomically; returns false while another live watcher owns it. */
-export function claimPidFile(path: string, holderAlive: (pid: number) => boolean = isWatcher): boolean {
+export function claimPidFile(
+  path: string,
+  holderAlive: (pid: number) => boolean = isWatcher,
+): boolean {
   mkdirSync(dirname(path), { recursive: true })
   for (let attempt = 0; attempt < 3; attempt++) {
     try {

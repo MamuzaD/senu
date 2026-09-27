@@ -38,5 +38,13 @@ export interface Snapshot {
 export const nowSeconds = () => Math.floor(Date.now() / 1000)
 
 export function errorSnapshot(error: string): Snapshot {
-  return { ok: false, error, updatedAt: nowSeconds(), planType: null, limits: [], spend: null, banked: null }
+  return {
+    ok: false,
+    error,
+    updatedAt: nowSeconds(),
+    planType: null,
+    limits: [],
+    spend: null,
+    banked: null,
+  }
 }
