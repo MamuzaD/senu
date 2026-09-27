@@ -1,5 +1,8 @@
 import { TextAttributes, createCliRenderer, type RGBA } from "@opentui/core"
-import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import { type Binding } from "@opentui/keymap"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { KeymapProvider, useActiveKeys, useBindings } from "@opentui/keymap/react"
+import { createRoot, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react"
 
 import type { UsageProfile, UsageScene } from "~/config.ts"
@@ -341,6 +344,10 @@ const modelName = (m: string) => m.replace(/-\d{8}$/, "")
 const kindColor = (kind: UsageProfile["kind"]) => (kind === "codex" ? colors.codex : colors.claude)
 const kindTitle = (kind: UsageProfile["kind"]) =>
   kind === "codex" ? `${icons.codex} Codex` : `${icons.claude} Claude`
+const PROFILE_KIND_WIDTH = Math.max(
+  Bun.stringWidth(kindTitle("codex")),
+  Bun.stringWidth(kindTitle("claude")),
+)
 
 function bucketLabel(label: string, days: RangeDays): string {
   if (days === 1) return `${label}h`
@@ -577,7 +584,8 @@ export function CostView({
         ? active.slice(0, breakdownRows).map((p) => {
             const profile = profiles[p]!
             const r = totals[p]
-            const name = `${kindTitle(profile.kind)} · ${profile.name}`
+            const kindLabel = kindTitle(profile.kind)
+            const name = `${kindLabel}${" ".repeat(PROFILE_KIND_WIDTH - Bun.stringWidth(kindLabel))} · ${profile.name}`
             const pad = " ".repeat(Math.max(1, nameWidth - Bun.stringWidth(name) - 2))
             return (
               <Line key={`${profile.kind}:${profile.name}`}>
@@ -651,7 +659,45 @@ export function CostView({
 
 type View = "limits" | "cost"
 
-function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneTime }) {
+type HintBinding = Binding & { desc?: string }
+
+const quitKeys: HintBinding[] = [
+  { key: "q", cmd: "quit", desc: "q quit" },
+  { key: "shift+q", cmd: "quit" },
+  { key: "escape", cmd: "quit" },
+]
+const limitsKeys: HintBinding[] = [
+  { key: "c", cmd: "show-cost", desc: "c cost" },
+  { key: "shift+c", cmd: "show-cost" },
+  { key: "t", cmd: "show-cost" },
+  { key: "shift+t", cmd: "show-cost" },
+  { key: "tab", cmd: "toggle-view" },
+]
+const costKeys: HintBinding[] = [
+  { key: "left", cmd: "previous-range", desc: "←/→ range" },
+  { key: "right", cmd: "next-range" },
+  { key: "h", cmd: "previous-range" },
+  { key: "shift+h", cmd: "previous-range" },
+  { key: "l", cmd: "next-range" },
+  { key: "shift+l", cmd: "next-range" },
+  { key: "[", cmd: "previous-range" },
+  { key: "]", cmd: "next-range" },
+  { key: "up", cmd: "toggle-breakdown", desc: "↑/↓ breakdown" },
+  { key: "down", cmd: "toggle-breakdown" },
+  { key: "j", cmd: "toggle-breakdown" },
+  { key: "shift+j", cmd: "toggle-breakdown" },
+  { key: "k", cmd: "toggle-breakdown" },
+  { key: "shift+k", cmd: "toggle-breakdown" },
+  { key: "tab", cmd: "toggle-view", desc: "tab limits" },
+  { key: "c", cmd: "show-cost" },
+  { key: "shift+c", cmd: "show-cost" },
+  { key: "t", cmd: "show-cost" },
+  { key: "shift+t", cmd: "show-cost" },
+]
+
+const viewKeys = (view: View) => [...(view === "cost" ? costKeys : limitsKeys), ...quitKeys]
+
+export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneTime }) {
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
   const [sections, setSections] = useState<Section[]>(() =>
@@ -747,18 +793,27 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   const [view, setView] = useState<View>("limits")
   const [range, setRange] = useState(0)
   const [breakdown, setBreakdown] = useState<Breakdown>("profile")
-  useKeyboard((key) => {
-    const k = key.name
-    const back = k === "h" || k === "left" || key.sequence === "["
-    if (view === "cost" && (back || k === "l" || k === "right" || key.sequence === "]")) {
-      const step = back ? RANGE_DAYS.length - 1 : 1
-      setRange((r) => (r + step) % RANGE_DAYS.length)
-    } else if (view === "cost" && (k === "j" || k === "k" || k === "down" || k === "up")) {
-      setBreakdown((b) => (b === "profile" ? "model" : "profile"))
-    } else if (k === "c" || k === "t") setView("cost")
-    else if (k === "tab") setView((v) => (v === "limits" ? "cost" : "limits"))
-    else if (k === "q" || k === "escape") renderer.destroy()
-  })
+  const activeKeys = useActiveKeys({ includeMetadata: true })
+  useBindings(
+    () => ({
+      bindings: viewKeys(view),
+      commands: [
+        { name: "quit", run: () => renderer.destroy() },
+        { name: "show-cost", run: () => setView("cost") },
+        { name: "toggle-view", run: () => setView((v) => (v === "limits" ? "cost" : "limits")) },
+        {
+          name: "previous-range",
+          run: () => setRange((r) => (r + RANGE_DAYS.length - 1) % RANGE_DAYS.length),
+        },
+        { name: "next-range", run: () => setRange((r) => (r + 1) % RANGE_DAYS.length) },
+        {
+          name: "toggle-breakdown",
+          run: () => setBreakdown((b) => (b === "profile" ? "model" : "profile")),
+        },
+      ],
+    }),
+    [view, renderer],
+  )
 
   const t = now()
   const cols = sceneCols(width)
@@ -794,8 +849,10 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
     : flightDone(plan)
       ? "senu keeps watch"
       : "senu comes in to land"
-  const hint =
-    view === "limits" ? "c cost · q quit" : "←/→ range · ↑/↓ breakdown · tab limits · q quit"
+  const hint = activeKeys
+    .map((key) => key.bindingAttrs?.desc)
+    .filter((desc): desc is string => typeof desc === "string")
+    .join(" · ")
   const costRows = height - (noColor ? 0 : SCENE_ROWS + GAP_ROWS) - FOOTER_ROWS
 
   return (
@@ -841,7 +898,12 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
 export async function runUsagePopup(profiles: UsageProfile[], scene: UsageScene): Promise<number> {
   const { promise: closed, resolve } = Promise.withResolvers<void>()
   const renderer = await createCliRenderer({ useMouse: false, onDestroy: resolve })
-  createRoot(renderer).render(<UsagePopup profiles={profiles} time={sceneTime(scene)} />)
+  const keymap = createDefaultOpenTuiKeymap(renderer)
+  createRoot(renderer).render(
+    <KeymapProvider keymap={keymap}>
+      <UsagePopup profiles={profiles} time={sceneTime(scene)} />
+    </KeymapProvider>,
+  )
   await closed
   // In-flight snapshot fetches can keep a closed tmux popup alive and leave it blank.
   process.exit(0)

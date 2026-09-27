@@ -79,7 +79,7 @@ test("the 7-day view totals every profile", async () => {
   expect(f).toContain("$280.00  API estimate · 14 sessions · 14M tok")
   expect(f).toContain("daily cost")
   expect(f).toContain("by profile  by model")
-  expect(f).toMatch(/Codex · work\s+\$70\.00\s+25%\s+7M tok/)
+  expect(f).toMatch(/Codex  · work\s+\$70\.00\s+25%\s+7M tok/)
   expect(f).toMatch(/Claude · personal\s+\$210\.00\s+75%\s+7M tok/)
   expect(f).not.toContain("gpt-test")
   expect(f).not.toContain("idle")

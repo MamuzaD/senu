@@ -1,4 +1,7 @@
 import { TextAttributes, createCliRenderer, type RGBA } from "@opentui/core"
+import { type Binding } from "@opentui/keymap"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { KeymapProvider, useActiveKeys, useBindings } from "@opentui/keymap/react"
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useEffectEvent, useRef, useState } from "react"
 
@@ -12,6 +15,30 @@ import { jump, kill } from "./actions.ts"
 import { type AgentRow, type Attention, type Collected, type Collector } from "./collect.ts"
 
 const REFRESH_MS = 1000
+
+type PickerBinding = Binding & { desc?: string }
+const pickerKeys: PickerBinding[] = [
+  { key: "j", cmd: "move-down", desc: "j/k move" },
+  { key: "shift+j", cmd: "move-down" },
+  { key: "k", cmd: "move-up" },
+  { key: "shift+k", cmd: "move-up" },
+  { key: "down", cmd: "move-down" },
+  { key: "up", cmd: "move-up" },
+  { key: "g", cmd: "first" },
+  { key: "shift+g", cmd: "last" },
+  { key: "home", cmd: "first" },
+  { key: "end", cmd: "last" },
+  { key: "return", cmd: "jump", desc: "⏎ jump" },
+  { key: "x", cmd: "kill", desc: "x kill" },
+  { key: "shift+x", cmd: "kill" },
+  { key: "d", cmd: "kill" },
+  { key: "shift+d", cmd: "kill" },
+  { key: "r", cmd: "refresh", desc: "r refresh" },
+  { key: "shift+r", cmd: "refresh" },
+  { key: "q", cmd: "quit", desc: "q quit" },
+  { key: "shift+q", cmd: "quit" },
+  { key: "escape", cmd: "quit" },
+]
 
 const RULE_ROW = 3
 const LIST_TOP = RULE_ROW + 2
@@ -53,6 +80,7 @@ interface View {
   dive: DivePlan | null
   width: number
   height: number
+  hints: { command: string; desc: string }[]
 }
 
 const visibleCount = (height: number) => Math.max(1, Math.floor((height - LIST_TOP - 1) / PER_ROW))
@@ -146,15 +174,15 @@ function paint(v: View): Canvas {
   const live = v.daemon === "dead" || rows.some((r) => r.source === "live")
   const note = v.dive ? "senu dives" : live ? "senu scouts live" : "senu keeps watch"
   const noteFg = v.dive ? brand.gold : live ? brand.dusk : brand.shadow
+  const fullHint = v.hints.map((hint) => hint.desc).join(" · ")
   const keys = v.confirming
     ? "y kill · any other key keeps it"
-    : Bun.stringWidth("j/k move · ⏎ jump · x kill · r refresh · q quit") +
-          more.length +
-          note.length +
-          6 <=
-        W
-      ? "j/k move · ⏎ jump · x kill · r refresh · q quit"
-      : "⏎ jump · x kill · q quit"
+    : Bun.stringWidth(fullHint) + more.length + note.length + 6 <= W
+      ? fullHint
+      : v.hints
+          .filter((hint) => ["jump", "kill", "quit"].includes(hint.command))
+          .map((hint) => hint.desc)
+          .join(" · ")
   c.text(1, fy, keys, colors.dim)
   const room = right - Bun.stringWidth(keys) - 3
   const tail = more.length + note.length + 2 <= room ? [more, note] : [more]
@@ -169,7 +197,7 @@ function paint(v: View): Canvas {
   return c
 }
 
-function Picker({
+export function Picker({
   collector,
   initial,
   raiseGhosttyTab,
@@ -181,6 +209,7 @@ function Picker({
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
   const [data, setData] = useState(initial)
+  const activeKeys = useActiveKeys({ includeMetadata: true })
   const [cursor, setCursor] = useState<{ id: string | null; index: number }>({
     id: initial.rows[0]?.windowId ?? null,
     index: 0,
@@ -262,27 +291,35 @@ function Picker({
   }
 
   useKeyboard((key) => {
-    if (diveAt != null) return
     const k = key.sequence === "G" ? "G" : key.name
     const pending = confirmingRef.current
-    if (pending) {
-      if (k === "y" || k === "x" || k === "d" || k === "return") {
-        const row = pending
-        setConfirming(null)
-        void kill(row).then(refresh)
-      } else setConfirming(null)
-      return
-    }
-    if (k === "q" || k === "escape") close()
-    else if (k === "j" || k === "down") move((i) => i + 1)
-    else if (k === "k" || k === "up") move((i) => i - 1)
-    else if (k === "g" || k === "home") move(() => 0)
-    else if (k === "G" || k === "end") move((_, n) => n - 1)
-    else if (k === "r") void refresh()
-    else if ((k === "x" || k === "d") && rows.length)
-      setConfirming(rows[indexOf(cursorRef.current, rows)]!)
-    else if (k === "return" && rows.length) go(rows[indexOf(cursorRef.current, rows)]!)
+    if (!pending || diveAt != null) return
+    if (k === "y" || k === "x" || k === "d" || k === "return") {
+      setConfirming(null)
+      void kill(pending).then(refresh)
+    } else setConfirming(null)
   })
+
+  useBindings(
+    () => ({
+      enabled: () => confirmingRef.current == null && diveAt == null,
+      bindings: pickerKeys,
+      commands: [
+        { name: "quit", run: close },
+        { name: "move-down", run: () => move((i) => i + 1) },
+        { name: "move-up", run: () => move((i) => i - 1) },
+        { name: "first", run: () => move(() => 0) },
+        { name: "last", run: () => move((_, n) => n - 1) },
+        { name: "refresh", run: () => void refresh() },
+        {
+          name: "kill",
+          run: () => rows.length && setConfirming(rows[indexOf(cursorRef.current, rows)]!),
+        },
+        { name: "jump", run: () => rows.length && go(rows[indexOf(cursorRef.current, rows)]!) },
+      ],
+    }),
+    [confirming, diveAt, renderer, rows, width, raiseGhosttyTab],
+  )
 
   const diving = diveAt != null
   useTicker(diving ? FPS : 0)
@@ -304,6 +341,11 @@ function Picker({
     dive: plan,
     width,
     height,
+    hints: activeKeys.flatMap((key) =>
+      typeof key.command === "string" && typeof key.bindingAttrs?.desc === "string"
+        ? [{ command: key.command, desc: key.bindingAttrs.desc }]
+        : [],
+    ),
   })
   return <CanvasView canvas={canvas} />
 }
@@ -317,8 +359,11 @@ export async function runPicker(
     collector.collect(),
     createCliRenderer({ useMouse: false, onDestroy: resolve }),
   ])
+  const keymap = createDefaultOpenTuiKeymap(renderer)
   createRoot(renderer).render(
-    <Picker collector={collector} initial={initial} raiseGhosttyTab={opts.raiseGhosttyTab} />,
+    <KeymapProvider keymap={keymap}>
+      <Picker collector={collector} initial={initial} raiseGhosttyTab={opts.raiseGhosttyTab} />
+    </KeymapProvider>,
   )
   await closed
   process.exit(0)
