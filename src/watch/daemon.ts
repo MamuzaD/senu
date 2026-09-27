@@ -6,8 +6,8 @@ import { loadConfig } from "~/config.ts"
 import { classify } from "~/detect/engine.ts"
 import { AGENTS, overridePath, reloadManifests, type Agent } from "~/detect/manifest.ts"
 import {
+  AgentCache,
   capturePanes,
-  identifyAgents,
   listPanes,
   tmux,
   type AgentPane,
@@ -71,6 +71,7 @@ function manifestStamp(): string {
 export class Watcher {
   private panes = new Map<string, PaneTrack>()
   private agents = new Map<string, Agent>()
+  private identified = new AgentCache()
   private windows = new Map<string, WindowTrack>()
   private stamp = manifestStamp()
 
@@ -82,6 +83,7 @@ export class Watcher {
   reset() {
     this.panes.clear()
     this.agents.clear()
+    this.identified.clear()
     this.windows.clear()
   }
 
@@ -96,7 +98,7 @@ export class Watcher {
 
     let agentPanes: AgentPane[]
     if (full) {
-      agentPanes = await identifyAgents(all)
+      agentPanes = await this.identified.identify(all)
       this.agents = new Map(agentPanes.map((p) => [p.id, p.agent]))
       const stamp = manifestStamp()
       if (stamp !== this.stamp) {

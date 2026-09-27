@@ -232,9 +232,9 @@ export function processArgv(pid: number): string[] {
   }
 }
 
-async function processTable(panes: Pane[]): Promise<Proc[]> {
+async function processTable(panes: Pane[]): Promise<Proc[] | null> {
   const { ok, out } = await run(["ps", "-ax", "-o", "pid=,pgid=,tpgid=,comm="])
-  if (!ok) return []
+  if (!ok) return null
   const rows: Proc[] = []
   for (const line of out.split("\n")) {
     const m = /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(.+)$/.exec(line)
@@ -265,19 +265,30 @@ function agentInForeground(
   pane: Pane,
   procs: Proc[],
   argvFor: (pid: number) => string[],
-): Agent | null {
+): Agent | null | undefined {
   const shell = procs.find((p) => p.pid === pane.pid)
-  if (!shell || shell.tpgid <= 0) return null
+  if (!shell || shell.tpgid <= 0) return undefined
   const group = procs.filter((p) => p.pgid === shell.tpgid)
+  if (!group.length) return undefined
   const leader = group.find((p) => p.pid === shell.tpgid)
+  let unresolved = false
   for (const p of leader ? [leader, ...group.filter((g) => g !== leader)] : group) {
-    const agent = agentFromProcess(p.command, () => argvFor(p.pid))
+    const agent = agentFromProcess(p.command, () => {
+      const argv = argvFor(p.pid)
+      if (!argv.length) unresolved = true
+      return argv
+    })
     if (agent) return agent
   }
-  return null
+  return unresolved ? undefined : null
 }
 
-export async function identifyAgents(panes: Pane[]): Promise<AgentPane[]> {
+interface Identification {
+  agents: AgentPane[]
+  unresolved: Set<string>
+}
+
+async function identifyAgentsChecked(panes: Pane[]): Promise<Identification> {
   const direct = (p: Pane) => parseAgent(baseName(p.command))
   const procs = panes.some((p) => !direct(p) && needsArgv(p.command))
     ? await processTable(panes)
@@ -290,14 +301,77 @@ export async function identifyAgents(panes: Pane[]): Promise<AgentPane[]> {
   }
 
   const found: AgentPane[] = []
+  const unresolved = new Set<string>()
   for (const p of panes) {
     let agent = direct(p)
     if (!agent && needsArgv(p.command)) {
-      agent = agentInForeground(p, procs, argvFor)
+      if (procs === null) {
+        unresolved.add(p.id)
+        continue
+      }
+      const detected = agentInForeground(p, procs, argvFor)
+      if (detected === undefined) {
+        unresolved.add(p.id)
+        continue
+      }
+      agent = detected
     }
     if (agent) found.push({ ...p, agent })
   }
-  return found
+  return { agents: found, unresolved }
+}
+
+export async function identifyAgents(panes: Pane[]): Promise<AgentPane[]> {
+  return (await identifyAgentsChecked(panes)).agents
+}
+
+const RUNTIME_RECHECK_MS = 5_000
+const procKey = (pane: Pane) => `${pane.pid}\x1f${pane.command}`
+
+/** Avoid repeated process-table reads while bounding stale runtime identifications. */
+export class AgentCache {
+  private entries = new Map<string, { proc: string; agent: Agent | null; checkedAt: number }>()
+  private readonly lookup: typeof identifyAgentsChecked
+
+  constructor(lookup: typeof identifyAgentsChecked = identifyAgentsChecked) {
+    this.lookup = lookup
+  }
+
+  async identify(panes: Pane[], now = performance.now()): Promise<AgentPane[]> {
+    const fresh = panes.filter((pane) => {
+      const entry = this.entries.get(pane.id)
+      return (
+        !entry ||
+        entry.proc !== procKey(pane) ||
+        (needsArgv(pane.command) && now - entry.checkedAt >= RUNTIME_RECHECK_MS)
+      )
+    })
+    if (fresh.length) {
+      const { agents, unresolved } = await this.lookup(fresh)
+      const found = new Map(agents.map((pane) => [pane.id, pane.agent]))
+      for (const pane of fresh) {
+        if (unresolved.has(pane.id)) {
+          if (this.entries.get(pane.id)?.proc !== procKey(pane)) this.entries.delete(pane.id)
+          continue
+        }
+        this.entries.set(pane.id, {
+          proc: procKey(pane),
+          agent: found.get(pane.id) ?? null,
+          checkedAt: now,
+        })
+      }
+    }
+    const live = new Set(panes.map((pane) => pane.id))
+    for (const id of this.entries.keys()) if (!live.has(id)) this.entries.delete(id)
+    return panes.flatMap((pane) => {
+      const agent = this.entries.get(pane.id)?.agent
+      return agent ? [{ ...pane, agent }] : []
+    })
+  }
+
+  clear() {
+    this.entries.clear()
+  }
 }
 
 export async function listAgentPanes(): Promise<AgentPane[]> {

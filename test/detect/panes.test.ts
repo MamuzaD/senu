@@ -1,6 +1,107 @@
 import { describe, expect, test } from "bun:test"
 
-import { agentFromArgv, agentFromProcess, processArgv } from "~/detect/panes.ts"
+import type { Agent } from "~/detect/manifest.ts"
+import {
+  AgentCache,
+  agentFromArgv,
+  agentFromProcess,
+  processArgv,
+  type Pane,
+} from "~/detect/panes.ts"
+
+const pane: Pane = {
+  id: "%1",
+  pid: 101,
+  command: "node",
+  title: "",
+  oscTitle: "",
+  active: true,
+  session: "test",
+  sessionAttached: true,
+  windowId: "@1",
+  windowIndex: 0,
+  windowName: "test",
+  windowActive: true,
+  windowActivity: 0,
+  aiState: "",
+}
+
+test("agent cache refreshes a runtime whose command name stays the same", async () => {
+  let agent: Agent | null = "codex"
+  let lookups = 0
+  const cache = new AgentCache(async (panes) => {
+    lookups++
+    const found = agent
+    return {
+      agents: found ? panes.map((p) => ({ ...p, agent: found })) : [],
+      unresolved: new Set<string>(),
+    }
+  })
+
+  expect((await cache.identify([pane], 0))[0]?.agent).toBe("codex")
+  agent = "claude"
+  expect((await cache.identify([pane], 4_000))[0]?.agent).toBe("codex")
+  expect(lookups).toBe(1)
+  expect((await cache.identify([pane], 5_001))[0]?.agent).toBe("claude")
+  expect(lookups).toBe(2)
+})
+
+test("agent cache retries an unresolved runtime and notices a changed command", async () => {
+  let agent: Agent | null = null
+  let lookups = 0
+  const cache = new AgentCache(async (panes) => {
+    lookups++
+    const found = agent
+    return {
+      agents: found ? panes.map((p) => ({ ...p, agent: found })) : [],
+      unresolved: new Set<string>(),
+    }
+  })
+
+  expect(await cache.identify([pane], 0)).toEqual([])
+  agent = "codex"
+  expect(await cache.identify([pane], 4_000)).toEqual([])
+  expect((await cache.identify([pane], 5_001))[0]?.agent).toBe("codex")
+  expect(lookups).toBe(2)
+
+  agent = "claude"
+  expect((await cache.identify([{ ...pane, command: "claude" }], 5_002))[0]?.agent).toBe("claude")
+  expect(lookups).toBe(3)
+})
+
+test("a failed refresh keeps a known agent and retries on the next poll", async () => {
+  let result: "agent" | "unresolved" | "none" = "agent"
+  let lookups = 0
+  const cache = new AgentCache(async (panes) => {
+    lookups++
+    return {
+      agents: result === "agent" ? panes.map((p) => ({ ...p, agent: "claude" as const })) : [],
+      unresolved: result === "unresolved" ? new Set(panes.map((p) => p.id)) : new Set<string>(),
+    }
+  })
+
+  expect((await cache.identify([pane], 0))[0]?.agent).toBe("claude")
+  result = "unresolved"
+  expect((await cache.identify([pane], 5_001))[0]?.agent).toBe("claude")
+  expect((await cache.identify([pane], 5_002))[0]?.agent).toBe("claude")
+  expect(lookups).toBe(3)
+
+  result = "none"
+  expect(await cache.identify([pane], 5_003)).toEqual([])
+  expect(lookups).toBe(4)
+})
+
+test("a failed lookup for a changed command cannot reuse the previous identity", async () => {
+  let fail = false
+  const cache = new AgentCache(async (panes) => ({
+    agents: fail ? [] : panes.map((p) => ({ ...p, agent: "codex" as const })),
+    unresolved: fail ? new Set(panes.map((p) => p.id)) : new Set<string>(),
+  }))
+
+  expect((await cache.identify([pane], 0))[0]?.agent).toBe("codex")
+  fail = true
+  expect(await cache.identify([{ ...pane, command: "bun" }], 1)).toEqual([])
+})
 
 describe("agentFromArgv", () => {
   const cases: [string, string | null][] = [

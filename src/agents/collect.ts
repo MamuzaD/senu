@@ -1,13 +1,6 @@
 import { classify } from "~/detect/engine.ts"
 import type { Agent, AgentState } from "~/detect/manifest.ts"
-import {
-  capturePanes,
-  identifyAgents,
-  listPanes,
-  tmux,
-  type AgentPane,
-  type Pane,
-} from "~/detect/panes.ts"
+import { AgentCache, capturePanes, listPanes, tmux, type AgentPane } from "~/detect/panes.ts"
 
 /**
  * What the picker lists: one row per agent window across every session, with
@@ -155,38 +148,21 @@ export interface Collected {
   daemon: Daemon
 }
 
-const proc = (p: Pane) => `${p.pid}\x1f${p.command}`
 const seen = (p: AgentPane) => `${p.windowActivity}\x1f${p.oscTitle}`
 
 /**
  * Collects the rows once a second, doing as little as it can: a pane's agent
- * is looked up once (the `ps` behind it only reruns when its process
- * changes), and a pane is only captured again once its window has done
- * something since. It remembers each pane's last live state, too, so a rule
+ * is looked up when its command changes or its runtime cache expires, and a
+ * pane is only captured again once its window has done something since. It
+ * remembers each pane's last live state, too, so a rule
  * that says "leave the state alone" (a transcript viewer, a menu) can.
  */
 export class Collector {
-  /** pane → its agent, for the process it was running */
-  private agents = new Map<string, { proc: string; agent: Agent | null }>()
+  private agents = new AgentCache()
   /** pane → its last live state, and the window activity and title it was read at */
   private live = new Map<string, { seen: string; state: AgentState }>()
   /** pane → its Codex label, and the window activity it was read at */
   private labels = new Map<string, { seen: string; label: string }>()
-
-  private async identify(panes: Pane[]): Promise<AgentPane[]> {
-    const fresh = panes.filter((p) => this.agents.get(p.id)?.proc !== proc(p))
-    if (fresh.length) {
-      const found = new Map((await identifyAgents(fresh)).map((p) => [p.id, p.agent]))
-      for (const p of fresh)
-        this.agents.set(p.id, { proc: proc(p), agent: found.get(p.id) ?? null })
-    }
-    const live = new Set(panes.map((p) => p.id))
-    for (const id of this.agents.keys()) if (!live.has(id)) this.agents.delete(id)
-    return panes.flatMap((p) => {
-      const agent = this.agents.get(p.id)!.agent
-      return agent ? [{ ...p, agent }] : []
-    })
-  }
 
   async collect(): Promise<Collected> {
     const [panes, beat] = await Promise.all([
@@ -194,7 +170,7 @@ export class Collector {
       tmux("show-options", "-gqv", HEARTBEAT_OPTION),
     ])
     const daemon = daemonFrom(beat.out, Date.now() / 1000)
-    const agents = await this.identify(panes)
+    const agents = await this.agents.identify(panes)
     const classifying = agents.filter((p) => !trustsState(p.aiState, daemon))
     const reading = classifying.filter((p) => this.live.get(p.id)?.seen !== seen(p))
     const relabel = agents.filter(
