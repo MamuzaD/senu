@@ -383,17 +383,16 @@ export async function listAgentPanes(): Promise<AgentPane[]> {
  * `history` adds that many scrollback lines above it (the picker's Codex label
  * wants more), but classifying should use 0: rules anchor on the screen's top.
  */
-export async function capturePanes(ids: string[], history = 0): Promise<Map<string, string>> {
-  const screens = new Map<string, string>()
-  if (!ids.length) return screens
+const captureOne = (id: string, history = 0) => [
+  "capture-pane",
+  "-p",
+  "-t",
+  id,
+  ...(history > 0 ? ["-S", `-${history}`] : []),
+]
 
-  const capture = (id: string) => [
-    "capture-pane",
-    "-p",
-    "-t",
-    id,
-    ...(history > 0 ? ["-S", `-${history}`] : []),
-  ]
+/** The marker leaves out the `%` of the pane id: display-message runs its text through strftime, which eats `%1`. */
+export function captureArgs(ids: string[], history = 0): string[] {
   const args: string[] = []
   for (const id of ids)
     args.push(
@@ -402,20 +401,29 @@ export async function capturePanes(ids: string[], history = 0): Promise<Map<stri
       "-p",
       "-t",
       id,
-      `${SEP}senu ${id}${SEP}`,
+      `${SEP}senu ${id.slice(1)}${SEP}`,
       ";",
-      ...capture(id),
+      ...captureOne(id, history),
     )
-  const { out } = await tmux(...args)
+  return args
+}
 
-  const parts = out.split(new RegExp(`^${SEP}senu (%\\d+)${SEP}\\n`, "m"))
-  for (let i = 1; i + 1 < parts.length; i += 2) screens.set(parts[i]!, parts[i + 1]!)
+export function parseCaptures(out: string): Map<string, string> {
+  const screens = new Map<string, string>()
+  const parts = out.split(new RegExp(`^${SEP}senu (\\d+)${SEP}\\n`, "m"))
+  for (let i = 1; i + 1 < parts.length; i += 2) screens.set(`%${parts[i]}`, parts[i + 1]!)
+  return screens
+}
+
+export async function capturePanes(ids: string[], history = 0): Promise<Map<string, string>> {
+  if (!ids.length) return new Map()
+  const screens = parseCaptures((await tmux(...captureArgs(ids, history))).out)
 
   // tmux stops at the first failing command, so a pane that closed mid-poll hides the rest
   const missing = ids.filter((id) => !screens.has(id))
   if (missing.length) {
     const rest = await Promise.all(
-      missing.map(async (id) => [id, await tmux(...capture(id))] as const),
+      missing.map(async (id) => [id, await tmux(...captureOne(id, history))] as const),
     )
     for (const [id, r] of rest) if (r.ok) screens.set(id, r.out)
   }

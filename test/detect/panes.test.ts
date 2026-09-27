@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import type { Agent } from "~/detect/manifest.ts"
 import {
   AgentCache,
   agentFromArgv,
   agentFromProcess,
+  captureArgs,
+  parseCaptures,
   processArgv,
   type Pane,
 } from "~/detect/panes.ts"
@@ -169,5 +174,31 @@ test("processArgv preserves arguments containing spaces", async () => {
   } finally {
     proc.kill()
     await proc.exited
+  }
+})
+
+test.skipIf(!Bun.which("tmux"))("one chained capture returns every pane's screen", () => {
+  const dir = mkdtempSync(join(tmpdir(), "senu-capture-"))
+  const t = (...args: string[]) =>
+    Bun.spawnSync(["tmux", "-S", join(dir, "sock"), "-f", "/dev/null", ...args])
+  try {
+    t("new-session", "-d", "-s", "cap", "-x", "80", "-y", "10", "printf 'screen A\\n'; sleep 60")
+    t("new-window", "-d", "-t", "cap", "printf 'screen B\\n'; sleep 60")
+    const ids = t("list-panes", "-s", "-t", "cap", "-F", "#{pane_id}")
+      .stdout.toString()
+      .trim()
+      .split("\n")
+    expect(ids).toHaveLength(2)
+    let screens = new Map<string, string>()
+    for (let i = 0; i < 40 && ![...screens.values()].join().includes("screen B"); i++) {
+      screens = parseCaptures(t(...captureArgs(ids)).stdout.toString())
+      Bun.sleepSync(25)
+    }
+    expect([...screens.keys()]).toEqual(ids)
+    expect(screens.get(ids[0]!)).toStartWith("screen A\n")
+    expect(screens.get(ids[1]!)).toStartWith("screen B\n")
+  } finally {
+    t("kill-server")
+    rmSync(dir, { recursive: true, force: true })
   }
 })
