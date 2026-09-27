@@ -37,6 +37,39 @@ export interface Today {
   unpricedTokens: number
   /** the same, per model, costliest first (missing in totals cached before it was added) */
   models?: ModelDay[]
+  /** today, the last 7 days and the last 30, each ending today (missing in older totals) */
+  ranges?: RangeTotals[]
+}
+
+export type RangeDays = 1 | 7 | 30
+export const RANGE_DAYS: readonly RangeDays[] = [1, 7, 30]
+
+export interface RangeTotals {
+  days: RangeDays
+  tokens: number
+  /** input read from the cache */
+  cachedTokens: number
+  /** input sent fresh, cache writes included */
+  uncachedTokens: number
+  outputTokens: number
+  /** estimated USD, or null when there's no price table at all */
+  costUsd: number | null
+  /** what the cached input would have cost more at full input rates */
+  cacheSavingsUsd: number | null
+  unpricedTokens: number
+  /** transcript files with usage in the range, one per session */
+  sessions: number
+  models: ModelDay[]
+  /** oldest first: the hours of today for the one-day range, otherwise the days */
+  buckets: Bucket[]
+}
+
+export interface Bucket {
+  /** the local day as YYYY-MM-DD, or the hour ("00" to "23") in the one-day range */
+  label: string
+  tokens: number
+  /** USD for the priced tokens only */
+  costUsd: number
 }
 
 export interface ModelDay {
@@ -54,8 +87,9 @@ const RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 const RATES_TTL_SECONDS = 24 * 60 * 60
 const RATES_TIMEOUT_MS = 10_000
-const SCAN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
-const SCAN_CACHE_VERSION = 2
+const MAX_DAYS = 30
+const SCAN_RETENTION_MS = (MAX_DAYS + 1) * 24 * 60 * 60 * 1000
+const SCAN_CACHE_VERSION = 3
 
 const todayDir = join(cacheDir, "today")
 const totalsPath = (p: UsageProfile) => join(todayDir, `${profileKey(p)}.json`)
@@ -80,14 +114,19 @@ function readJson(path: string): unknown {
 
 const pad = (n: number) => String(n).padStart(2, "0")
 
-/** Returns local midnight in ms and the local date as YYYY-MM-DD. */
-export function localDay(at = new Date()): { startMs: number; day: string } {
+const dayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+
+function dayStart(at: Date, daysBack = 0): Date {
   const start = new Date(at)
   start.setHours(0, 0, 0, 0)
-  return {
-    startMs: start.getTime(),
-    day: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
-  }
+  start.setDate(start.getDate() - daysBack)
+  return start
+}
+
+/** Returns local midnight in ms and the local date as YYYY-MM-DD. */
+export function localDay(at = new Date()): { startMs: number; day: string } {
+  const start = dayStart(at)
+  return { startMs: start.getTime(), day: dayKey(start) }
 }
 
 /** USD per token, ordered as input, output, cache read, cache creation. */
@@ -293,7 +332,7 @@ interface FileEntry {
   gh: number
   /** Codex parser state at o, including the model and fork-history suppression state. */
   cs: CodexState | null
-  /** Retained usage records for the scanned day. */
+  /** Retained usage records for the scanned window. */
   r: UsageRecord[]
 }
 
@@ -477,13 +516,12 @@ function scanProfileFiles(p: UsageProfile, startMs: number): UsageRecord[][] {
   return perFile
 }
 
-function aggregateUsage(
-  perFile: UsageRecord[][],
-  kind: UsageProfile["kind"],
-): Map<string, [number, number, number, number]> {
+type FileRecord = [record: UsageRecord, fileIndex: number]
+
+function uniqueRecords(perFile: UsageRecord[][], kind: UsageProfile["kind"]): FileRecord[] {
   const seen = new Set<string>()
-  const byModel = new Map<string, [number, number, number, number]>()
-  for (const records of perFile) {
+  const unique: FileRecord[] = []
+  perFile.forEach((records, file) => {
     const occurrences = new Map<string, number>()
     for (const r of records) {
       let key = r[6]
@@ -497,50 +535,96 @@ function aggregateUsage(
         if (seen.has(key)) continue
         seen.add(key)
       }
-      const sum = byModel.get(r[1]) ?? [0, 0, 0, 0]
-      for (let i = 0; i < 4; i++) sum[i]! += r[2 + i] as number
-      byModel.set(r[1], sum)
+      unique.push([r, file])
     }
-  }
-  return byModel
+  })
+  return unique
 }
 
-/** Scans a profile's transcripts for the local day without updating its totals cache. */
-export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today> {
-  const { startMs, day } = localDay(at)
-  const ratesPromise = loadRates()
-  const byModel = aggregateUsage(scanProfileFiles(p, startMs), p.kind)
+function summarize(
+  records: FileRecord[],
+  rates: Rates | null,
+  days: RangeDays,
+  at: Date,
+): RangeTotals {
+  const startMs = dayStart(at, days - 1).getTime()
+  const labels =
+    days === 1
+      ? Array.from({ length: 24 }, (_, hour) => pad(hour))
+      : Array.from({ length: days }, (_, i) => dayKey(dayStart(at, days - 1 - i)))
+  const buckets: Bucket[] = labels.map((label) => ({ label, tokens: 0, costUsd: 0 }))
+  const bucketAt = new Map(labels.map((label, i) => [label, buckets[i]!]))
+  const rateOf = new Map<string, Rate | null>()
+  const byModel = new Map<string, ModelDay>()
+  const files = new Set<number>()
+  const sum = { tokens: 0, cached: 0, uncached: 0, output: 0, cost: 0, savings: 0, unpriced: 0 }
 
-  const rates = await ratesPromise
-  let tokens = 0
-  let cachedTokens = 0
-  let cost = 0
-  let unpricedTokens = 0
-  const models: ModelDay[] = []
-  for (const [model, [uncached, cached, creation, output]] of byModel) {
-    const total = uncached + cached + creation + output
-    if (!total) continue
-    tokens += total
-    cachedTokens += cached
-    const rate = rates ? lookupRate(rates, model) : null
-    if (!rate) {
-      unpricedTokens += total
-      models.push({ model, tokens: total, cachedTokens: cached, costUsd: null })
-      continue
+  for (const [[ts, model, uncached, cached, creation, output], file] of records) {
+    const tokens = uncached + cached + creation + output
+    if (ts < startMs || !tokens) continue
+    if (!rateOf.has(model)) rateOf.set(model, rates ? lookupRate(rates, model) : null)
+    const rate = rateOf.get(model)!
+    const cost = rate
+      ? uncached * rate[0] + cached * rate[2] + creation * rate[3] + output * rate[1]
+      : null
+
+    sum.tokens += tokens
+    sum.cached += cached
+    sum.uncached += uncached + creation
+    sum.output += output
+    if (rate) {
+      sum.cost += cost!
+      sum.savings += cached * (rate[0] - rate[2])
+    } else sum.unpriced += tokens
+    files.add(file)
+
+    const m = byModel.get(model) ?? { model, tokens: 0, cachedTokens: 0, costUsd: rate ? 0 : null }
+    m.tokens += tokens
+    m.cachedTokens += cached
+    if (cost != null) m.costUsd = (m.costUsd ?? 0) + cost
+    byModel.set(model, m)
+
+    const d = new Date(ts)
+    const bucket = bucketAt.get(days === 1 ? pad(d.getHours()) : dayKey(d))
+    if (bucket) {
+      bucket.tokens += tokens
+      bucket.costUsd += cost ?? 0
     }
-    const spent = uncached * rate[0] + cached * rate[2] + creation * rate[3] + output * rate[1]
-    cost += spent
-    models.push({ model, tokens: total, cachedTokens: cached, costUsd: spent })
   }
-  models.sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0) || b.tokens - a.tokens)
+
   return {
-    day,
+    days,
+    tokens: sum.tokens,
+    cachedTokens: sum.cached,
+    uncachedTokens: sum.uncached,
+    outputTokens: sum.output,
+    costUsd: rates ? sum.cost : null,
+    cacheSavingsUsd: rates ? sum.savings : null,
+    unpricedTokens: sum.unpriced,
+    sessions: files.size,
+    models: [...byModel.values()].toSorted(
+      (a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0) || b.tokens - a.tokens,
+    ),
+    buckets,
+  }
+}
+
+/** Scans a profile's transcripts for the last 30 days without updating its totals cache. */
+export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today> {
+  const ratesPromise = loadRates()
+  const records = uniqueRecords(scanProfileFiles(p, dayStart(at, MAX_DAYS - 1).getTime()), p.kind)
+  const rates = await ratesPromise
+  const ranges = RANGE_DAYS.map((days) => summarize(records, rates, days, at))
+  const today = ranges[0]!
+  return {
+    day: localDay(at).day,
     updatedAt: nowSeconds(),
-    tokens,
-    cachedTokens,
-    costUsd: rates ? cost : null,
-    unpricedTokens,
-    models,
+    tokens: today.tokens,
+    cachedTokens: today.cachedTokens,
+    costUsd: today.costUsd,
+    unpricedTokens: today.unpricedTokens,
+    models: today.models,
+    ranges,
   }
 }
 
@@ -551,7 +635,7 @@ export function readToday(p: UsageProfile, at = new Date()): Today | null {
 }
 
 export const todayIsFresh = (t: Today | null) =>
-  t?.models != null && nowSeconds() - t.updatedAt <= FRESH_TTL_SECONDS
+  t?.ranges != null && nowSeconds() - t.updatedAt <= FRESH_TTL_SECONDS
 
 export const claimTodayLock = (p: UsageProfile) => claimLockFile(lockPath(p), LOCK_TTL_SECONDS)
 

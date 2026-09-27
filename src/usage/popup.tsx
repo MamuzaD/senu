@@ -3,7 +3,8 @@ import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@op
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react"
 
 import type { UsageProfile, UsageScene } from "~/config.ts"
-import { sceneCols, type SceneTime } from "~/ui/desert.ts"
+import { CanvasView } from "~/ui/canvas.tsx"
+import { SCENE_ROWS, sceneCols, type SceneTime } from "~/ui/desert.ts"
 import { Line } from "~/ui/line.tsx"
 import {
   FPS,
@@ -20,6 +21,7 @@ import { Sky } from "~/ui/sky.tsx"
 import { brand, colors, icons, mix, noColor } from "~/ui/theme.ts"
 
 import { getSnapshot, readCache } from "./cache.ts"
+import { axisLine, stackedBars } from "./chart.ts"
 import {
   BAR_WIDTH,
   LABEL_WIDTH,
@@ -34,7 +36,16 @@ import {
   formatUntil,
   markCell,
 } from "./format.ts"
-import { readToday, spawnTodayRefresh, todayIsFresh, type Today } from "./today.ts"
+import {
+  RANGE_DAYS,
+  readToday,
+  spawnTodayRefresh,
+  todayIsFresh,
+  type Bucket,
+  type RangeDays,
+  type RangeTotals,
+  type Today,
+} from "./today.ts"
 import { errorSnapshot, nowSeconds, type Banked, type Snapshot, type Spend } from "./types.ts"
 
 const STALE_NOTICE_SECONDS = 10 * 60
@@ -303,93 +314,337 @@ export function sceneTime(scene: UsageScene, at = new Date()): SceneTime {
   return "night"
 }
 
-const MODEL_WIDTH = 22
-const TOP_MODELS = 3
+const RANGE_LABEL: Record<RangeDays, string> = { 1: "today", 7: "7d", 30: "30d" }
+export type Breakdown = "profile" | "model"
+export const BREAKDOWNS: readonly Breakdown[] = ["profile", "model"]
+const BREAKDOWN_LABEL: Record<Breakdown, string> = { profile: "by profile", model: "by model" }
+const COST_FIXED_ROWS = 9
+const GAP_ROWS = 1
+const FOOTER_ROWS = 1 + GAP_ROWS
+const MIN_CHART_ROWS = 3
+const MAX_CHART_ROWS = 12
+const MIN_BREAKDOWN_ROWS = 3
+const MAX_BREAKDOWN_ROWS = 6
+const SHARE_COLS = 7
+const VALUE_COLS = 10 + SHARE_COLS + 10
 
-const usd = (v: number | null) => (v == null ? "—" : `$${v.toFixed(2)}`)
+const money = (v: number | null) =>
+  v == null
+    ? "—"
+    : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+function percent(part: number, whole: number): string {
+  if (!(whole > 0)) return "—"
+  const share = Math.round((100 * part) / whole)
+  return share === 0 && part > 0 ? "<1%" : `${share}%`
+}
 const modelName = (m: string) => m.replace(/-\d{8}$/, "")
+const kindColor = (kind: UsageProfile["kind"]) => (kind === "codex" ? colors.codex : colors.claude)
+const kindTitle = (kind: UsageProfile["kind"]) =>
+  kind === "codex" ? `${icons.codex} Codex` : `${icons.claude} Claude`
 
-function CostSection({
-  profile,
-  plan,
-  today,
+function bucketLabel(label: string, days: RangeDays): string {
+  if (days === 1) return `${label}h`
+  const date = bucketDate(label)
+  return days === 7
+    ? `${date.toLocaleDateString("en-US", { weekday: "short" })} ${date.getDate()}`
+    : date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+}
+
+const bucketDate = (label: string) => {
+  const [y = 0, m = 1, d = 1] = label.split("-").map(Number)
+  return new Date(y, m - 1, d)
+}
+
+type AxisPick = (i: number, buckets: Bucket[]) => boolean
+const MIN_DAYS_BEFORE_TODAY = 3
+
+const everyNthHour =
+  (n: number): AxisPick =>
+  (i) =>
+    i % n === 0
+const everyNthDayBack =
+  (n: number): AxisPick =>
+  (i, b) =>
+    (b.length - 1 - i) % n === 0
+const mondaysAndToday =
+  (everyWeeks: number): AxisPick =>
+  (i, b) => {
+    const daysBack = b.length - 1 - i
+    if (daysBack === 0) return true
+    return (
+      bucketDate(b[i]!.label).getDay() === 1 &&
+      daysBack >= MIN_DAYS_BEFORE_TODAY &&
+      Math.round(daysBack / 7) % everyWeeks === 0
+    )
+  }
+
+const AXIS_PICKS: Record<RangeDays, AxisPick[]> = {
+  1: [3, 6, 12].map(everyNthHour),
+  7: [1, 2].map(everyNthDayBack),
+  30: [1, 2].map(mondaysAndToday),
+}
+
+function axis(buckets: Bucket[], days: RangeDays, width: number): string {
+  for (const pick of AXIS_PICKS[days]) {
+    const labels = buckets.map((b, i) => (pick(i, buckets) ? bucketLabel(b.label, days) : null))
+    const line = axisLine(labels, width)
+    if (line) return line
+  }
+  return ""
+}
+
+export function CostView({
+  profiles,
+  todays,
   watching,
+  days,
+  breakdown,
   dots,
   right,
+  rows,
 }: {
-  profile: UsageProfile
-  plan: string | null
-  today: Today | null
-  watching: boolean
+  profiles: UsageProfile[]
+  todays: (Today | null)[]
+  watching: boolean[]
+  days: RangeDays
+  breakdown: Breakdown
   dots: string
   right: number
+  rows: number
 }) {
-  const codex = profile.kind === "codex"
-  const title = `${codex ? icons.codex : icons.claude} ${codex ? "Codex" : "Claude"} · ${profile.name}`
-  const planText = plan ? ` · ${plan}` : ""
-  const age = today ? nowSeconds() - today.updatedAt : null
-  const fresh = watching
-    ? { text: `scanning${dots}`, fg: colors.warn }
-    : {
-        text:
-          age == null
-            ? "no transcripts today"
-            : `✓ scanned ${age < 60 ? "just now" : `${formatDuration(age)} ago`}`,
-        fg: colors.muted,
-      }
-  const pad = Math.max(
-    2,
-    right - HEADER.length - Bun.stringWidth(title) - planText.length - Bun.stringWidth(fresh.text),
-  )
-  const models = (today?.models ?? []).slice(0, TOP_MODELS)
-  const row = (name: string, cost: string, tokens: number, cached: number) => ({
-    name: (INDENT + name).padEnd(INDENT.length + MODEL_WIDTH).slice(0, INDENT.length + MODEL_WIDTH),
-    cost: cost.padStart(9),
-    tokens: formatTokens(tokens).padStart(8) + " tok",
-    cached: tokens ? `  ${Math.round((100 * cached) / tokens)}% cached` : "",
+  const totals = todays.map((t) => t?.ranges?.find((r) => r.days === days) ?? null)
+  const known = totals.filter((r): r is RangeTotals => r != null)
+  const sum = (pick: (r: RangeTotals) => number) => known.reduce((n, r) => n + pick(r), 0)
+  const priced = known.some((r) => r.costUsd != null)
+  const cost = priced ? sum((r) => r.costUsd ?? 0) : null
+  const tokens = sum((r) => r.tokens)
+  const unpriced = sum((r) => r.unpricedTokens)
+  const scanning = watching.some(Boolean)
+
+  const buckets = known[0]?.buckets ?? []
+  const stacks = buckets.map((_, i) => {
+    const stack = { lower: 0, upper: 0 }
+    totals.forEach((r, p) => {
+      const v = r?.buckets[i]?.costUsd ?? 0
+      if (profiles[p]!.kind === "codex") stack.lower += v
+      else stack.upper += v
+    })
+    return stack
   })
-  const total = today
-    ? row(
-        "Today",
-        `${usd(today.costUsd)}${today.unpricedTokens && today.costUsd != null ? "+" : ""}`,
-        today.tokens,
-        today.cachedTokens,
-      )
-    : null
+  const peak = Math.max(0, ...stacks.map((s) => s.lower + s.upper))
+
+  const models = new Map<
+    string,
+    {
+      kind: UsageProfile["kind"]
+      name: string
+      cost: number | null
+      tokens: number
+      usedBy: { profile: string; tokens: number }[]
+    }
+  >()
+  totals.forEach((r, p) => {
+    const { kind, name: profile } = profiles[p]!
+    for (const m of r?.models ?? []) {
+      const key = `${kind}:${modelName(m.model)}`
+      const held = models.get(key) ?? {
+        kind,
+        name: modelName(m.model),
+        cost: null,
+        tokens: 0,
+        usedBy: [],
+      }
+      held.tokens += m.tokens
+      if (m.costUsd != null) held.cost = (held.cost ?? 0) + m.costUsd
+      held.usedBy.push({ profile, tokens: m.tokens })
+      models.set(key, held)
+    }
+  })
+  const ranked = [...models.values()].toSorted(
+    (a, b) => (b.cost ?? 0) - (a.cost ?? 0) || b.tokens - a.tokens,
+  )
+
+  const idle = (r: RangeTotals | null) => r != null && r.tokens === 0
+  const active = profiles.flatMap((_, p) => (idle(totals[p] ?? null) ? [] : [p]))
+
+  const breakdownRows = Math.max(MIN_BREAKDOWN_ROWS, Math.min(MAX_BREAKDOWN_ROWS, profiles.length))
+  const chartRows = Math.max(
+    MIN_CHART_ROWS,
+    Math.min(MAX_CHART_ROWS, rows - COST_FIXED_ROWS - breakdownRows),
+  )
+  const contentWidth = right + 1 - 2 * INDENT.length
+  const chartWidth = contentWidth
+  const chart = stackedBars(stacks, chartWidth, chartRows, colors.codex, colors.claude)
+
+  const oldest = known.length ? Math.min(...todays.map((t) => t?.updatedAt ?? Infinity)) : null
+  const status = scanning
+    ? { text: `scanning${dots}`, fg: colors.warn }
+    : oldest == null || !Number.isFinite(oldest)
+      ? { text: "no transcripts", fg: colors.muted }
+      : {
+          text: `✓ scanned ${nowSeconds() - oldest < 60 ? "just now" : `${formatDuration(nowSeconds() - oldest)} ago`}`,
+          fg: colors.muted,
+        }
+
+  const nameWidth = contentWidth - VALUE_COLS
+  const valueCells = (costText: string, share: string, tok: string) =>
+    costText.padStart(10) + share.padStart(SHARE_COLS) + tok.padStart(10)
+
+  const tabsWidth = RANGE_DAYS.reduce((n, d) => n + RANGE_LABEL[d].length + 2, 0)
+  const switchWidth = BREAKDOWNS.reduce((n, b) => n + BREAKDOWN_LABEL[b].length + 2, 0)
+  const headline = money(cost) + (unpriced && cost != null ? "+" : "")
+  const detail = [
+    "API estimate",
+    `${sum((r) => r.sessions)} sessions`,
+    `${formatTokens(tokens)} tok`,
+    ...(unpriced ? [`${formatTokens(unpriced)} unpriced`] : []),
+  ].join(" · ")
+  const title = days === 1 ? "hourly cost" : "daily cost"
+  const peakText = peak ? `peak ${money(peak)}` : ""
+
   return (
     <box flexDirection="column" flexShrink={0}>
       <Line>
         {HEADER}
-        <span fg={codex ? colors.codex : colors.claude} attributes={TextAttributes.BOLD}>
-          {title}
-        </span>
-        {planText ? <span fg={colors.muted}>{planText}</span> : null}
-        {" ".repeat(pad)}
-        <span fg={fresh.fg}>{fresh.text}</span>
-      </Line>
-      {today && !today.tokens ? (
-        <Line fg={colors.dim}>{`${INDENT}nothing yet today`}</Line>
-      ) : total ? (
-        <Line>
-          {total.name}
-          <span fg={brand.papyrus} attributes={TextAttributes.BOLD}>
-            {total.cost}
+        {RANGE_DAYS.map((d) => (
+          <span key={d}>
+            {" "}
+            {d === days ? (
+              <span fg={brand.papyrus} attributes={TextAttributes.BOLD | TextAttributes.UNDERLINE}>
+                {RANGE_LABEL[d]}
+              </span>
+            ) : (
+              <span fg={colors.dim}>{RANGE_LABEL[d]}</span>
+            )}{" "}
           </span>
-          <span fg={colors.fg}>{total.tokens}</span>
-          <span fg={colors.muted}>{total.cached}</span>
-        </Line>
-      ) : null}
-      {models.map((m) => {
-        const r = row(`  ${modelName(m.model)}`, usd(m.costUsd), m.tokens, m.cachedTokens)
-        return (
-          <Line key={m.model}>
-            <span fg={colors.muted}>{r.name}</span>
-            <span fg={colors.muted}>{r.cost}</span>
-            <span fg={colors.dim}>{r.tokens}</span>
-            <span fg={colors.dim}>{r.cached}</span>
+        ))}
+        {" ".repeat(Math.max(2, right - HEADER.length - tabsWidth - Bun.stringWidth(status.text)))}
+        <span fg={status.fg}>{status.text}</span>
+      </Line>
+      <Line>
+        {HEADER}
+        <span fg={brand.papyrus} attributes={TextAttributes.BOLD}>
+          {headline}
+        </span>
+        <span fg={colors.muted}>{`  ${detail}`}</span>
+      </Line>
+      <Line> </Line>
+      <Line>
+        {INDENT}
+        <span fg={colors.muted}>{title}</span>
+        {" ".repeat(Math.max(2, chartWidth - title.length - peakText.length))}
+        <span fg={colors.dim}>{peakText}</span>
+      </Line>
+      {peak ? (
+        <box flexDirection="row" flexShrink={0}>
+          <text>{INDENT}</text>
+          <CanvasView canvas={chart} />
+        </box>
+      ) : (
+        Array.from({ length: chartRows }, (_, i) => (
+          <Line key={i} fg={colors.dim}>
+            {i === Math.floor(chartRows / 2)
+              ? `${INDENT}${scanning ? `scanning${dots}` : "no usage in this range"}`
+              : " "}
           </Line>
-        )
-      })}
+        ))
+      )}
+      <Line fg={colors.dim}>
+        {INDENT}
+        {axis(buckets, days, chartWidth)}
+      </Line>
+      <Line> </Line>
+      <Line>
+        {" ".repeat(INDENT.length - 1)}
+        {BREAKDOWNS.map((b) => (
+          <span key={b}>
+            {" "}
+            {b === breakdown ? (
+              <span fg={brand.papyrus} attributes={TextAttributes.BOLD | TextAttributes.UNDERLINE}>
+                {BREAKDOWN_LABEL[b]}
+              </span>
+            ) : (
+              <span fg={colors.dim}>{BREAKDOWN_LABEL[b]}</span>
+            )}{" "}
+          </span>
+        ))}
+        <span fg={colors.dim}>
+          {" ".repeat(Math.max(1, nameWidth - switchWidth + 1))}
+          {valueCells("cost", "share", "tokens")}
+        </span>
+      </Line>
+      {breakdown === "profile"
+        ? active.slice(0, breakdownRows).map((p) => {
+            const profile = profiles[p]!
+            const r = totals[p]
+            const name = `${kindTitle(profile.kind)} · ${profile.name}`
+            const pad = " ".repeat(Math.max(1, nameWidth - Bun.stringWidth(name) - 2))
+            return (
+              <Line key={`${profile.kind}:${profile.name}`}>
+                {INDENT}
+                <span fg={kindColor(profile.kind)}>{`● ${name}`}</span>
+                {pad}
+                {r ? (
+                  <>
+                    <span fg={colors.fg}>{money(r.costUsd).padStart(10)}</span>
+                    <span fg={colors.muted}>
+                      {percent(r.costUsd ?? 0, cost ?? 0).padStart(SHARE_COLS)}
+                    </span>
+                    <span fg={colors.dim}>{`${formatTokens(r.tokens)} tok`.padStart(10)}</span>
+                  </>
+                ) : (
+                  <span fg={colors.muted}>
+                    {(watching[p] ? `scanning${dots}` : "—").padStart(VALUE_COLS)}
+                  </span>
+                )}
+              </Line>
+            )
+          })
+        : ranked.slice(0, breakdownRows).map((m) => {
+            const tag = m.usedBy
+              .toSorted((a, b) => b.tokens - a.tokens)
+              .map((b) => b.profile)
+              .join(" · ")
+            const room = nameWidth - 2
+            const name = m.name.length > room ? `${m.name.slice(0, room - 1)}…` : m.name
+            const tagText = tag && name.length + 2 + tag.length <= room ? `  ${tag}` : ""
+            return (
+              <Line key={`${m.kind}:${m.name}`}>
+                {INDENT}
+                <span fg={kindColor(m.kind)}>● </span>
+                <span fg={colors.muted}>{name}</span>
+                <span fg={colors.dim}>{tagText.padEnd(room - name.length)}</span>
+                <span fg={colors.fg}>
+                  {(m.cost == null ? "unpriced" : money(m.cost)).padStart(10)}
+                </span>
+                <span fg={colors.muted}>
+                  {(m.cost == null ? "—" : percent(m.cost, cost ?? 0)).padStart(SHARE_COLS)}
+                </span>
+                <span fg={colors.dim}>{`${formatTokens(m.tokens)} tok`.padStart(10)}</span>
+              </Line>
+            )
+          })}
+      {Array.from(
+        {
+          length: Math.max(
+            0,
+            breakdownRows - (breakdown === "profile" ? active.length : ranked.length),
+          ),
+        },
+        (_, i) => (
+          <Line key={`pad${i}`}> </Line>
+        ),
+      )}
+      <Line> </Line>
+      <Line fg={colors.muted}>
+        {INDENT}
+        {[
+          `cached ${formatTokens(sum((r) => r.cachedTokens))}`,
+          `uncached ${formatTokens(sum((r) => r.uncachedTokens))}`,
+          `output ${formatTokens(sum((r) => r.outputTokens))}`,
+          `cache saved ${money(priced ? sum((r) => r.cacheSavingsUsd ?? 0) : null)}`,
+        ].join(" · ")}
+      </Line>
     </box>
   )
 }
@@ -490,11 +745,19 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   useEffect(() => checkCache(), [tick])
 
   const [view, setView] = useState<View>("limits")
+  const [range, setRange] = useState(0)
+  const [breakdown, setBreakdown] = useState<Breakdown>("profile")
   useKeyboard((key) => {
-    if (key.name === "c" || key.name === "t") setView("cost")
-    else if (key.name === "l") setView("limits")
-    else if (key.name === "tab") setView((v) => (v === "limits" ? "cost" : "limits"))
-    else renderer.destroy()
+    const k = key.name
+    const back = k === "h" || k === "left" || key.sequence === "["
+    if (view === "cost" && (back || k === "l" || k === "right" || key.sequence === "]")) {
+      const step = back ? RANGE_DAYS.length - 1 : 1
+      setRange((r) => (r + step) % RANGE_DAYS.length)
+    } else if (view === "cost" && (k === "j" || k === "k" || k === "down" || k === "up")) {
+      setBreakdown((b) => (b === "profile" ? "model" : "profile"))
+    } else if (k === "c" || k === "t") setView("cost")
+    else if (k === "tab") setView((v) => (v === "limits" ? "cost" : "limits"))
+    else if (k === "q" || k === "escape") renderer.destroy()
   })
 
   const t = now()
@@ -532,14 +795,15 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
       ? "senu keeps watch"
       : "senu comes in to land"
   const hint =
-    view === "limits" ? "c cost · any other key closes" : "l limits · any other key closes"
+    view === "limits" ? "c cost · q quit" : "←/→ range · ↑/↓ breakdown · tab limits · q quit"
+  const costRows = height - (noColor ? 0 : SCENE_ROWS + GAP_ROWS) - FOOTER_ROWS
 
   return (
     <box flexDirection="column" height={height} gap={1}>
       <box flexDirection="column" gap={1} flexGrow={1} flexShrink={1} overflow="hidden">
         {noColor ? null : <Sky plan={plan} width={width} />}
-        {profiles.map((profile, i) =>
-          view === "limits" ? (
+        {view === "limits" ? (
+          profiles.map((profile, i) => (
             <ProfileSection
               key={`${profile.kind}:${profile.name}`}
               profile={profile}
@@ -548,17 +812,18 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
               fillFrom={fillFrom[i]!}
               right={right}
             />
-          ) : (
-            <CostSection
-              key={`${profile.kind}:${profile.name}`}
-              profile={profile}
-              plan={sections[i]!.snapshot?.planType ?? null}
-              today={todays[i] ?? null}
-              watching={watchingToday[i]!}
-              dots={dots}
-              right={right}
-            />
-          ),
+          ))
+        ) : (
+          <CostView
+            profiles={profiles}
+            todays={todays}
+            watching={watchingToday}
+            days={RANGE_DAYS[range]!}
+            breakdown={breakdown}
+            dots={dots}
+            right={right}
+            rows={costRows}
+          />
         )}
       </box>
       <Line>
