@@ -71,7 +71,38 @@ export function setTmuxSocket(args: string[]) {
 export const tmux = (...args: string[]) => run(["tmux", ...socketArgs, ...args])
 
 export async function listPanes(): Promise<Pane[]> {
-  const { out } = await tmux("list-panes", "-a", "-F", FORMAT)
+  const { out } = await tmux(...listArgs([]))
+  return parsePanes(out)
+}
+
+const listArgs = (silent: string[][]) => [
+  ...silent.flatMap((c) => [...c, ";"]),
+  "list-panes",
+  "-a",
+  "-F",
+  FORMAT,
+]
+
+/**
+ * `listPanes`, with `ids` captured in the same tmux call (the panes a caller expects to
+ * read, e.g. last poll's agents). A pane that has gone stops tmux's chain, so the
+ * screens may miss some `ids`; the listing, which runs first, is always whole.
+ */
+export async function listPanesWithCaptures(
+  silent: string[][],
+  ids: string[],
+): Promise<{ panes: Pane[]; screens: Map<string, string> }> {
+  const args = listArgs(silent)
+  if (ids.length) args.push(";", ...captureArgs(ids.slice(0, MAX_CHAINED)))
+  const { out } = await tmux(...args)
+  const at = out.search(CAPTURE_MARK)
+  return {
+    panes: parsePanes(at < 0 ? out : out.slice(0, at)),
+    screens: at < 0 ? new Map() : parseCaptures(out.slice(at)),
+  }
+}
+
+function parsePanes(out: string): Pane[] {
   const panes: Pane[] = []
   for (const line of out.split("\n")) {
     const f = line.split(SEP)
@@ -383,6 +414,10 @@ export async function listAgentPanes(): Promise<AgentPane[]> {
  * `history` adds that many scrollback lines above it (the picker's Codex label
  * wants more), but classifying should use 0: rules anchor on the screen's top.
  */
+const CAPTURE_MARK = new RegExp(`^${SEP}senu \\d+${SEP}$`, "m")
+/** Captures per tmux call: ~60 bytes each keeps a call well under tmux's ~16 KB limit. */
+const MAX_CHAINED = 100
+
 const captureOne = (id: string, history = 0) => [
   "capture-pane",
   "-p",
@@ -416,8 +451,12 @@ export function parseCaptures(out: string): Map<string, string> {
 }
 
 export async function capturePanes(ids: string[], history = 0): Promise<Map<string, string>> {
-  if (!ids.length) return new Map()
-  const screens = parseCaptures((await tmux(...captureArgs(ids, history))).out)
+  const screens = new Map<string, string>()
+  for (let i = 0; i < ids.length; i += MAX_CHAINED) {
+    const chunk = ids.slice(i, i + MAX_CHAINED)
+    for (const [id, screen] of parseCaptures((await tmux(...captureArgs(chunk, history))).out))
+      screens.set(id, screen)
+  }
 
   // tmux stops at the first failing command, so a pane that closed mid-poll hides the rest
   const missing = ids.filter((id) => !screens.has(id))

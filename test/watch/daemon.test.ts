@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -170,5 +170,148 @@ describe("claimPidFile", () => {
     writeFileSync(path, `${process.pid}\n`)
     releasePidFile(path)
     expect(() => readFileSync(path)).toThrow()
+  })
+})
+
+describe("tmux calls per poll", () => {
+  const working = new URL("../fixtures/detect/claude-working-screen.screen", import.meta.url)
+    .pathname
+  let dir: string
+  const setPanes = (ids: string[]) => writeFileSync(join(dir, "panes.json"), JSON.stringify(ids))
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "senu-fake-tmux-"))
+    setPanes(["%1"])
+    writeFileSync(
+      join(dir, "tmux"),
+      `#!/usr/bin/env bun
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs"
+const dir = ${JSON.stringify(dir)}
+const args = process.argv.slice(2)
+appendFileSync(dir + "/calls", args.join(" ") + "\\n")
+const panes: string[] = JSON.parse(readFileSync(dir + "/panes.json", "utf8"))
+const statePath = dir + "/state.json"
+const state: Record<string, string> = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {}
+const win = (id: string) => "@" + id.slice(1)
+const cmds: string[][] = [[]]
+for (const a of args) a === ";" ? cmds.push([]) : cmds.at(-1)!.push(a)
+let out = ""
+let code = 0
+for (const c of cmds) {
+  const target = c[c.indexOf("-t") + 1] ?? ""
+  if (c[0] === "list-panes")
+    for (const id of panes)
+      out += [id, "123", "claude", "1", "main", "0", win(id), "0", "agent", "1", "0", state[win(id)] ?? "", "host", "host", "host"].join("\\x1f") + "\\n"
+  // Like tmux: display-message tolerates a gone target, capture-pane fails and stops the chain.
+  else if (c[0] === "capture-pane" && !panes.includes(target)) { code = 1; break }
+  else if (c[0] === "display-message") out += c.at(-1) + "\\n"
+  else if (c[0] === "capture-pane") out += readFileSync(${JSON.stringify(working)}, "utf8")
+  else if (c[0] === "set-option" && c.includes("@ai_state")) {
+    if (existsSync(dir + "/fail-writes")) { code = 1; break }
+    state[target] = c.at(-1)!
+  }
+}
+writeFileSync(statePath, JSON.stringify(state))
+process.stdout.write(out)
+process.exit(code)
+`,
+    )
+    chmodSync(join(dir, "tmux"), 0o755)
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  // A child process, since Bun resolves binaries with the PATH it started with.
+  const polls = (between: Record<number, string[]>, count: number, dry = false, hook = "") => {
+    const script = join(dir, "poll.ts")
+    const daemon = new URL("../../src/watch/daemon.ts", import.meta.url).pathname
+    writeFileSync(
+      script,
+      `import { appendFileSync, rmSync, writeFileSync } from "node:fs"
+import { Watcher } from ${JSON.stringify(daemon)}
+const between: Record<number, string[]> = ${JSON.stringify(between)}
+const w = new Watcher()
+for (let i = 0; i < ${count}; i++) {
+  if (between[i]) writeFileSync(${JSON.stringify(join(dir, "panes.json"))}, JSON.stringify(between[i]))
+  ${hook}
+  await w.tick(true, i * 1000, ${dry}).catch(() => {})
+  appendFileSync(${JSON.stringify(join(dir, "calls"))}, "--\\n")
+}`,
+    )
+    const run = Bun.spawnSync(["bun", script], {
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, TMUX: "", TMUX_TMPDIR: dir },
+      stderr: "pipe",
+    })
+    if (run.exitCode !== 0) throw new Error(run.stderr.toString())
+    const byPoll = readFileSync(join(dir, "calls"), "utf8").split("--\n").slice(0, count)
+    return byPoll.map((p) => p.trim().split("\n").filter(Boolean))
+  }
+  const state = () => JSON.parse(readFileSync(join(dir, "state.json"), "utf8"))
+
+  test("a steady poll is one tmux call: heartbeat, listing, and last poll's agents", () => {
+    const [first, second] = polls({}, 2)
+    expect(first![0]).toMatch(/^set-option -g @ai_watch_heartbeat \d+ ; list-panes -a -F \S+$/)
+    expect(first![1]).toContain("capture-pane -p -t %1")
+    expect(first![2]).toBe("set-option -w -t @1 @ai_state working")
+    expect(first).toHaveLength(3)
+    expect(second).toHaveLength(1)
+    expect(second![0]).toMatch(
+      /^set-option -g @ai_watch_heartbeat \d+ ; list-panes -a -F \S+ ; display-message -p -t %1 .* ; capture-pane -p -t %1$/,
+    )
+  })
+
+  test("a new agent pane is captured and classified in the poll that lists it", () => {
+    const [, second] = polls({ 1: ["%1", "%2"] }, 2)
+    expect(second![0]).toContain("capture-pane -p -t %1")
+    expect(second![0]).not.toContain("%2")
+    expect(second![1]).toContain("capture-pane -p -t %2")
+    expect(state()["@2"]).toBe("working")
+  })
+
+  test("a pane gone since last poll does not cost the others their screens that poll", () => {
+    const [, second] = polls({ 0: ["%1", "%2", "%3"], 1: ["%2", "%3"] }, 2)
+    expect(second![0]).toMatch(/^set-option -g @ai_watch_heartbeat .* capture-pane -p -t %1 ; /)
+    expect(second!.slice(1).join("\n")).toContain("capture-pane -p -t %2")
+    expect(second!.slice(1).join("\n")).toContain("capture-pane -p -t %3")
+    expect(state()).toEqual({ "@1": "working", "@2": "working", "@3": "working" })
+  })
+
+  test("after a poll that failed partway, the next one sends no heartbeat", () => {
+    const hook = `w.realIdentify ??= w.identified.identify.bind(w.identified)
+  w.identified.identify = i === 0 ? () => Promise.reject(new Error("boom")) : w.realIdentify`
+    const [first, second, third] = polls({}, 3, false, hook)
+    expect(first![0]).toMatch(/^set-option -g @ai_watch_heartbeat /)
+    expect(first).toHaveLength(1)
+    expect(second![0]).toMatch(/^list-panes -a -F /)
+    expect(third![0]).toMatch(/^set-option -g @ai_watch_heartbeat /)
+  })
+
+  test("failed state writes keep the heartbeat back until a poll's writes land", () => {
+    const flag = JSON.stringify(join(dir, "fail-writes"))
+    const hook = `if (i === 0) writeFileSync(${flag}, "")
+  if (i === 2) rmSync(${flag})`
+    const [first, second, third, fourth] = polls({}, 4, false, hook)
+    expect(first![0]).toMatch(/^set-option -g @ai_watch_heartbeat /)
+    expect(second![0]).toMatch(/^list-panes /)
+    expect(third![0]).toMatch(/^list-panes /)
+    expect(third!.at(-1)).toBe("set-option -w -t @1 @ai_state working")
+    expect(fourth![0]).toMatch(/^set-option -g @ai_watch_heartbeat /)
+    expect(state()).toEqual({ "@1": "working" })
+  })
+
+  test("a poll with many agents keeps each tmux call under tmux's command size limit", () => {
+    const ids = Array.from({ length: 150 }, (_, i) => `%${i + 1}`)
+    const [first, second] = polls({ 0: ids }, 2)
+    const writes = first!.filter((call) => call.includes("@ai_state working"))
+    expect(writes.map((call) => call.split("@ai_state").length - 1)).toEqual([100, 50])
+    const count = (call: string) => call.split("capture-pane").length - 1
+    expect(count(second![0]!)).toBe(100)
+    expect(count(second![1]!)).toBe(50)
+    expect(second).toHaveLength(2)
+    expect(Object.keys(state())).toHaveLength(150)
+  })
+
+  test("a dry poll writes nothing", () => {
+    const calls = polls({}, 2, true)
+    expect(calls.flat().some((c) => c.includes("set-option"))).toBe(false)
+    expect(calls[1]).toHaveLength(1)
   })
 })

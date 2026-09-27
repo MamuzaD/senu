@@ -9,6 +9,7 @@ import {
   AgentCache,
   capturePanes,
   listPanes,
+  listPanesWithCaptures,
   tmux,
   type AgentPane,
   type Pane,
@@ -50,9 +51,17 @@ export function optionCommands(
   return cmds
 }
 
-export async function tmuxBatch(cmds: string[][]) {
-  if (!cmds.length) return
-  await tmux(...cmds.flatMap((c, i) => (i ? [";", ...c] : c)))
+/** Commands per tmux call: past tmux's ~16 KB command size the whole call fails. */
+const MAX_BATCH = 100
+
+export async function tmuxBatch(cmds: string[][]): Promise<boolean> {
+  let ok = true
+  for (let i = 0; i < cmds.length; i += MAX_BATCH) {
+    const args: string[] = []
+    for (const cmd of cmds.slice(i, i + MAX_BATCH)) args.push(...(args.length ? [";"] : []), ...cmd)
+    if (!(await tmux(...args)).ok) ok = false
+  }
+  return ok
 }
 
 const currentStates = (panes: Pane[]) => new Map(panes.map((p) => [p.windowId, p.aiState]))
@@ -74,6 +83,7 @@ export class Watcher {
   private identified = new AgentCache()
   private windows = new Map<string, WindowTrack>()
   private stamp = manifestStamp()
+  private healthy = true
 
   get pending(): boolean {
     for (const t of this.panes.values()) if (isPending(t)) return true
@@ -93,8 +103,25 @@ export class Watcher {
    * Returns false if tmux had no panes.
    */
   async tick(full: boolean, now = Date.now(), dry = false): Promise<boolean> {
-    const all = await listPanes()
-    if (!all.length) return false
+    const beat = !dry && this.healthy
+    this.healthy = false
+    const { found, healthy } = await this.poll(full, now, dry, beat)
+    this.healthy = healthy
+    return found
+  }
+
+  private async poll(
+    full: boolean,
+    now: number,
+    dry: boolean,
+    beat: boolean,
+  ): Promise<{ found: boolean; healthy: boolean }> {
+    const heartbeat = ["set-option", "-g", HEARTBEAT_OPTION, String(Math.floor(Date.now() / 1000))]
+    const expected = [...this.agents.keys()].filter(
+      (id) => full || (this.panes.has(id) && isPending(this.panes.get(id)!)),
+    )
+    const { panes: all, screens } = await listPanesWithCaptures(beat ? [heartbeat] : [], expected)
+    if (!all.length) return { found: false, healthy: true }
 
     let agentPanes: AgentPane[]
     if (full) {
@@ -115,7 +142,8 @@ export class Watcher {
     const toRead = full
       ? agentPanes
       : agentPanes.filter((p) => this.panes.has(p.id) && isPending(this.panes.get(p.id)!))
-    const screens = await capturePanes(toRead.map((p) => p.id))
+    const missed = toRead.map((p) => p.id).filter((id) => !screens.has(id))
+    for (const [id, screen] of await capturePanes(missed)) screens.set(id, screen)
     for (const p of toRead) {
       const screen = screens.get(p.id)
       if (screen === undefined) continue
@@ -135,13 +163,10 @@ export class Watcher {
     }
 
     const { display, sounds } = step(this.windows, [...byWindow.values()])
-    if (dry) return true
-    await tmuxBatch([
-      ...optionCommands(currentStates(all), display),
-      ["set-option", "-g", HEARTBEAT_OPTION, String(Math.floor(Date.now() / 1000))],
-    ])
+    if (dry) return { found: true, healthy: true }
+    const wrote = await tmuxBatch(optionCommands(currentStates(all), display))
     if (sounds.length) await chime(sounds)
-    return true
+    return { found: true, healthy: wrote }
   }
 
   snapshot(): { panes: Map<string, PaneTrack>; windows: Map<string, WindowTrack> } {
