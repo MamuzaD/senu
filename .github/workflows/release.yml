@@ -37,7 +37,7 @@ jobs:
 
       - name: Build
         run: |
-          bun build --compile --minify --sourcemap src/cli.ts \
+          bun build --compile --bytecode --format=esm --minify --sourcemap src/cli.ts \
             --target "bun-${{ matrix.target }}" --outfile "dist/senu-${{ matrix.target }}"
           "dist/senu-${{ matrix.target }}" --help > /dev/null
 

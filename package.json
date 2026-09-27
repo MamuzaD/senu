@@ -8,7 +8,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "build": "bun build --compile src/cli.ts --outfile dist/senu",
+    "build": "bun build --compile --bytecode --format=esm src/cli.ts --outfile dist/senu",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
