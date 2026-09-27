@@ -1,0 +1,54 @@
+name: Manifests
+
+# Keeps the bundled detection manifests in step with herdr's published ones,
+# the way `senu scout manifest refresh` does for installed copies.
+
+on:
+  schedule:
+    # Daily; off the hour, when scheduled jobs are busiest.
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: manifests
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync with herdr
+    if: github.repository == 'MamuzaD/senu'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup
+
+      - name: Sync manifests
+        run: bun run manifests:sync
+
+      # PRs opened with GITHUB_TOKEN don't trigger CI, so the tests run here
+      # and their result goes in the PR body.
+      - name: Test
+        id: test
+        continue-on-error: true
+        run: bun test
+
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: chore/sync-manifests
+          delete-branch: true
+          add-paths: src/detect/manifests/
+          commit-message: "chore: sync detection manifests with herdr"
+          title: "chore: sync detection manifests with herdr"
+          body: |
+            herdr published new detection manifests; this updates the bundled copies.
+
+            Tests with the new manifests: **${{ steps.test.outcome }}**. A failure
+            usually means the detection tests need updating for the new rules.

@@ -34,5 +34,6 @@
     "oxlint": "^1.85.0",
     "oxlint-tsgolint": "^7.0.2003",
     "typescript": "^5"
-  }
+  },
+  "packageManager": "bun@1.4.2"
 }
