@@ -70,8 +70,8 @@ function modelWeeks(data: any): Limit[] {
   const present = Object.entries(MODEL_WEEKS)
     .filter(([key]) => typeof data?.[key]?.utilization === "number")
     .map(([key, label]) => toLimit(label, data[key], 7 * 24 * HOUR_MS))
-  const kept = [...present].sort((a, b) => a.left! - b.left!).slice(0, MAX_MODEL_ROWS)
-  return present.filter((l) => kept.includes(l))
+  const kept = new Set(present.toSorted((a, b) => a.left! - b.left!).slice(0, MAX_MODEL_ROWS))
+  return present.filter((l) => kept.has(l))
 }
 
 export async function fetchClaude(configDir: string): Promise<Snapshot> {

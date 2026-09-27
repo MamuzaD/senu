@@ -64,7 +64,7 @@ async function run(argv: string[]): Promise<{ ok: boolean; out: string }> {
 let socketArgs: string[] = []
 
 /** Pass tmux socket selectors (`-L name` or `-S path`); an empty list leaves socket selection to tmux. */
-export function useTmuxSocket(args: string[]) {
+export function setTmuxSocket(args: string[]) {
   socketArgs = args
 }
 
@@ -150,8 +150,7 @@ function baseName(token: string): string {
     token
       .replace(/^["']+|["']+$/g, "")
       .split(/[/\\]/)
-      .filter(Boolean)
-      .pop() ?? ""
+      .findLast(Boolean) ?? ""
   return base.toLowerCase().replace(/\.(exe|cmd|bat|ps1|js)$/, "")
 }
 

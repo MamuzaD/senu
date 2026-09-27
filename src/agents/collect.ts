@@ -40,7 +40,7 @@ export interface AgentRow {
 
 /** An `@ai_state` value, or null when there's none (or it's not one senu writes). */
 export function attentionOf(raw: string): Attention | null {
-  return raw in PRIORITY ? (raw as Attention) : null
+  return Object.hasOwn(PRIORITY, raw) ? (raw as Attention) : null
 }
 
 /** A live classification as the picker shows it. Codex's settled screen is `unknown`, which is idle. */
@@ -124,7 +124,7 @@ export function labelFor(p: AgentPane, screen: string | null): string {
 
 /** Rank rows: attention first, then the most recent activity. */
 export function sortRows<T extends { state: Attention; activity: number }>(rows: T[]): T[] {
-  return [...rows].sort((a, b) => PRIORITY[b.state] - PRIORITY[a.state] || b.activity - a.activity)
+  return rows.toSorted((a, b) => PRIORITY[b.state] - PRIORITY[a.state] || b.activity - a.activity)
 }
 
 /**
@@ -155,6 +155,9 @@ export interface Collected {
   daemon: Daemon
 }
 
+const proc = (p: Pane) => `${p.pid}\x1f${p.command}`
+const seen = (p: AgentPane) => `${p.windowActivity}\x1f${p.oscTitle}`
+
 /**
  * Collects the rows once a second, doing as little as it can: a pane's agent
  * is looked up once (the `ps` behind it only reruns when its process
@@ -171,7 +174,6 @@ export class Collector {
   private labels = new Map<string, { seen: string; label: string }>()
 
   private async identify(panes: Pane[]): Promise<AgentPane[]> {
-    const proc = (p: Pane) => `${p.pid}\x1f${p.command}`
     const fresh = panes.filter((p) => this.agents.get(p.id)?.proc !== proc(p))
     if (fresh.length) {
       const found = new Map((await identifyAgents(fresh)).map((p) => [p.id, p.agent]))
@@ -193,8 +195,6 @@ export class Collector {
     ])
     const daemon = daemonFrom(beat.out, Date.now() / 1000)
     const agents = await this.identify(panes)
-    const seen = (p: AgentPane) => `${p.windowActivity}\x1f${p.oscTitle}`
-
     const classifying = agents.filter((p) => !trustsState(p.aiState, daemon))
     const reading = classifying.filter((p) => this.live.get(p.id)?.seen !== seen(p))
     const relabel = agents.filter(

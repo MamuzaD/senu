@@ -24,6 +24,7 @@ const SWEEP = ["...www....", ".hhwwwwww.", "hh..www..."]
 function spritePixels(rows: string[], ox: number, oy: number): [number, number, boolean][] {
   const out: [number, number, boolean][] = []
   rows.forEach((row, j) =>
+    // oxlint-disable-next-line typescript/no-misused-spread -- sprite rows are ASCII
     [...row].forEach((ch, i) => ch !== "." && out.push([i - ox, j - oy, ch === "w"])),
   )
   return out

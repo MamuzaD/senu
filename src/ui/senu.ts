@@ -66,14 +66,6 @@ function wingbeat(t: number) {
   return Math.sin(t / 700) * 0.12
 }
 
-const hermite = (p0: number, v0: number, p1: number, v1: number, u: number) => {
-  const u2 = u * u
-  const u3 = u2 * u
-  return (
-    (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * v0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * v1
-  )
-}
-
 const PERCH_DOTS = { x: PERCH.x * 2 + 1, y: PERCH.y * 2 }
 const FLARE_FROM = { x: PERCH_DOTS.x + 2, y: PERCH_DOTS.y - 4 }
 
@@ -177,10 +169,11 @@ export function flyingPixels(span: number, flap: number): [number, number, boole
   const size = span >= 6 ? "near" : span >= 4 ? "mid" : "far"
   const pose = flap < -0.4 ? "up" : flap > 0.4 ? "down" : Math.abs(flap) > 0.16 ? "level" : "glide"
   const rows = FLYING[size][pose]
-  const half = (rows[0]!.length - 1) / 2
+  const half = (rows[0].length - 1) / 2
   const oy = Math.min(ORIGIN[pose], rows.length - 1)
   const out: [number, number, boolean][] = []
   rows.forEach((row, j) =>
+    // oxlint-disable-next-line typescript/no-misused-spread -- sprite rows are ASCII
     [...row].forEach((ch, i) => ch === "#" && out.push([i - half, j - oy, false])),
   )
   return out
@@ -227,6 +220,7 @@ export function landingPixels(pose: LandingPose, facing: 1 | -1): [number, numbe
   })
   const out: [number, number, boolean][] = []
   rows.forEach((row, j) =>
+    // oxlint-disable-next-line typescript/no-misused-spread -- sprite rows are ASCII
     [...row].forEach(
       (ch, i) => ch !== "." && out.push([(i - ox) * facing, j - oy, ch === "w" || ch === "O"]),
     ),
@@ -424,7 +418,10 @@ function isBacklit(scene: Desert, bird: Bird, time: SceneTime): boolean {
   let n = 0
   for (const [dx, dy] of bird.pixels) {
     const u = scene.px.get(Math.floor((bird.x + dx) / 2), Math.round(bird.y / 2 + dy))
-    if (u) ((sum += lum(u)), n++)
+    if (u) {
+      sum += lum(u)
+      n++
+    }
   }
   return time !== "day" && n > 0 && sum / n > (time === "night" ? 0.55 : 0.5)
 }
@@ -451,10 +448,10 @@ function paintTrail(plan: FlightPlan, tone: Tone, at: (t: number) => Bird, sx: n
         if (f > 0.55) trail.dot(p.x, p.y + 1, col, 5 + f * 10)
       }
 
-    for (const at of plan.marks) {
-      const age = t - at
+    for (const mark of plan.marks) {
+      const age = t - mark
       if (age < 0 || age > 900) continue
-      const p = loopAt(at)
+      const p = loopAt(mark)
       const r = 2 + age / 60
       for (let a = 0; a < Math.PI * 2; a += 0.12)
         trail.dot(

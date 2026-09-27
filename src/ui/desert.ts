@@ -358,6 +358,7 @@ export function desert(
   const f = locate(SNAG, "f")
   const tree = new Set<string>()
   SNAG.forEach((row, j) =>
+    // oxlint-disable-next-line typescript/no-misused-spread -- sprite rows are ASCII
     [...row].forEach((ch, i) => {
       const bark = pal.bark[ch]
       if (!bark) return

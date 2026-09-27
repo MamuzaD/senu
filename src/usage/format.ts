@@ -74,9 +74,10 @@ export function bar(left: number | null): string {
   return "█".repeat(full) + edge + "░".repeat(BAR_WIDTH - full - (edge ? 1 : 0))
 }
 
+const short = (v: number, unit: string) =>
+  `${v < 9.95 ? v.toFixed(1).replace(/\.0$/, "") : Math.round(v)}${unit}`
+
 export function formatTokens(n: number): string {
-  const short = (v: number, unit: string) =>
-    `${v < 9.95 ? v.toFixed(1).replace(/\.0$/, "") : Math.round(v)}${unit}`
   if (n >= 999_500_000) return short(n / 1e9, "B")
   if (n >= 999_500) return short(n / 1e6, "M")
   if (n >= 1000) return short(n / 1e3, "k")

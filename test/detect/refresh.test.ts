@@ -21,7 +21,7 @@ const bundled = { claude: claudeToml as string, codex: codexToml as string }
 const codexVersion = bundledManifest("codex").manifest.version!
 
 const codexAt = (version: string, extra = "") =>
-  (bundled.codex as string).replace(/^version = ".*"$/m, `version = "${version}"`) + extra
+  bundled.codex.replace(/^version = ".*"$/m, `version = "${version}"`) + extra
 
 const serve =
   (files: Record<string, string>): Fetcher =>

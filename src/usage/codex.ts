@@ -50,8 +50,8 @@ function toSpend(limit: any, reached: unknown): Spend | null {
 
 function toBanked(summary: any): Banked | null {
   if (!summary) return null
-  const credits = ((summary.credits ?? []) as any[])
-    .filter((c) => c.status === "available")
+  const credits = (Array.isArray(summary.credits) ? (summary.credits as any[]) : [])
+    .filter((c) => c?.status === "available")
     .map((c) => ({ title: c.title ?? null, expiresAt: c.expiresAt ?? null }))
   return { available: summary.availableCount ?? 0, credits }
 }
@@ -72,7 +72,7 @@ export function parseRateLimits(result: any): Snapshot {
 }
 
 /** Reads newline-delimited JSON until the response with `id` arrives; null if stdout closes first. */
-async function readResponse(stdout: ReadableStream<Uint8Array>, id: number): Promise<any | null> {
+async function readResponse(stdout: ReadableStream<Uint8Array>, id: number): Promise<any> {
   const decoder = new TextDecoder()
   let buffer = ""
   for await (const chunk of stdout) {
@@ -118,8 +118,8 @@ export async function fetchCodex(codexHome: string): Promise<Snapshot> {
       { method: "initialized", params: {} },
       { id: RATE_LIMITS_ID, method: "account/rateLimits/read", params: {} },
     ]
-    proc.stdin.write(requests.map((r) => JSON.stringify(r) + "\n").join(""))
-    proc.stdin.flush()
+    void proc.stdin.write(requests.map((r) => JSON.stringify(r) + "\n").join(""))
+    void proc.stdin.flush()
 
     const timeout = new Promise<"timeout">((resolve) => {
       timer = setTimeout(() => resolve("timeout"), TIMEOUT_MS)

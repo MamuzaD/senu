@@ -79,12 +79,14 @@ export function CanvasView({ canvas, from = 0 }: { canvas: Canvas; from?: number
         }
         while (runs.length && !runs.at(-1)!.fg && !runs.at(-1)!.bg) runs.pop()
         return (
+          // oxlint-disable-next-line react/no-array-index-key -- rows are positional
           <Line key={y}>
             {runs.length === 0
               ? " "
               : runs.map((r, i) =>
                   r.fg || r.bg ? (
                     <span
+                      // oxlint-disable-next-line react/no-array-index-key -- runs are positional
                       key={i}
                       {...(r.fg ? { fg: r.fg } : {})}
                       {...(r.bg ? { bg: r.bg } : {})}

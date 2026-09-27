@@ -148,7 +148,7 @@ export function translateRustRegex(pattern: string): TranslatedRegex {
 
   // `(?m)` is spelled out above: JS's `m` would also break lines at \r, U+2028 and U+2029
   flags.delete("m")
-  return { source: out, flags: [...flags, "u"].sort().join("") }
+  return { source: out, flags: [...flags, "u"].toSorted().join("") }
 }
 
 export function compileRustRegex(pattern: string): RegExp {

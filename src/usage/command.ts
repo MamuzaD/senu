@@ -32,7 +32,7 @@ export async function usageCommand(args: string[], config: Config): Promise<numb
       )
       return 2
     }
-    await Promise.all(targets.map((p) => (locked || claimLock(p) ? refreshLocked(p) : null)))
+    await Promise.all(targets.filter((p) => locked || claimLock(p)).map((p) => refreshLocked(p)))
     return 0
   }
 
@@ -48,6 +48,7 @@ export async function usageCommand(args: string[], config: Config): Promise<numb
     // --locked transfers the parent's profile locks; refreshTodayLocked releases each one.
     const locked = args.includes("--locked")
     const results = await Promise.all(
+      // oxlint-disable-next-line oxc/no-map-spread -- keeps key and ms first in --json output
       targets.map(async (p) => {
         const started = performance.now()
         const today = await (locked || claimTodayLock(p) ? refreshTodayLocked(p) : scanToday(p))

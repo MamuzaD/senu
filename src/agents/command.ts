@@ -1,5 +1,5 @@
 import type { Config } from "~/config.ts"
-import { tmux, useTmuxSocket } from "~/detect/panes.ts"
+import { tmux, setTmuxSocket } from "~/detect/panes.ts"
 
 import { Collector } from "./collect.ts"
 import { runPicker } from "./picker.tsx"
@@ -31,7 +31,7 @@ export async function agentsCommand(args: string[], config: Config): Promise<num
       return 2
     }
   }
-  useTmuxSocket(server)
+  setTmuxSocket(server)
 
   if (!(await tmux("info")).ok) {
     console.error("senu agents: no tmux server")

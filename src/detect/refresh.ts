@@ -118,6 +118,8 @@ export interface RefreshOptions {
   check?: boolean
 }
 
+const why = (e: unknown) => (e instanceof Error ? e.message : String(e))
+
 async function fetchEither(agent: Agent, get: Fetcher): Promise<string> {
   try {
     return await get(`${PRIMARY}/${agent}.toml`)
@@ -125,8 +127,9 @@ async function fetchEither(agent: Agent, get: Fetcher): Promise<string> {
     try {
       return await get(`${MIRROR}/${agent}.toml`)
     } catch (mirror) {
-      const why = (e: unknown) => (e instanceof Error ? e.message : String(e))
-      throw new Error(`download failed: ${why(primary)}; mirror: ${why(mirror)}`)
+      throw new Error(`download failed: ${why(primary)}; mirror: ${why(mirror)}`, {
+        cause: mirror,
+      })
     }
   }
 }
@@ -139,15 +142,13 @@ export async function refreshAgent(agent: Agent, opts: RefreshOptions = {}): Pro
   try {
     text = await fetchEither(agent, opts.fetch ?? httpFetch)
   } catch (err) {
-    return fail(err instanceof Error ? err.message : String(err))
+    return fail(why(err))
   }
   let remote: Manifest & { version: string }
   try {
     remote = validateRemote(agent, text)
   } catch (err) {
-    return fail(
-      `fetched file is invalid, kept the current one: ${err instanceof Error ? err.message : err}`,
-    )
+    return fail(`fetched file is invalid, kept the current one: ${why(err)}`)
   }
 
   const local = localCopy(agent, dir)
@@ -170,7 +171,7 @@ export async function refreshAgent(agent: Agent, opts: RefreshOptions = {}): Pro
     writeFileSync(tmp, text)
     renameSync(tmp, dest)
   } catch (err) {
-    return fail(`could not write ${dest}: ${err instanceof Error ? err.message : err}`)
+    return fail(`could not write ${dest}: ${why(err)}`)
   }
   return { agent, status: "updated", message: `updated ${was} -> ${remote.version}` }
 }
@@ -222,8 +223,7 @@ export async function manifestsCommand(
   const stamp = opts.stamp ?? stampPath
   if (flags.includes("--daily") && !check && syncedRecently(stamp, opts.now)) return 0
 
-  const outcomes: Outcome[] = []
-  for (const agent of AGENTS) outcomes.push(await refreshAgent(agent, { ...opts, check }))
+  const outcomes = await Promise.all(AGENTS.map((agent) => refreshAgent(agent, { ...opts, check })))
   for (const o of outcomes) console.log(`${MARK[o.status]} ${o.agent}: ${o.message}`)
 
   const failed = outcomes.some((o) => o.status === "failed")

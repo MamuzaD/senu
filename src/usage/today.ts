@@ -70,7 +70,7 @@ function writeAtomic(path: string, data: string) {
   renameSync(tmp, path)
 }
 
-function readJson<T>(path: string): T | null {
+function readJson(path: string): unknown {
   try {
     return JSON.parse(readFileSync(path, "utf8"))
   } catch {
@@ -78,11 +78,12 @@ function readJson<T>(path: string): T | null {
   }
 }
 
+const pad = (n: number) => String(n).padStart(2, "0")
+
 /** Returns local midnight in ms and the local date as YYYY-MM-DD. */
 export function localDay(at = new Date()): { startMs: number; day: string } {
   const start = new Date(at)
   start.setHours(0, 0, 0, 0)
-  const pad = (n: number) => String(n).padStart(2, "0")
   return {
     startMs: start.getTime(),
     day: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
@@ -127,7 +128,7 @@ function parseRates(doc: unknown): Rates {
 }
 
 async function loadRates(): Promise<Rates | null> {
-  const cached = readJson<RatesCache>(ratesPath)
+  const cached = readJson(ratesPath) as RatesCache | null
   if (cached && nowSeconds() - cached.fetchedAt < RATES_TTL_SECONDS) return cached.rates
   try {
     const res = await fetch(RATES_URL, { signal: AbortSignal.timeout(RATES_TIMEOUT_MS) })
@@ -441,7 +442,7 @@ function dedupe(records: UsageRecord[]): UsageRecord[] {
 }
 
 function scanProfileFiles(p: UsageProfile, startMs: number): UsageRecord[][] {
-  const loaded = readJson<ScanCache>(scanPath(p))
+  const loaded = readJson(scanPath(p)) as ScanCache | null
   const cache: ScanCache =
     loaded?.version === SCAN_CACHE_VERSION ? loaded : { version: SCAN_CACHE_VERSION, files: {} }
   const root = join(p.home, p.kind === "claude" ? "projects" : "sessions")
@@ -545,7 +546,7 @@ export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today
 
 /** Reads cached totals for the current local day; returns null without scanning when absent or stale by date. */
 export function readToday(p: UsageProfile, at = new Date()): Today | null {
-  const today = readJson<Today>(totalsPath(p))
+  const today = readJson(totalsPath(p)) as Today | null
   return today && today.day === localDay(at).day ? today : null
 }
 

@@ -1,5 +1,4 @@
 import type { Detection } from "~/detect/engine.ts"
-import type { AgentState } from "~/detect/manifest.ts"
 
 export type PaneState = "idle" | "working" | "blocked"
 /** What `@ai_state` shows. `done` is idle that you haven't looked at yet. */

@@ -86,7 +86,7 @@ const MAX_TOTAL_MATCHERS = 1024
 const MAX_MATCHER_CHARS = 512
 const TOP_NON_EMPTY_LINES_ENGINE_VERSION = 3
 
-const STATES: AgentState[] = ["idle", "working", "blocked", "unknown"]
+const STATES = new Set<AgentState>(["idle", "working", "blocked", "unknown"])
 const MANIFEST_KEYS = new Set([
   "id",
   "version",
@@ -168,7 +168,7 @@ function compileRegexes(patterns: string[], where: string): RegExp[] {
       return compileRustRegex(p)
     } catch (err) {
       throw new ManifestError(
-        `${where}: invalid pattern ${JSON.stringify(p)}: ${err instanceof Error ? err.message : err}`,
+        `${where}: invalid pattern ${JSON.stringify(p)}: ${err instanceof Error ? err.message : String(err)}`,
       )
     }
   })
@@ -202,6 +202,7 @@ function compileGate(
   budget.matchers += direct.length
   if (budget.matchers > MAX_TOTAL_MATCHERS)
     throw new ManifestError(`manifest exceeds max matcher count ${MAX_TOTAL_MATCHERS}`)
+  // oxlint-disable-next-line typescript/no-misused-spread -- counts code points, like herdr's chars().count()
   if (direct.some((m) => [...m].length > MAX_MATCHER_CHARS)) {
     throw new ManifestError(`${where}: matcher exceeds max length ${MAX_MATCHER_CHARS}`)
   }
@@ -268,14 +269,14 @@ export function parseManifest(text: string): Manifest {
 
     // herdr treats a missing state as unknown
     const state = r.state === undefined ? "unknown" : r.state
-    if (typeof state !== "string" || !STATES.includes(state as AgentState))
+    if (typeof state !== "string" || !STATES.has(state as AgentState))
       throw new ManifestError(`${where}: invalid state`)
     const priority = r.priority ?? 0
     if (!isInt(priority, I32_MIN, I32_MAX))
       throw new ManifestError(`${where}: priority must be a 32-bit integer`)
     const region = r.region ?? "whole_recent"
     if (typeof region !== "string" || !isValidRegion(region))
-      throw new ManifestError(`${where} uses invalid region: ${region}`)
+      throw new ManifestError(`${where} uses invalid region: ${JSON.stringify(region)}`)
     if (
       region.trim().startsWith("top_non_empty_lines(") &&
       typeof minEngine === "number" &&
@@ -367,7 +368,7 @@ export function reloadManifests() {
 
 /** herdr's `parse_agent_label`: a name, path or alias, any case, `.exe`/`.js`-style suffix allowed. */
 export function parseAgent(name: string): Agent | null {
-  const base = name.trim().split(/[/\\]/).filter(Boolean).pop() ?? ""
+  const base = name.trim().split(/[/\\]/).findLast(Boolean) ?? ""
   const n = base.toLowerCase().replace(/\.(exe|cmd|bat|ps1|js)$/, "")
   if (n === "claude" || n === "claude-code") return "claude"
   if (n === "codex") return "codex"

@@ -201,6 +201,8 @@ export async function runDaemon(): Promise<number> {
     }
   }
   try {
+    // `stopping` flips in the signal handler; each tick waits for the last.
+    // oxlint-disable-next-line no-unmodified-loop-condition
     while (!stopping) {
       const started = Date.now()
       const full = started - lastFull >= POLL_MS - IDLE_RECHECK_MS / 2

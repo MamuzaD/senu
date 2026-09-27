@@ -1,6 +1,6 @@
 import { TextAttributes, createCliRenderer, type RGBA } from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react"
 
 import type { UsageProfile, UsageScene } from "~/config.ts"
 import { sceneCols, type SceneTime } from "~/ui/desert.ts"
@@ -170,7 +170,7 @@ function BankedRow({ banked, right }: { banked: Banked; right: number }) {
   const soonest = expiries.length ? Math.min(...expiries) : null
   const titles = [
     ...new Set(banked.credits.map((c) => c.title).filter((t): t is string => !!t)),
-  ].sort()
+  ].toSorted()
   const expires = soonest != null ? formatUntil(soonest)! : null
   const tail = titles.length ? "  " + titles.join(" · ") : ""
   const used =
@@ -237,7 +237,7 @@ function ProfileSection({
   const fresh = freshness(section, dots, glow)
   const pad = Math.max(
     2,
-    right - HEADER.length - [...title].length - plan.length - [...fresh.text].length,
+    right - HEADER.length - Bun.stringWidth(title) - plan.length - Bun.stringWidth(fresh.text),
   )
   const fill = tween(fillFrom, FILL_MS, easeOut)
   return (
@@ -339,13 +339,13 @@ function CostSection({
       }
   const pad = Math.max(
     2,
-    right - HEADER.length - [...title].length - planText.length - [...fresh.text].length,
+    right - HEADER.length - Bun.stringWidth(title) - planText.length - Bun.stringWidth(fresh.text),
   )
   const models = (today?.models ?? []).slice(0, TOP_MODELS)
   const row = (name: string, cost: string, tokens: number, cached: number) => ({
     name: (INDENT + name).padEnd(INDENT.length + MODEL_WIDTH).slice(0, INDENT.length + MODEL_WIDTH),
     cost: cost.padStart(9),
-    tokens: `${formatTokens(tokens)}`.padStart(8) + " tok",
+    tokens: formatTokens(tokens).padStart(8) + " tok",
     cached: tokens ? `  ${Math.round((100 * cached) / tokens)}% cached` : "",
   })
   const total = today
@@ -411,33 +411,38 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
   const [tick, setTick] = useState(0)
   const [startedAt] = useState(() => Date.now())
   const [openedAt] = useState(now)
-  const leave = useRef<number | null>(null)
+  const [leave, setLeave] = useState<number | null>(null)
 
   const update = (i: number, patch: Partial<Section>) =>
     setSections((prev) => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)))
 
-  useEffect(() => {
-    profiles.forEach(async (profile, i) => {
-      const snapshot = await getSnapshot(profile).catch((err) =>
-        errorSnapshot(err instanceof Error ? err.message : String(err)),
-      )
-      const t = now()
-      update(i, {
-        snapshot,
-        refreshing: nowSeconds() - snapshot.updatedAt > STALE_NOTICE_SECONDS,
-        loadedAt: t,
-        landedAt: t - openedAt > FETCHED_AFTER_MS ? t : null,
-      })
+  // Fetch each profile once when the popup opens.
+  const loadSnapshots = useEffectEvent(() => {
+    profiles.forEach((profile, i) => {
+      void getSnapshot(profile)
+        .catch((err) => errorSnapshot(err instanceof Error ? err.message : String(err)))
+        .then((snapshot) => {
+          const t = now()
+          update(i, {
+            snapshot,
+            refreshing: nowSeconds() - snapshot.updatedAt > STALE_NOTICE_SECONDS,
+            loadedAt: t,
+            landedAt: t - openedAt > FETCHED_AFTER_MS ? t : null,
+          })
+        })
     })
-  }, [])
+  })
+  useEffect(() => loadSnapshots(), [])
 
   const [todays, setTodays] = useState(() => profiles.map((p) => readToday(p)))
-  const [watchingToday, setWatchingToday] = useState(() => profiles.map(() => false))
-  useEffect(() => {
+  const [watchingToday, setWatchingToday] = useState(() =>
+    profiles.map((_, i) => !todayIsFresh(todays[i] ?? null)),
+  )
+  // Watch the initial totals until each refresh lands or times out.
+  const watchToday = useEffectEvent(() => {
     const watching = profiles.map((_, i) => !todayIsFresh(todays[i] ?? null))
     if (!watching.some(Boolean)) return
     spawnTodayRefresh(profiles.filter((_, i) => watching[i]))
-    setWatchingToday([...watching])
     const since = todays.map((t) => t?.updatedAt ?? 0)
     const started = Date.now()
     const id = setInterval(() => {
@@ -452,7 +457,8 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
       if (!watching.some(Boolean)) clearInterval(id)
     }, POLL_MS)
     return () => clearInterval(id)
-  }, [])
+  })
+  useEffect(() => watchToday(), [])
 
   const refreshing = sections.some((s) => s.refreshing)
   const busy = sections.some((s) => !s.snapshot || s.refreshing)
@@ -466,9 +472,10 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
     if (busy) return
     const id = setTimeout(() => setTick((t) => t + 1), untilNextMinute(sections))
     return () => clearTimeout(id)
-  }, [busy, tick])
+  }, [busy, tick, sections])
 
-  useEffect(() => {
+  // Runs on each tick, reading sections as of that tick.
+  const checkCache = useEffectEvent(() => {
     const watchedOut = Date.now() - startedAt >= MAX_POLL_SECONDS * 1000
     sections.forEach((section, i) => {
       if (!section.refreshing || !section.snapshot) return
@@ -479,7 +486,8 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
         update(i, { refreshing: false })
       }
     })
-  }, [tick])
+  })
+  useEffect(() => checkCache(), [tick])
 
   const [view, setView] = useState<View>("limits")
   useKeyboard((key) => {
@@ -491,7 +499,7 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
 
   const t = now()
   const cols = sceneCols(width)
-  if (!busy && leave.current == null) leave.current = leaveAfter(t - openedAt)
+  if (!busy && leave == null) setLeave(leaveAfter(t - openedAt))
   const plan: FlightPlan = {
     t: t - openedAt,
     busy: busy && !reducedMotion,
@@ -499,7 +507,7 @@ function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneT
       .map((s) => s.landedAt)
       .filter((at): at is number => at != null)
       .map((at) => at - openedAt),
-    leave: leave.current,
+    leave,
     perched: reducedMotion || noColor,
     time,
     cols,

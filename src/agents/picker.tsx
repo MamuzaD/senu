@@ -1,6 +1,6 @@
 import { TextAttributes, createCliRenderer, type RGBA } from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useEffectEvent, useRef, useState } from "react"
 
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
 import { DIVE_MS, paintSenu, rowGlow, type DivePlan } from "~/ui/dive.ts"
@@ -148,7 +148,7 @@ function paint(v: View): Canvas {
   const noteFg = v.dive ? brand.gold : live ? brand.dusk : brand.shadow
   const keys = v.confirming
     ? "y kill · any other key keeps it"
-    : [..."j/k move · ⏎ jump · x kill · r refresh · q quit"].length +
+    : Bun.stringWidth("j/k move · ⏎ jump · x kill · r refresh · q quit") +
           more.length +
           note.length +
           6 <=
@@ -156,9 +156,9 @@ function paint(v: View): Canvas {
       ? "j/k move · ⏎ jump · x kill · r refresh · q quit"
       : "⏎ jump · x kill · q quit"
   c.text(1, fy, keys, colors.dim)
-  const room = right - [...keys].length - 3
+  const room = right - Bun.stringWidth(keys) - 3
   const tail = more.length + note.length + 2 <= room ? [more, note] : [more]
-  let tx = right + 1 - tail.filter(Boolean).reduce((n, s) => n + [...s].length + 2, -2)
+  let tx = right + 1 - tail.filter(Boolean).reduce((n, s) => n + Bun.stringWidth(s) + 2, -2)
   if (more && more.length <= room) tx = c.text(tx, fy, more, colors.muted) + 2
   if (tail.length === 2) c.text(tx, fy, note, noteFg)
 
@@ -213,8 +213,10 @@ function Picker({
     }
   }
 
+  // A failed poll keeps the last rows; the next tick retries.
+  const onInterval = useEffectEvent(() => void refresh().catch(() => {}))
   useEffect(() => {
-    const id = setInterval(refresh, REFRESH_MS)
+    const id = setInterval(onInterval, REFRESH_MS)
     return () => clearInterval(id)
   }, [])
 
@@ -224,12 +226,10 @@ function Picker({
     return i >= 0 ? i : Math.max(0, Math.min(c.index, list.length - 1))
   }
   const sel = indexOf(cursor, rows)
-  const rowsRef = useRef(rows)
-  rowsRef.current = rows
+  // Keys can repeat before React re-renders; move() updates this synchronously.
   const cursorRef = useRef(cursor)
-  cursorRef.current = cursor
   const move = (to: (i: number, n: number) => number) => {
-    const list = rowsRef.current
+    const list = rows
     const k = Math.max(
       0,
       Math.min(to(indexOf(cursorRef.current, list), list.length), list.length - 1),
@@ -239,11 +239,12 @@ function Picker({
   }
 
   const visible = visibleCount(height)
-  const topRef = useRef(0)
-  if (sel < topRef.current) topRef.current = sel
-  else if (sel >= topRef.current + visible) topRef.current = sel - visible + 1
-  topRef.current = Math.max(0, Math.min(topRef.current, Math.max(0, rows.length - visible)))
-  const top = topRef.current
+  const [scroll, setScroll] = useState(0)
+  let top = scroll
+  if (sel < top) top = sel
+  else if (sel >= top + visible) top = sel - visible + 1
+  top = Math.max(0, Math.min(top, Math.max(0, rows.length - visible)))
+  if (top !== scroll) setScroll(top)
 
   const close = () => {
     renderer.destroy()
@@ -263,10 +264,10 @@ function Picker({
   useKeyboard((key) => {
     if (diveAt != null) return
     const k = key.sequence === "G" ? "G" : key.name
-    const confirming = confirmingRef.current
-    if (confirming) {
+    const pending = confirmingRef.current
+    if (pending) {
       if (k === "y" || k === "x" || k === "d" || k === "return") {
-        const row = confirming
+        const row = pending
         setConfirming(null)
         void kill(row).then(refresh)
       } else setConfirming(null)
@@ -278,10 +279,9 @@ function Picker({
     else if (k === "g" || k === "home") move(() => 0)
     else if (k === "G" || k === "end") move((_, n) => n - 1)
     else if (k === "r") void refresh()
-    else if ((k === "x" || k === "d") && rowsRef.current.length)
-      setConfirming(rowsRef.current[indexOf(cursorRef.current, rowsRef.current)]!)
-    else if (k === "return" && rowsRef.current.length)
-      go(rowsRef.current[indexOf(cursorRef.current, rowsRef.current)]!)
+    else if ((k === "x" || k === "d") && rows.length)
+      setConfirming(rows[indexOf(cursorRef.current, rows)]!)
+    else if (k === "return" && rows.length) go(rows[indexOf(cursorRef.current, rows)]!)
   })
 
   const diving = diveAt != null

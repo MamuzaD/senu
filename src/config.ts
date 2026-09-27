@@ -126,7 +126,10 @@ export function loadConfig(path = configPath): Config {
     throw new ConfigError(`${path}: ${err instanceof Error ? err.message : String(err)}`)
   }
 
-  const usage = (data.usage ?? {}) as Record<string, unknown>
+  const rawUsage = data.usage ?? {}
+  if (typeof rawUsage !== "object" || rawUsage === null || Array.isArray(rawUsage))
+    throw new ConfigError("usage: expected a table ([usage])")
+  const usage = rawUsage as Record<string, unknown>
   const rawProfiles = usage.profiles
   if (rawProfiles !== undefined && !Array.isArray(rawProfiles)) {
     throw new ConfigError("usage.profiles: expected an array of tables ([[usage.profiles]])")

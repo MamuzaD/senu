@@ -1,5 +1,5 @@
 import type { Config } from "~/config.ts"
-import { useTmuxSocket } from "~/detect/panes.ts"
+import { setTmuxSocket } from "~/detect/panes.ts"
 
 import { runDaemon, Watcher } from "./daemon.ts"
 import { play, resolveSound } from "./sounds.ts"
@@ -19,12 +19,12 @@ test plays the done and request sounds (or just the one named).
 -L and -S pick the tmux server, as they do for tmux itself.
 `
 
-const KINDS: SoundKind[] = ["done", "request"]
+const KINDS = new Set<SoundKind>(["done", "request"])
 
 async function testSounds(args: string[], config: Config): Promise<number> {
   const kinds = args.length ? args : ["request", "done"]
   for (const k of kinds) {
-    if (!KINDS.includes(k as SoundKind)) {
+    if (!KINDS.has(k as SoundKind)) {
       console.error(`senu watch test: unknown sound "${k}" (have done, request)`)
       return 2
     }
@@ -34,6 +34,7 @@ async function testSounds(args: string[], config: Config): Promise<number> {
     const path = resolveSound(kind, config.sound[kind])
     console.log(`${kind.padEnd(8)} -> ${path ?? "none"}`)
     const proc = path ? play(path) : null
+    // Play one at a time so each sound is heard on its own.
     if (!proc || (await proc.exited) !== 0) {
       console.error(
         `senu watch test: could not play ${kind} (check the sound file and installed audio player)`,
@@ -71,7 +72,7 @@ export async function watchCommand(argv: string[], config: Config): Promise<numb
       console.error(`senu watch: ${flag} needs a value`)
       return 2
     }
-    useTmuxSocket([flag, value])
+    setTmuxSocket([flag, value])
     args.splice(i, 2)
   }
 
