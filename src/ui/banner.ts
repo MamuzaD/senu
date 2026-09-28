@@ -34,6 +34,14 @@ function ansi(c: Canvas): string {
     .join("\n")
 }
 
+export const paint = (spans: Span[]) =>
+  spans
+    .map(([text, fg, bold]) => {
+      const style = sgr({ ch: text, fg, bg: null, attrs: bold ? TextAttributes.BOLD : 0 })
+      return style ? `\x1b[${style}m${text}\x1b[0m` : text
+    })
+    .join("")
+
 export function banner(message: Span[]): string {
   const lines: Span[][] = [[["senu", brand.gold, true]], message]
   const width = (line: Span[]) => Bun.stringWidth(line.map(([text]) => text).join(""))
