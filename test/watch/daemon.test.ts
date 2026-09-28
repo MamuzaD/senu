@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { optionCommands } from "~/watch/daemon.ts"
-import { claimPidFile, releasePidFile } from "~/watch/lock.ts"
+import { claimPidFile, lockLost, releasePidFile } from "~/watch/lock.ts"
 import {
   defaultSoundFile,
   pickSound,
@@ -170,6 +170,50 @@ describe("claimPidFile", () => {
     writeFileSync(path, `${process.pid}\n`)
     releasePidFile(path)
     expect(() => readFileSync(path)).toThrow()
+  })
+})
+
+describe("lockLost", () => {
+  let dir: string
+  let path: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "senu-lock-"))
+    path = join(dir, "watch.pid")
+  })
+  afterEach(() => {
+    chmodSync(dir, 0o755)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("not while we hold it", () => {
+    claimPidFile(path, () => true)
+    expect(lockLost(path, () => true)).toBe(false)
+  })
+
+  test("a free lock is reclaimed", () => {
+    expect(lockLost(path, () => true)).toBe(false)
+    expect(readFileSync(path, "utf8").trim()).toBe(String(process.pid))
+  })
+
+  test("a dead holder's lock is reclaimed", () => {
+    writeFileSync(path, "999999\n")
+    expect(lockLost(path, () => false)).toBe(false)
+    expect(readFileSync(path, "utf8").trim()).toBe(String(process.pid))
+  })
+
+  test("lost to another live watcher", () => {
+    writeFileSync(path, "1\n")
+    expect(lockLost(path, (pid) => pid === 1)).toBe(true)
+  })
+
+  test("not lost, and no throw, when the lock's directory is gone and cannot be made", () => {
+    chmodSync(dir, 0o555)
+    expect(lockLost(join(dir, "gone", "watch.pid"), () => true)).toBe(false)
+  })
+
+  test("not lost when the lock cannot be claimed and nobody holds it", () => {
+    chmodSync(dir, 0o555)
+    expect(lockLost(path, () => true)).toBe(false)
   })
 })
 

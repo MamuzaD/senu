@@ -14,9 +14,10 @@ import {
   type AgentPane,
   type Pane,
 } from "~/detect/panes.ts"
-import { stateDir } from "~/paths.ts"
+import { compiled, selfCommand, stateDir } from "~/paths.ts"
 
-import { claimPidFile, releasePidFile } from "./lock.ts"
+import { claimPidFile, isWatcher, lockLost, releasePidFile } from "./lock.ts"
+import { binaryChanged, handOff, HandOffSchedule } from "./rebuild.ts"
 import { effectiveSoundEnabled } from "./sound-state.ts"
 import { play, resolveSound } from "./sounds.ts"
 import {
@@ -160,6 +161,7 @@ export class Watcher {
       if (!w) byWindow.set(p.windowId, (w = { id: p.windowId, states: [], focused: false }))
       w.states.push(this.panes.get(p.id)?.state ?? null)
       if (p.windowActive && p.sessionAttached) w.focused = true
+      if (p.aiState === "done") w.shownDone = true
     }
 
     const { display, sounds } = step(this.windows, [...byWindow.values()])
@@ -217,6 +219,12 @@ export async function runDaemon(): Promise<number> {
   const release = () => releasePidFile(lock)
   process.on("exit", release)
 
+  const rebuilt = compiled ? binaryChanged(process.execPath) : () => false
+  const handOffs = new HandOffSchedule()
+  const killedChildren = new Set<number>()
+  const watcherNotKilled = (pid: number) => !killedChildren.has(pid) && isWatcher(pid)
+  let ownerElsewhere = false
+
   let lastFull = 0
   let goneSince: number | null = null
   const poll = async (full: boolean, now: number) => {
@@ -231,11 +239,33 @@ export async function runDaemon(): Promise<number> {
     // `stopping` flips in the signal handler; each tick waits for the last.
     // oxlint-disable-next-line no-unmodified-loop-condition
     while (!stopping) {
+      if (lockLost(lock, watcherNotKilled)) {
+        ownerElsewhere = true
+        break
+      }
       const started = Date.now()
       const full = started - lastFull >= POLL_MS - IDLE_RECHECK_MS / 2
       if (full) lastFull = started
       await poll(full, started).catch(() => {})
-      if (stopping || (goneSince !== null && started - goneSince > SERVER_GONE_MS)) break
+      if (full && rebuilt()) handOffs.rebuilt(started)
+      if (!stopping && handOffs.due(started)) {
+        const command = [...selfCommand(), "watch", "-S", socket]
+        const result = await handOff(lock, command, {
+          signal: stopSignal.signal,
+          holderAlive: watcherNotKilled,
+        })
+        if (result.killed) killedChildren.add(result.killed)
+        ownerElsewhere = result.replaced
+        if (ownerElsewhere)
+          await tmux("run-shell", "-b", "echo 'senu watch: restarted on the new build'")
+        else handOffs.failed(Date.now())
+      }
+      if (
+        stopping ||
+        ownerElsewhere ||
+        (goneSince !== null && started - goneSince > SERVER_GONE_MS)
+      )
+        break
       const wait = watcher.pending ? IDLE_RECHECK_MS : lastFull + POLL_MS - Date.now()
       try {
         await delay(Math.max(wait, 10), undefined, { signal: stopSignal.signal })
@@ -245,7 +275,7 @@ export async function runDaemon(): Promise<number> {
     }
   } finally {
     try {
-      await clearStates()
+      if (!ownerElsewhere) await clearStates()
     } finally {
       for (const sig of signals) process.off(sig, requestStop)
       process.off("exit", release)

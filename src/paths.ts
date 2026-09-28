@@ -14,7 +14,9 @@ export const configPath = join(configDir, "config.toml")
 export const cacheDir = join(process.env.XDG_CACHE_HOME || join(home, ".cache"), "senu")
 export const stateDir = join(process.env.XDG_STATE_HOME || join(home, ".local", "state"), "senu")
 
+// Compiled binaries run their entrypoint from Bun's virtual /$bunfs filesystem.
+export const compiled = Bun.main.startsWith("/$bunfs/")
+
 export function selfCommand(): string[] {
-  // Compiled binaries run their entrypoint from Bun's virtual /$bunfs filesystem.
-  return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main]
+  return compiled ? [process.execPath] : [process.execPath, Bun.main]
 }

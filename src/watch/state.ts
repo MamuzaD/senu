@@ -78,6 +78,8 @@ export interface WindowInput {
   states: (ObservedPaneState | null)[]
   /** Whether the window is active in an attached session. */
   focused: boolean
+  /** Whether `@ai_state` already shows `done`, as a previous watcher left it. */
+  shownDone?: boolean
 }
 
 export type SoundKind = "done" | "request"
@@ -103,10 +105,13 @@ export function step(windows: Map<string, WindowTrack>, inputs: WindowInput[]): 
 
   for (const w of inputs) {
     const raw = fold(w.states)
-    if (!raw) continue
+    if (!raw) {
+      if (w.shownDone && !w.focused) display.set(w.id, "done")
+      continue
+    }
     live.add(w.id)
     const prev = windows.get(w.id)
-    const track: WindowTrack = prev ?? { raw, done: false }
+    const track: WindowTrack = prev ?? { raw, done: w.shownDone ?? false }
 
     if (prev) {
       if (raw === "idle" && prev.raw === "working") {

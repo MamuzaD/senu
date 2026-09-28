@@ -73,3 +73,27 @@ export function releasePidFile(path: string) {
     if (Number(readFileSync(path, "utf8").trim()) === process.pid) unlinkSync(path)
   } catch {}
 }
+
+/** The PID in the lock, or 0 when it is missing or unreadable. */
+export function pidFileHolder(path: string): number {
+  try {
+    return Number(readFileSync(path, "utf8").trim())
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Whether another live watcher now holds the lock. A lock that is free again is
+ * reclaimed; one that can be neither claimed nor attributed, or that errors
+ * (e.g. its directory is gone and cannot be recreated), is not counted as lost.
+ */
+export function lockLost(path: string, holderAlive: (pid: number) => boolean = isWatcher): boolean {
+  try {
+    if (pidFileHolder(path) === process.pid || claimPidFile(path, holderAlive)) return false
+  } catch {
+    return false
+  }
+  const holder = pidFileHolder(path)
+  return holder > 0 && holderAlive(holder)
+}

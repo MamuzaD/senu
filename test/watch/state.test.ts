@@ -126,6 +126,33 @@ describe("step: windows, done and sounds", () => {
     expect(step(windows, [w(["idle"])]).display.get("@1")).toBe("idle")
   })
 
+  test("a done left by the previous watcher survives until you focus the window", () => {
+    const windows = new Map<string, WindowTrack>()
+    const left = { ...w(["idle"]), shownDone: true }
+    expect(step(windows, [left]).display.get("@1")).toBe("done")
+    expect(step(windows, [w(["idle"])]).display.get("@1")).toBe("done")
+    expect(step(windows, [w(["idle"], true)]).display.get("@1")).toBe("idle")
+  })
+
+  test("a left done survives a first tick with no settled pane", () => {
+    const windows = new Map<string, WindowTrack>()
+    const unsettled = { ...w([null]), shownDone: true }
+    expect(step(windows, [unsettled]).display.get("@1")).toBe("done")
+    expect(step(windows, [{ ...w(["idle"]), shownDone: true }]).display.get("@1")).toBe("done")
+  })
+
+  test("focusing a window with no settled pane clears a left done", () => {
+    const windows = new Map<string, WindowTrack>()
+    expect(step(windows, [{ ...w([null], true), shownDone: true }]).display.has("@1")).toBe(false)
+  })
+
+  test("a left done clears when the window is busy again", () => {
+    const windows = new Map<string, WindowTrack>()
+    expect(step(windows, [{ ...w(["working"]), shownDone: true }]).display.get("@1")).toBe(
+      "working",
+    )
+  })
+
   test("a finish in front is plain idle, with a focused sound event", () => {
     const windows = new Map<string, WindowTrack>()
     step(windows, [w(["working"], true)])
