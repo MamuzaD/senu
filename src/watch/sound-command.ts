@@ -1,4 +1,5 @@
 import type { Config } from "~/config.ts"
+import type { Span } from "~/ui/banner.ts"
 
 import { clearSoundOverride, effectiveSoundEnabled, setSoundEnabled } from "./sound-state.ts"
 
@@ -23,6 +24,20 @@ export async function soundCommand(args: string[], config: Config): Promise<numb
   if (action === "toggle") setSoundEnabled(!current)
   else if (action === "on" || action === "off") setSoundEnabled(action === "on")
   else if (action === "reset") clearSoundOverride()
-  console.log(effectiveSoundEnabled(config.sound.enabled) ? "on" : "off")
+  const enabled = effectiveSoundEnabled(config.sound.enabled)
+  if (!action || action === "status") {
+    console.log(enabled ? "on" : "off")
+    return 0
+  }
+  const [{ banner }, { brand, states }] = await Promise.all([
+    import("~/ui/banner.ts"),
+    import("~/ui/theme.ts"),
+  ])
+  const message: Span[] = [
+    ["sound ", brand.papyrus],
+    enabled ? ["on", states.idle.fg] : ["off", brand.shadow],
+  ]
+  if (action === "reset") message.push([" · from config", brand.shadow])
+  process.stdout.write(banner(message))
   return 0
 }

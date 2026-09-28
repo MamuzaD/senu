@@ -186,6 +186,23 @@ async function chime(events: SoundEvent[]) {
   }
 }
 
+/** A run-shell command printing text verbatim; run-shell format-expands its command and ## doesn't escape #[, so # goes to printf as \0043. */
+const printCommand = (text: string) =>
+  `printf '%b' '${text.replaceAll("\\", "\\\\").replaceAll("#", "\\0043").replaceAll("'", "'\\''")}'`
+
+async function announceRestart() {
+  const [{ banner }, { brand, states }] = await Promise.all([
+    import("~/ui/banner.ts"),
+    import("~/ui/theme.ts"),
+  ])
+  const text = banner([
+    ["watcher ", brand.papyrus],
+    ["restarted", states.done.fg],
+    [" on the new build", brand.papyrus],
+  ])
+  await tmux("run-shell", "-b", printCommand(text))
+}
+
 export async function clearStates() {
   await tmuxBatch([
     ...optionCommands(currentStates(await listPanes()), new Map()),
@@ -256,8 +273,7 @@ export async function runDaemon(): Promise<number> {
         })
         if (result.killed) killedChildren.add(result.killed)
         ownerElsewhere = result.replaced
-        if (ownerElsewhere)
-          await tmux("run-shell", "-b", "echo 'senu watch: restarted on the new build'")
+        if (ownerElsewhere) await announceRestart().catch(() => {})
         else handOffs.failed(Date.now())
       }
       if (
