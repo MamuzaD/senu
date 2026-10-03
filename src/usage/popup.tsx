@@ -6,8 +6,9 @@ import { createRoot, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react"
 
 import type { UsageProfile, UsageScene } from "~/config.ts"
-import { CanvasView } from "~/ui/canvas.tsx"
-import { SCENE_ROWS, sceneCols, type SceneTime } from "~/ui/desert.ts"
+import { Canvas, CanvasView } from "~/ui/canvas.tsx"
+import { SCENE_COLS, SCENE_ROWS, sceneCols, type SceneTime } from "~/ui/desert.ts"
+import { hopAt, hopDone, hopRunning, paintHop, type Hop, type Point } from "~/ui/gaze.ts"
 import { Line } from "~/ui/line.tsx"
 import {
   FPS,
@@ -19,7 +20,7 @@ import {
   tween,
   useTicker,
 } from "~/ui/motion.ts"
-import { flightDone, leaveAfter, type FlightPlan } from "~/ui/senu.ts"
+import { flightDone, leaveAfter, snagAt, type FlightPlan } from "~/ui/senu.ts"
 import { Sky } from "~/ui/sky.tsx"
 import { brand, colors, icons, mix, noColor } from "~/ui/theme.ts"
 
@@ -62,6 +63,8 @@ const FILL_MS = 250
 const STAGGER_MS = 40
 const VISION_HOLD_MS = 150
 const VISION_MS = 600
+/** Columns kept clear right of the limits for senu to perch beside the profile it looks at. */
+const GUTTER = 7
 const FETCHED_AFTER_MS = 250
 const DOTS_MS = 400
 const PACE_MARK = brand.papyrus
@@ -834,6 +837,8 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
   const [range, setRange] = useState(0)
   const [breakdown, setBreakdown] = useState<Breakdown>("profile")
   const [gaze, setGaze] = useState<number | null>(null)
+  /** senu's latest flight: from a screen point to a profile's perch, or back to the snag when null. */
+  const [travel, setTravel] = useState<{ from: Point; to: number | null; at: number } | null>(null)
   const look = (step: 1 | -1) => {
     // The cycle runs through -1, where senu looks at no profile.
     setGaze((g) => {
@@ -885,9 +890,10 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
   const flying = !noColor && !flightDone(plan)
 
   const right = Math.min(cols, width) - 1
+  const gutters = !noColor && view === "limits" && width >= SCENE_COLS + GUTTER
   const skyRows = noColor ? 0 : SCENE_ROWS + GAP_ROWS
   const listRows = height - FOOTER_ROWS
-  const glanceStacked = glanceStacks(right)
+  const glanceStacked = glanceStacks(gutters ? right - GUTTER : right)
   // A glance that won't fit folds the other profiles to their titles, then the
   // sky gives way, then the looked-at profile folds its own limits behind its glance.
   const foldsAt = (fold: 0 | 1 | 2) => (i: number) => fold === 2 || (fold === 1 && i !== gaze)
@@ -906,6 +912,28 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
     gaze == null || fits(0, true) ? 0 : fits(1, true) || fits(1, false) ? 1 : 2
   const skyless = fold > 0 && !fits(fold, true)
   const folded = foldsAt(fold)
+  // senu leaves the snag only once landed, and only where the limits leave it a gutter.
+  const perches = gutters && !skyless
+  const sectionRight = perches ? right - GUTTER : right
+  const sectionsTop = SCENE_ROWS + GAP_ROWS
+  const topOf = (to: number) => {
+    let top = sectionsTop
+    for (let i = 0; i <= to; i++)
+      top += gapBefore(folded, i) + (i < to ? sectionRows(sections[i]!, folded(i)) : 0)
+    return top
+  }
+  const perchAt = (to: number | null): Point => {
+    if (to == null) return snagAt(cols)
+    // Stand beside the profile's limits, level with its last row.
+    const last = topOf(to) + sectionRows(sections[to]!, folded(to)) - 1
+    return { x: (width - GUTTER) * 2 + 5, y: last * 2 + 1 }
+  }
+  const hop: Hop | null = travel && { from: travel.from, to: perchAt(travel.to), at: travel.at }
+  const goal = perches && flightDone(plan) ? gaze : null
+  if ((travel?.to ?? null) !== goal)
+    setTravel({ from: hop ? hopAt(hop, t) : snagAt(cols), to: goal, at: t })
+  const away = hop != null && !(travel?.to == null && hopDone(hop, t))
+  plan.away = away
 
   const fillFrom = sections.map(
     (s, i) =>
@@ -914,7 +942,8 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
   )
   const tweening =
     fillFrom.some((from) => running(from, FILL_MS, t)) ||
-    sections.some((s) => running(s.landedAt, VISION_MS, t))
+    sections.some((s) => running(s.landedAt, VISION_MS, t)) ||
+    (hop != null && hopRunning(hop, t))
   useTicker(flying || tweening ? FPS : busy ? 1000 / DOTS_MS : 0)
 
   const dots = reducedMotion ? "..." : ".".repeat((Math.floor((t - openedAt) / DOTS_MS) % 3) + 1)
@@ -924,7 +953,7 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
       ? "senu is circling"
       : !flightDone(plan)
         ? "senu comes in to land"
-        : gaze != null && view === "limits"
+        : away && view === "limits"
           ? "senu looks closer"
           : "senu keeps watch"
   const hint = activeKeys
@@ -932,29 +961,55 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
     .filter((desc): desc is string => typeof desc === "string")
     .join(" · ")
   const costRows = height - (noColor ? 0 : SCENE_ROWS + GAP_ROWS) - FOOTER_ROWS
+  const gutter = new Canvas(GUTTER, Math.max(0, costRows + GAP_ROWS))
+  if (hop && perches) {
+    paintHop(gutter, hop, t, time, { x: width - GUTTER, y: SCENE_ROWS })
+    // Perched, senu stands on a post that runs the length of the profile it watches.
+    if (gaze != null && travel?.to === gaze && !hopRunning(hop, t)) {
+      const feet = (hop.to.y - 1) / 2 + 1
+      const end =
+        topOf(gaze) + sectionRows(sections[gaze]!, folded(gaze)) + glanceRows(glanceStacked) - 1
+      // In the scene's pixel blocks: a half-cell trunk under the talons, flaring at its foot.
+      const bark = mix(brand.shadow, brand.sand, 0.3)
+      for (let row = feet; row < end; row++) gutter.put(2, row - SCENE_ROWS, "▐", bark)
+      gutter.put(1, end - SCENE_ROWS, "▗", bark)
+      gutter.put(2, end - SCENE_ROWS, "█", bark)
+      gutter.put(3, end - SCENE_ROWS, "▖", bark)
+    }
+  }
 
   return (
     <box flexDirection="column" height={height} gap={1}>
       <box flexDirection="column" gap={1} flexGrow={1} flexShrink={1} overflow="hidden">
-        {noColor || skyless ? null : <Sky plan={plan} width={width} />}
+        {noColor || skyless ? null : (
+          <Sky
+            plan={plan}
+            width={width}
+            overlay={hop && away ? (c) => paintHop(c, hop, t, time, { x: 0, y: 0 }) : undefined}
+          />
+        )}
         {view === "limits" ? (
-          <box flexDirection="column" flexShrink={1}>
-            {profiles.map((profile, i) => (
-              <ProfileSection
-                key={`${profile.kind}:${profile.name}`}
-                gapBefore={gapBefore(folded, i)}
-                profile={profile}
-                section={sections[i]!}
-                dots={dots}
-                fillFrom={fillFrom[i]!}
-                right={right}
-                looked={gaze === i}
-                collapsed={folded(i)}
-                today={todays[i] ?? null}
-                days={RANGE_DAYS[range]!}
-                scanning={watchingToday[i] ?? false}
-              />
-            ))}
+          // The gutter reaches up over the gap row so senu never vanishes between the sky and the limits.
+          <box flexDirection="row" flexShrink={1} marginTop={perches ? -GAP_ROWS : 0}>
+            <box flexDirection="column" flexGrow={1} paddingTop={perches ? GAP_ROWS : 0}>
+              {profiles.map((profile, i) => (
+                <ProfileSection
+                  key={`${profile.kind}:${profile.name}`}
+                  gapBefore={gapBefore(folded, i)}
+                  profile={profile}
+                  section={sections[i]!}
+                  dots={dots}
+                  fillFrom={fillFrom[i]!}
+                  right={sectionRight}
+                  looked={gaze === i}
+                  collapsed={folded(i)}
+                  today={todays[i] ?? null}
+                  days={RANGE_DAYS[range]!}
+                  scanning={watchingToday[i] ?? false}
+                />
+              ))}
+            </box>
+            {perches ? <CanvasView canvas={gutter} /> : null}
           </box>
         ) : (
           <CostView

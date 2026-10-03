@@ -27,6 +27,8 @@ export interface FlightPlan {
   time: SceneTime
   /** Scene width in columns, calculated by `sceneCols`. */
   cols: number
+  /** The bird has left the snag to look at something outside the scene. */
+  away?: boolean
 }
 
 const FOLD_MS = 330
@@ -68,6 +70,12 @@ function wingbeat(t: number) {
 
 const PERCH_DOTS = { x: PERCH.x * 2 + 1, y: PERCH.y * 2 }
 const FLARE_FROM = { x: PERCH_DOTS.x + 2, y: PERCH_DOTS.y - 4 }
+
+/** The snag's talon spot in quadrant pixels on a scene `cols` wide. */
+export const snagAt = (cols: number) => ({
+  x: PERCH_DOTS.x + sceneShift(cols) * 2,
+  y: PERCH_DOTS.y / 2,
+})
 
 // Look-ahead shapes the arc; arcTiming derives its travel duration from distance and speed.
 const ARC_SHAPE_MS = 940
@@ -544,7 +552,7 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
     const bird = birdAt(t, plan, PERCH_DOTS)
     return { ...bird, x: bird.x + sx }
   }
-  const bird = at(plan.t)
+  const bird = plan.away ? { ...at(plan.t), pixels: [] } : at(plan.t)
   compositeScene(
     c,
     scene,
