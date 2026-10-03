@@ -139,20 +139,8 @@ const cases: {
 }[] = [
   { name: "live-claude-idle", agent: "claude", state: "idle", rule: "live_prompt_box" },
   { name: "live-claude-idle-draft", agent: "claude", state: "idle", rule: "live_prompt_box" },
-  {
-    name: "live-codex-idle",
-    agent: "codex",
-    state: "unknown",
-    rule: "codex_state_ambiguous",
-    python: "idle",
-  },
-  {
-    name: "live-codex-idle-draft",
-    agent: "codex",
-    state: "unknown",
-    rule: "codex_state_ambiguous",
-    python: "idle",
-  },
+  { name: "live-codex-idle", agent: "codex", state: "idle", rule: "osc_title_idle" },
+  { name: "live-codex-idle-draft", agent: "codex", state: "idle", rule: "osc_title_idle" },
 
   { name: "claude-working-title", agent: "claude", state: "working", rule: "osc_title_working" },
   { name: "claude-working-screen", agent: "claude", state: "working", rule: "live_turn_working" },
