@@ -43,6 +43,7 @@ export interface Today {
 
 export type RangeDays = 1 | 7 | 30
 export const RANGE_DAYS: readonly RangeDays[] = [1, 7, 30]
+export const RANGE_LABEL: Record<RangeDays, string> = { 1: "today", 7: "7d", 30: "30d" }
 
 export interface RangeTotals {
   days: RangeDays

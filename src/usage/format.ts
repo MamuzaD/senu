@@ -59,6 +59,24 @@ export function evenLeft(
   return Math.min(100, (remaining * 1000 * 100) / windowMs)
 }
 
+/**
+ * Seconds until the window runs dry at its burn rate so far: Infinity when
+ * nothing is used yet; null when the window is unknown or under a tenth of it
+ * has passed, where one burst would skew the projection.
+ */
+export function emptiesIn(
+  left: number | null,
+  resetsAt: number | null,
+  windowMs: number | null | undefined,
+): number | null {
+  if (left == null || resetsAt == null || !windowMs) return null
+  const elapsed = windowMs / 1000 - (resetsAt - nowSeconds())
+  const used = 100 - left
+  if (used <= 0) return Infinity
+  if (elapsed < windowMs / 10_000) return null
+  return (left * elapsed) / used
+}
+
 export const PACE_SLACK = 5
 
 export const markCell = (even: number) =>
@@ -83,3 +101,11 @@ export function formatTokens(n: number): string {
   if (n >= 1000) return short(n / 1e3, "k")
   return String(n)
 }
+
+/** Left margin of the popup's profile rows. */
+export const INDENT = "   "
+
+export const money = (v: number | null) =>
+  v == null
+    ? "—"
+    : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`

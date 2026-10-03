@@ -39,6 +39,21 @@ describe("stackedBars", () => {
     expect(columnTopDown(c, 1)[0]?.ch).toBe("▁")
   })
 
+  test("a partial top without an upper series leaves its background clear", () => {
+    const c = stackedBars(
+      [
+        { lower: 2, upper: 0 },
+        { lower: 1, upper: 0 },
+      ],
+      2,
+      1,
+      low,
+      high,
+    )
+    expect(columnTopDown(c, 1)[0]?.ch).toBe("▄")
+    expect(columnTopDown(c, 1)[0]?.bg).toBeNull()
+  })
+
   test("nothing to draw leaves the canvas empty", () => {
     const c = stackedBars([{ lower: 0, upper: 0 }], 4, 2, low, high)
     expect(c.cells.flat().every((cell) => cell === null)).toBe(true)

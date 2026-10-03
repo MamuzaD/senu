@@ -28,7 +28,7 @@ test("usage popup keymap switches views, ranges, and breakdowns", async () => {
     ),
   )
   await act(() => t.renderOnce())
-  expect(t.captureCharFrame()).toContain("c cost · q quit")
+  expect(t.captureCharFrame()).toContain("↑/↓ look · c cost · q quit")
 
   const underlined = () =>
     t
@@ -40,7 +40,7 @@ test("usage popup keymap switches views, ranges, and breakdowns", async () => {
   act(() => t.mockInput.pressKey("C", { shift: true }))
   await act(() => t.renderOnce())
   expect(t.captureCharFrame()).toContain("today  7d  30d")
-  expect(t.captureCharFrame()).toContain("←/→ range · ↑/↓ breakdown · tab limits · q quit")
+  expect(t.captureCharFrame()).toContain("←/→ range · ↑/↓ breakdown · c limits · q quit")
   expect(underlined()).toContain("today")
 
   act(() => t.mockInput.pressArrow("right"))
@@ -65,5 +65,5 @@ test("usage popup keymap switches views, ranges, and breakdowns", async () => {
 
   act(() => t.mockInput.pressTab())
   await act(() => t.renderOnce())
-  expect(t.captureCharFrame()).toContain("c cost · q quit")
+  expect(t.captureCharFrame()).toContain("↑/↓ look · c cost · q quit")
 })

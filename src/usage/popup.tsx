@@ -24,9 +24,10 @@ import { Sky } from "~/ui/sky.tsx"
 import { brand, colors, icons, mix, noColor } from "~/ui/theme.ts"
 
 import { getSnapshot, readCache } from "./cache.ts"
-import { axisLine, stackedBars } from "./chart.ts"
+import { axis, stackedBars } from "./chart.ts"
 import {
   BAR_WIDTH,
+  INDENT,
   LABEL_WIDTH,
   PACE_SLACK,
   bar,
@@ -38,13 +39,15 @@ import {
   formatTokens,
   formatUntil,
   markCell,
+  money,
 } from "./format.ts"
+import { Glance, glanceRows, glanceStacks } from "./glance.tsx"
 import {
   RANGE_DAYS,
+  RANGE_LABEL,
   readToday,
   spawnTodayRefresh,
   todayIsFresh,
-  type Bucket,
   type RangeDays,
   type RangeTotals,
   type Today,
@@ -65,9 +68,8 @@ const PACE_MARK = brand.papyrus
 const TODAY_WATCH_SECONDS = 30
 
 const HEADER = " "
-const INDENT = "   "
 
-interface Section {
+export interface Section {
   snapshot: Snapshot | null
   refreshing: boolean
   justUpdated: boolean
@@ -229,42 +231,114 @@ function freshness(
   }
 }
 
-function ProfileSection({
+/** The worst thing about a profile, for a title line folded down to make room. */
+function statusOf(snapshot: Snapshot | null): { text: string; fg: RGBA } | null {
+  if (!snapshot) return null
+  if (!snapshot.ok) return { text: "✗ error", fg: colors.bad }
+  const t = nowSeconds()
+  const levels = [
+    // A window past its reset has refilled, whatever the cache last saw.
+    ...snapshot.limits.map((l) => ({
+      label: l.label,
+      left: l.resetsAt != null && l.resetsAt <= t ? 100 : l.left,
+    })),
+    // As in the pace line, the spend cap matters only when there's no plan limit to fall back on.
+    ...(snapshot.spend && !snapshot.limits.length
+      ? [{ label: "Spend", left: snapshot.spend.left }]
+      : []),
+  ].filter((l): l is { label: string; left: number } => l.left != null)
+  if (!levels.length) return { text: "limits n/a", fg: colors.dim }
+  const low = levels.reduce((a, b) => (b.left < a.left ? b : a))
+  return { text: `${low.label} ${Math.round(low.left)}%`, fg: colorFor(low.left) }
+}
+
+export function ProfileSection({
   profile,
   section,
   dots,
   fillFrom,
   right,
+  looked,
+  collapsed,
+  gapBefore = 0,
+  today,
+  days,
+  scanning,
 }: {
   profile: UsageProfile
   section: Section
   dots: string
   fillFrom: number | null
   right: number
+  /** senu is looking at this profile: mark it and open its glance. */
+  looked: boolean
+  /** Only the title line (and any glance), so a glance fits a short terminal. */
+  collapsed: boolean
+  /** Blank rows above, from the list: none between two folded titles. */
+  gapBefore?: number
+  today: Today | null
+  days: RangeDays
+  scanning: boolean
 }) {
   const { snapshot } = section
   const codex = profile.kind === "codex"
-  const title = `${codex ? icons.codex : icons.claude} ${codex ? "Codex" : "Claude"} · ${profile.name}`
+  const kindTitle = `${codex ? icons.codex : icons.claude} ${codex ? "Codex" : "Claude"} · `
+  const title = kindTitle + profile.name
   const plan = snapshot?.planType ? ` · ${snapshot.planType}` : ""
   const lit = vision(section.landedAt)
   const glow = (fg: RGBA) => mix(fg, brand.gold, lit)
-  const fresh = freshness(section, dots, glow)
+  // A folded title shows the profile's worst state where freshness would be.
+  const fresh = (collapsed && statusOf(snapshot)) || freshness(section, dots, glow)
+  // The marker gets its own cell so it never runs into the icon.
+  const mark = looked ? "▸ " : "  "
   const pad = Math.max(
     2,
-    right - HEADER.length - Bun.stringWidth(title) - plan.length - Bun.stringWidth(fresh.text),
+    right - mark.length - Bun.stringWidth(title) - plan.length - Bun.stringWidth(fresh.text),
   )
   const fill = tween(fillFrom, FILL_MS, easeOut)
   return (
-    <box flexDirection="column" flexShrink={0}>
+    <box flexDirection="column" flexShrink={0} marginTop={gapBefore}>
       <Line>
-        {HEADER}
+        <span fg={brand.gold}>{mark}</span>
         <span fg={glow(codex ? colors.codex : colors.claude)} attributes={TextAttributes.BOLD}>
-          {title}
+          {kindTitle}
+        </span>
+        <span
+          fg={glow(codex ? colors.codex : colors.claude)}
+          attributes={TextAttributes.BOLD | (looked ? TextAttributes.UNDERLINE : 0)}
+        >
+          {profile.name}
         </span>
         {plan ? <span fg={colors.muted}>{plan}</span> : null}
         {" ".repeat(pad)}
         <span fg={fresh.fg}>{fresh.text}</span>
       </Line>
+      {collapsed ? null : <SectionBody section={section} fill={fill} right={right} />}
+      {looked ? (
+        <Glance
+          snapshot={snapshot}
+          today={today}
+          days={days}
+          scanning={scanning}
+          dots={dots}
+          right={right}
+        />
+      ) : null}
+    </box>
+  )
+}
+
+function SectionBody({
+  section: { snapshot },
+  fill,
+  right,
+}: {
+  section: Section
+  fill: number
+  right: number
+}) {
+  return (
+    <>
       {snapshot && !snapshot.ok ? (
         <Line fg={colors.bad}>{`${INDENT}✗ ${snapshot.error ?? "unknown"}`}</Line>
       ) : null}
@@ -287,8 +361,15 @@ function ProfileSection({
       {snapshot?.ok && snapshot.banked ? (
         <BankedRow banked={snapshot.banked} right={right} />
       ) : null}
-    </box>
+    </>
   )
+}
+
+/** Terminal rows a ProfileSection takes without its glance; one when collapsed. */
+function sectionRows({ snapshot }: Section, collapsed = false): number {
+  if (!snapshot || collapsed) return 1
+  if (!snapshot.ok) return 2
+  return 1 + snapshot.limits.length + (snapshot.spend ? 1 : 0) + (snapshot.banked ? 1 : 0)
 }
 
 function untilNextMinute(sections: Section[]): number {
@@ -317,7 +398,6 @@ export function sceneTime(scene: UsageScene, at = new Date()): SceneTime {
   return "night"
 }
 
-const RANGE_LABEL: Record<RangeDays, string> = { 1: "today", 7: "7d", 30: "30d" }
 export type Breakdown = "profile" | "model"
 export const BREAKDOWNS: readonly Breakdown[] = ["profile", "model"]
 const BREAKDOWN_LABEL: Record<Breakdown, string> = { profile: "by profile", model: "by model" }
@@ -331,10 +411,6 @@ const MAX_BREAKDOWN_ROWS = 6
 const SHARE_COLS = 7
 const VALUE_COLS = 10 + SHARE_COLS + 10
 
-const money = (v: number | null) =>
-  v == null
-    ? "—"
-    : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 function percent(part: number, whole: number): string {
   if (!(whole > 0)) return "—"
   const share = Math.round((100 * part) / whole)
@@ -348,57 +424,6 @@ const PROFILE_KIND_WIDTH = Math.max(
   Bun.stringWidth(kindTitle("codex")),
   Bun.stringWidth(kindTitle("claude")),
 )
-
-function bucketLabel(label: string, days: RangeDays): string {
-  if (days === 1) return `${label}h`
-  const date = bucketDate(label)
-  return days === 7
-    ? `${date.toLocaleDateString("en-US", { weekday: "short" })} ${date.getDate()}`
-    : date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-}
-
-const bucketDate = (label: string) => {
-  const [y = 0, m = 1, d = 1] = label.split("-").map(Number)
-  return new Date(y, m - 1, d)
-}
-
-type AxisPick = (i: number, buckets: Bucket[]) => boolean
-const MIN_DAYS_BEFORE_TODAY = 3
-
-const everyNthHour =
-  (n: number): AxisPick =>
-  (i) =>
-    i % n === 0
-const everyNthDayBack =
-  (n: number): AxisPick =>
-  (i, b) =>
-    (b.length - 1 - i) % n === 0
-const mondaysAndToday =
-  (everyWeeks: number): AxisPick =>
-  (i, b) => {
-    const daysBack = b.length - 1 - i
-    if (daysBack === 0) return true
-    return (
-      bucketDate(b[i]!.label).getDay() === 1 &&
-      daysBack >= MIN_DAYS_BEFORE_TODAY &&
-      Math.round(daysBack / 7) % everyWeeks === 0
-    )
-  }
-
-const AXIS_PICKS: Record<RangeDays, AxisPick[]> = {
-  1: [3, 6, 12].map(everyNthHour),
-  7: [1, 2].map(everyNthDayBack),
-  30: [1, 2].map(mondaysAndToday),
-}
-
-function axis(buckets: Bucket[], days: RangeDays, width: number): string {
-  for (const pick of AXIS_PICKS[days]) {
-    const labels = buckets.map((b, i) => (pick(i, buckets) ? bucketLabel(b.label, days) : null))
-    const line = axisLine(labels, width)
-    if (line) return line
-  }
-  return ""
-}
 
 export function CostView({
   profiles,
@@ -661,19 +686,27 @@ type View = "limits" | "cost"
 
 type HintBinding = Binding & { desc?: string }
 
-const quitKeys: HintBinding[] = [
+/** Esc first closes the glance, then quits. */
+const quitKeys = (looking: boolean): HintBinding[] => [
+  ...(looking ? [{ key: "escape", cmd: "look-none", desc: "esc close" }] : []),
   { key: "q", cmd: "quit", desc: "q quit" },
   { key: "shift+q", cmd: "quit" },
-  { key: "escape", cmd: "quit" },
+  ...(looking ? [] : [{ key: "escape", cmd: "quit" }]),
 ]
 const limitsKeys: HintBinding[] = [
+  { key: "up", cmd: "look-previous", desc: "↑/↓ look" },
+  { key: "down", cmd: "look-next" },
+  { key: "k", cmd: "look-previous" },
+  { key: "shift+k", cmd: "look-previous" },
+  { key: "j", cmd: "look-next" },
+  { key: "shift+j", cmd: "look-next" },
   { key: "c", cmd: "show-cost", desc: "c cost" },
   { key: "shift+c", cmd: "show-cost" },
   { key: "t", cmd: "show-cost" },
   { key: "shift+t", cmd: "show-cost" },
   { key: "tab", cmd: "toggle-view" },
 ]
-const costKeys: HintBinding[] = [
+const rangeKeys: HintBinding[] = [
   { key: "left", cmd: "previous-range", desc: "←/→ range" },
   { key: "right", cmd: "next-range" },
   { key: "h", cmd: "previous-range" },
@@ -682,20 +715,27 @@ const costKeys: HintBinding[] = [
   { key: "shift+l", cmd: "next-range" },
   { key: "[", cmd: "previous-range" },
   { key: "]", cmd: "next-range" },
+]
+const costKeys: HintBinding[] = [
+  ...rangeKeys,
   { key: "up", cmd: "toggle-breakdown", desc: "↑/↓ breakdown" },
   { key: "down", cmd: "toggle-breakdown" },
   { key: "j", cmd: "toggle-breakdown" },
   { key: "shift+j", cmd: "toggle-breakdown" },
   { key: "k", cmd: "toggle-breakdown" },
   { key: "shift+k", cmd: "toggle-breakdown" },
-  { key: "tab", cmd: "toggle-view", desc: "tab limits" },
-  { key: "c", cmd: "show-cost" },
-  { key: "shift+c", cmd: "show-cost" },
-  { key: "t", cmd: "show-cost" },
-  { key: "shift+t", cmd: "show-cost" },
+  { key: "c", cmd: "toggle-view", desc: "c limits" },
+  { key: "shift+c", cmd: "toggle-view" },
+  { key: "t", cmd: "toggle-view" },
+  { key: "shift+t", cmd: "toggle-view" },
+  { key: "tab", cmd: "toggle-view" },
 ]
 
-const viewKeys = (view: View) => [...(view === "cost" ? costKeys : limitsKeys), ...quitKeys]
+/** The glance's chart takes the range keys while senu looks at a profile. */
+const viewKeys = (view: View, looking: boolean) => [
+  ...(view === "cost" ? costKeys : looking ? [...rangeKeys, ...limitsKeys] : limitsKeys),
+  ...quitKeys(view === "limits" && looking),
+]
 
 export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneTime }) {
   const renderer = useRenderer()
@@ -793,10 +833,19 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
   const [view, setView] = useState<View>("limits")
   const [range, setRange] = useState(0)
   const [breakdown, setBreakdown] = useState<Breakdown>("profile")
+  const [gaze, setGaze] = useState<number | null>(null)
+  const look = (step: 1 | -1) => {
+    // The cycle runs through -1, where senu looks at no profile.
+    setGaze((g) => {
+      const slots = profiles.length + 1
+      const at = (((g ?? -1) + 1 + step + slots) % slots) - 1
+      return at === -1 ? null : at
+    })
+  }
   const activeKeys = useActiveKeys({ includeMetadata: true })
   useBindings(
     () => ({
-      bindings: viewKeys(view),
+      bindings: viewKeys(view, gaze != null),
       commands: [
         { name: "quit", run: () => renderer.destroy() },
         { name: "show-cost", run: () => setView("cost") },
@@ -806,13 +855,16 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
           run: () => setRange((r) => (r + RANGE_DAYS.length - 1) % RANGE_DAYS.length),
         },
         { name: "next-range", run: () => setRange((r) => (r + 1) % RANGE_DAYS.length) },
+        { name: "look-previous", run: () => look(-1) },
+        { name: "look-next", run: () => look(1) },
+        { name: "look-none", run: () => setGaze(null) },
         {
           name: "toggle-breakdown",
           run: () => setBreakdown((b) => (b === "profile" ? "model" : "profile")),
         },
       ],
     }),
-    [view, renderer],
+    [view, gaze != null, renderer, profiles.length],
   )
 
   const t = now()
@@ -832,6 +884,29 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
   }
   const flying = !noColor && !flightDone(plan)
 
+  const right = Math.min(cols, width) - 1
+  const skyRows = noColor ? 0 : SCENE_ROWS + GAP_ROWS
+  const listRows = height - FOOTER_ROWS
+  const glanceStacked = glanceStacks(right)
+  // A glance that won't fit folds the other profiles to their titles, then the
+  // sky gives way, then the looked-at profile folds its own limits behind its glance.
+  const foldsAt = (fold: 0 | 1 | 2) => (i: number) => fold === 2 || (fold === 1 && i !== gaze)
+  // Folded titles stack without a gap between them.
+  const gapBefore = (folded: (i: number) => boolean, i: number) =>
+    i > 0 && !(folded(i) && folded(i - 1)) ? 1 : 0
+  const rowsWith = (fold: 0 | 1 | 2) => {
+    const folded = foldsAt(fold)
+    return (
+      sections.reduce((n, s, i) => n + gapBefore(folded, i) + sectionRows(s, folded(i)), 0) +
+      (gaze == null ? 0 : glanceRows(glanceStacked))
+    )
+  }
+  const fits = (fold: 0 | 1 | 2, sky: boolean) => rowsWith(fold) <= listRows - (sky ? skyRows : 0)
+  const fold: 0 | 1 | 2 =
+    gaze == null || fits(0, true) ? 0 : fits(1, true) || fits(1, false) ? 1 : 2
+  const skyless = fold > 0 && !fits(fold, true)
+  const folded = foldsAt(fold)
+
   const fillFrom = sections.map(
     (s, i) =>
       s.landedAt ??
@@ -843,12 +918,15 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
   useTicker(flying || tweening ? FPS : busy ? 1000 / DOTS_MS : 0)
 
   const dots = reducedMotion ? "..." : ".".repeat((Math.floor((t - openedAt) / DOTS_MS) % 3) + 1)
-  const right = Math.min(cols, width) - 1
-  const note = busy
-    ? "senu is circling"
-    : flightDone(plan)
-      ? "senu keeps watch"
-      : "senu comes in to land"
+  const note = skyless
+    ? ""
+    : busy
+      ? "senu is circling"
+      : !flightDone(plan)
+        ? "senu comes in to land"
+        : gaze != null && view === "limits"
+          ? "senu looks closer"
+          : "senu keeps watch"
   const hint = activeKeys
     .map((key) => key.bindingAttrs?.desc)
     .filter((desc): desc is string => typeof desc === "string")
@@ -858,18 +936,26 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
   return (
     <box flexDirection="column" height={height} gap={1}>
       <box flexDirection="column" gap={1} flexGrow={1} flexShrink={1} overflow="hidden">
-        {noColor ? null : <Sky plan={plan} width={width} />}
+        {noColor || skyless ? null : <Sky plan={plan} width={width} />}
         {view === "limits" ? (
-          profiles.map((profile, i) => (
-            <ProfileSection
-              key={`${profile.kind}:${profile.name}`}
-              profile={profile}
-              section={sections[i]!}
-              dots={dots}
-              fillFrom={fillFrom[i]!}
-              right={right}
-            />
-          ))
+          <box flexDirection="column" flexShrink={1}>
+            {profiles.map((profile, i) => (
+              <ProfileSection
+                key={`${profile.kind}:${profile.name}`}
+                gapBefore={gapBefore(folded, i)}
+                profile={profile}
+                section={sections[i]!}
+                dots={dots}
+                fillFrom={fillFrom[i]!}
+                right={right}
+                looked={gaze === i}
+                collapsed={folded(i)}
+                today={todays[i] ?? null}
+                days={RANGE_DAYS[range]!}
+                scanning={watchingToday[i] ?? false}
+              />
+            ))}
+          </box>
         ) : (
           <CostView
             profiles={profiles}
@@ -888,8 +974,13 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
         <span fg={colors.muted} attributes={TextAttributes.DIM}>
           {hint}
         </span>
-        {" ".repeat(Math.max(2, right - HEADER.length - hint.length - note.length))}
-        <span fg={busy ? brand.dusk : brand.shadow}>{note}</span>
+        {/* The note gives way before the keys do. */}
+        {HEADER.length + hint.length + 2 + note.length <= right ? (
+          <>
+            {" ".repeat(right - HEADER.length - hint.length - note.length)}
+            <span fg={busy ? brand.dusk : brand.shadow}>{note}</span>
+          </>
+        ) : null}
       </Line>
     </box>
   )

@@ -2,6 +2,8 @@ import type { RGBA } from "@opentui/core"
 
 import { Canvas } from "~/ui/canvas.tsx"
 
+import type { Bucket, RangeDays } from "./today.ts"
+
 const BLOCKS = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
 const MAX_BAR = 8
 
@@ -60,7 +62,7 @@ export function stackedBars(
           ? { ch: "█", fg: lowerFg, bg: null }
           : a === 0
             ? { ch: BLOCKS[t]!, fg: upperFg, bg: null }
-            : { ch: BLOCKS[a]!, fg: lowerFg, bg: upperFg }
+            : { ch: BLOCKS[a]!, fg: lowerFg, bg: t > a ? upperFg : null }
       for (let col = x0; col < x0 + bar; col++)
         canvas.put(col, rows - 1 - row, cell.ch, cell.fg, { bg: cell.bg })
     }
@@ -86,4 +88,64 @@ export function axisLine(labels: (string | null)[], width: number): string | nul
     free = at + text.length + 1
   }
   return line.join("")
+}
+
+/** Compact labels drop to the hour, a two-letter weekday, or the day of the month. */
+export function bucketLabel(label: string, days: RangeDays, compact = false): string {
+  if (days === 1) return compact ? String(Number(label)) : `${label}h`
+  const date = bucketDate(label)
+  if (compact)
+    return days === 7
+      ? date.toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2)
+      : String(date.getDate())
+  return days === 7
+    ? `${date.toLocaleDateString("en-US", { weekday: "short" })} ${date.getDate()}`
+    : date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+}
+
+export const bucketDate = (label: string) => {
+  const [y = 0, m = 1, d = 1] = label.split("-").map(Number)
+  return new Date(y, m - 1, d)
+}
+
+type AxisPick = (i: number, buckets: Bucket[]) => boolean
+const MIN_DAYS_BEFORE_TODAY = 3
+
+const everyNthHour =
+  (n: number): AxisPick =>
+  (i) =>
+    i % n === 0
+const everyNthDayBack =
+  (n: number): AxisPick =>
+  (i, b) =>
+    (b.length - 1 - i) % n === 0
+const mondaysAndToday =
+  (everyWeeks: number): AxisPick =>
+  (i, b) => {
+    const daysBack = b.length - 1 - i
+    if (daysBack === 0) return true
+    return (
+      bucketDate(b[i]!.label).getDay() === 1 &&
+      daysBack >= MIN_DAYS_BEFORE_TODAY &&
+      Math.round(daysBack / 7) % everyWeeks === 0
+    )
+  }
+
+const AXIS_PICKS: Record<RangeDays, AxisPick[]> = {
+  1: [3, 6, 12].map(everyNthHour),
+  7: [1, 2].map(everyNthDayBack),
+  30: [1, 2].map(mondaysAndToday),
+}
+
+/** Full labels when any spacing fits them, else compact ones. */
+export function axis(buckets: Bucket[], days: RangeDays, width: number): string {
+  for (const compact of [false, true])
+    for (const pick of AXIS_PICKS[days]) {
+      const labels = buckets.map((b, i) =>
+        pick(i, buckets) ? bucketLabel(b.label, days, compact) : null,
+      )
+      const line = axisLine(labels, width)
+      if (line) return line
+    }
+  return ""
 }
