@@ -155,8 +155,13 @@ function Row({
 function SpendRow({ spend, fill, cols }: { spend: Spend; fill: number; cols: number }) {
   const color = spend.reached ? colors.bad : colorFor(spend.left)
   const reset = formatUntil(spend.resetsAt)
-  const text = ` $${spend.used.toFixed(2)}/$${spend.limit.toFixed(0)}${spend.reached ? " cap reached" : ""}`
-  const used = INDENT.length + LABEL_WIDTH + BAR_WIDTH + 5 + text.length
+  // Codex reports the cap in workspace credits, not dollars.
+  const amount = ` ${spend.used.toFixed(2)}/${spend.limit.toFixed(0)} credits`
+  const start = INDENT.length + LABEL_WIDTH + BAR_WIDTH + 5 + amount.length
+  // The red empty bar already says the cap is reached, so the words give way to the reset first.
+  const capped =
+    spend.reached && (!reset || start + " cap reached".length + 2 + reset.length <= cols)
+  const used = start + (capped ? " cap reached".length : 0)
   const gap = reset && used + 2 + reset.length <= cols ? "  " : " "
   const shown = spend.left == null ? null : spend.left * fill
   return (
@@ -164,9 +169,9 @@ function SpendRow({ spend, fill, cols }: { spend: Spend; fill: number; cols: num
       {INDENT + "Spend".padEnd(LABEL_WIDTH)}
       <span fg={colorFor(spend.left)}>{bar(shown)}</span>
       <span fg={color}>{" " + (shown == null ? "n/a" : `${Math.round(shown)}%`).padStart(4)}</span>
-      <span fg={color}>{` $${spend.used.toFixed(2)}`}</span>
-      <span fg={colors.muted}>{`/$${spend.limit.toFixed(0)}`}</span>
-      {spend.reached ? <span fg={colors.bad}> cap reached</span> : null}
+      <span fg={color}>{` ${spend.used.toFixed(2)}`}</span>
+      <span fg={colors.muted}>{`/${spend.limit.toFixed(0)} credits`}</span>
+      {capped ? <span fg={colors.bad}> cap reached</span> : null}
       {reset ? <span fg={brand.papyrus}>{gap + reset}</span> : null}
       {reset ? (
         <Clock at={spend.resetsAt} used={used + gap.length + reset.length} right={cols - 1} />
