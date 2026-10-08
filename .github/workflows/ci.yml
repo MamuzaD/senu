@@ -32,6 +32,9 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Shellcheck
+        run: shellcheck install.sh
+
   test:
     name: Test (${{ matrix.os }})
     strategy:
