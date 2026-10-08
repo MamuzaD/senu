@@ -969,17 +969,14 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
   const gutter = new Canvas(GUTTER, Math.max(0, costRows + GAP_ROWS))
   if (hop && perches) {
     paintHop(gutter, hop, t, time, { x: width - GUTTER, y: SCENE_ROWS })
-    // Perched, senu stands on a post that runs the length of the profile it watches.
+    // Perched, senu stands on a branch that reaches in from the right edge.
     if (gaze != null && travel?.to === gaze && !hopRunning(hop, t)) {
-      const feet = (hop.to.y - 1) / 2 + 1
-      const end =
-        topOf(gaze) + sectionRows(sections[gaze]!, folded(gaze)) + glanceRows(glanceStacked) - 1
-      // In the scene's pixel blocks: a half-cell trunk under the talons, flaring at its foot.
+      const row = (hop.to.y - 1) / 2 + 1 - SCENE_ROWS
+      // In the scene's pixel blocks: a half-cell limb under the talons, tapering to a tip.
       const bark = mix(brand.shadow, brand.sand, 0.3)
-      for (let row = feet; row < end; row++) gutter.put(2, row - SCENE_ROWS, "▐", bark)
-      gutter.put(1, end - SCENE_ROWS, "▗", bark)
-      gutter.put(2, end - SCENE_ROWS, "█", bark)
-      gutter.put(3, end - SCENE_ROWS, "▖", bark)
+      gutter.put(1, row, "▝", bark)
+      for (let x = 2; x < GUTTER - 1; x++) gutter.put(x, row, "▀", bark)
+      gutter.put(GUTTER - 1, row, "█", bark)
     }
   }
 
