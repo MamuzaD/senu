@@ -1,3 +1,5 @@
+// Ported from herdr (Apache-2.0), modified. See THIRD_PARTY_NOTICES.md.
+
 import { dlopen, FFIType, ptr } from "bun:ffi"
 import { readFileSync } from "node:fs"
 

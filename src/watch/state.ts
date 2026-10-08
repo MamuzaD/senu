@@ -1,3 +1,5 @@
+// Ported from herdr (Apache-2.0), modified. See THIRD_PARTY_NOTICES.md.
+
 import type { Detection } from "~/detect/engine.ts"
 
 export type PaneState = "idle" | "working" | "blocked"

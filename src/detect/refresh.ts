@@ -34,8 +34,12 @@ import codexToml from "./manifests/codex.toml" with { type: "text" }
  */
 
 export const PRIMARY = "https://herdr.dev/agent-detection"
+/**
+ * herdr.dev serves these from distribution/agent-detection in herdr's repo
+ * (website/agent-detection was removed upstream in 8a6d6973).
+ */
 export const MIRROR =
-  "https://raw.githubusercontent.com/herdrdev/herdr/HEAD/website/agent-detection"
+  "https://raw.githubusercontent.com/herdrdev/herdr/HEAD/distribution/agent-detection"
 /** herdr's MAX_FETCH_BYTES. */
 const MAX_BYTES = 256 * 1024
 const DAY_SECONDS = 24 * 60 * 60

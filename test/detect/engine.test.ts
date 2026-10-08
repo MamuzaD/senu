@@ -17,6 +17,7 @@ const run = (
   previous: AgentState | null = null,
 ) => explainWith(loaded(rules), agent, { screen, oscTitle: "" }, previous)
 
+// Rules and first three tests ported from herdr (Apache-2.0), modified. See THIRD_PARTY_NOTICES.md.
 describe("herdr rule semantics", () => {
   const rules = `
 [[rules]]

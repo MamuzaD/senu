@@ -1,3 +1,5 @@
+// Ported from herdr (Apache-2.0), modified. See THIRD_PARTY_NOTICES.md.
+
 /**
  * Manifest regions: the slice of the screen (or the OSC title) a rule looks at.
  * Follows herdr's region selection and fallback behavior: a missing region is

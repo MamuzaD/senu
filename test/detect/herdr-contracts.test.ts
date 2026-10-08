@@ -1,3 +1,5 @@
+// Ported from herdr (Apache-2.0), modified. See THIRD_PARTY_NOTICES.md.
+
 import { describe, expect, test } from "bun:test"
 
 import { explainWith } from "~/detect/engine.ts"

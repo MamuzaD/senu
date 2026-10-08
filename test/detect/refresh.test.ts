@@ -65,8 +65,21 @@ describe("refreshAgent", () => {
   })
 
   test("falls back to the GitHub mirror", async () => {
-    const o = await refreshAgent("codex", opts({ [`${MIRROR}/codex.toml`]: codexAt("2999.1.1.1") }))
+    const asked: string[] = []
+    const get = serve({ [`${MIRROR}/codex.toml`]: codexAt("2999.1.1.1") })
+    const o = await refreshAgent("codex", {
+      ...opts({}),
+      fetch: async (url) => {
+        asked.push(url)
+        return get(url)
+      },
+    })
     expect(o.status).toBe("updated")
+    // pinned literally: herdr has moved this directory before
+    expect(asked).toEqual([
+      "https://herdr.dev/agent-detection/codex.toml",
+      "https://raw.githubusercontent.com/herdrdev/herdr/HEAD/distribution/agent-detection/codex.toml",
+    ])
   })
 
   test("both down is a failure", async () => {
