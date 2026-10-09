@@ -10,14 +10,14 @@ test("text sits left of the perched bird, which starts past the longest line", (
   ])
   expect(Bun.stripANSI(out).split("\n")).toEqual([
     "",
-    "senu       ▗█▖",
-    "sound on    ▛█▖",
-    "            ▀██▖",
-    "             ▘▝▀",
+    "senu       ▟▙",
+    "sound on   ▐▘▙",
+    "           ▝▜█▙",
+    "            ▝ ▀▘",
     "",
   ])
   expect(out).toContain("\x1b[1;38;2;242;196;107msenu\x1b[0m")
-  expect(out).toContain("\x1b[38;2;233;220;192;48;2;186;162;132m▛")
+  expect(out).toContain("\x1b[38;2;233;220;192;48;2;186;162;132m▘")
 })
 
 test("NO_COLOR keeps the layout without escapes", async () => {
@@ -31,5 +31,5 @@ test("NO_COLOR keeps the layout without escapes", async () => {
   )
   const out = await new Response(proc.stdout).text()
   expect(out).not.toContain("\x1b")
-  expect(out.split("\n").slice(1, 3)).toEqual(["senu   ▗█▖", "hi      ██▖"])
+  expect(out.split("\n").slice(1, 3)).toEqual(["senu   ▟▙", "hi     ▐█▙"])
 })

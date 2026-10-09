@@ -7,7 +7,7 @@ import { brand, noColor } from "./theme.ts"
 export type Span = [text: string, fg: RGBA, bold?: boolean]
 
 const GAP = 3
-const PERCHED = { width: 5, height: 4, talonsX: 2 }
+const PERCHED = { width: 5, height: 4, talonsX: 1 }
 
 const rgb = (c: RGBA) => c.toInts().slice(0, 3).join(";")
 

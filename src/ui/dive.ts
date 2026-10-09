@@ -32,8 +32,11 @@ function spritePixels(rows: string[], ox: number, oy: number): [number, number, 
 const STOOP_PX = spritePixels(STOOP, 1, 4)
 const SWEEP_PX = spritePixels(SWEEP, 0, 2)
 
+/** The talons' quadrant column: the cell's right half, as on the sky's snag, so the sprite splits into the same glyphs. */
+const talonX = (perch: { x: number }) => perch.x * 2 + 1
+
 function path(plan: DivePlan, k: number) {
-  const p0 = { x: plan.perch.x * 2, y: plan.perch.y * 2 - 3 }
+  const p0 = { x: talonX(plan.perch), y: plan.perch.y * 2 - 3 }
   const p2 = { x: plan.target.x * 2 + 2, y: plan.target.y * 2 + 1 }
   const p1 = { x: p0.x, y: p2.y }
   const a = (1 - k) ** 2
@@ -71,10 +74,10 @@ export function paintSenu(c: Canvas, plan: DivePlan) {
   let at: { x: number; y: number }
   if (t == null) {
     pixels = landingPixels("perch", -1)
-    at = { x: plan.perch.x * 2, y: plan.perch.y * 2 }
+    at = { x: talonX(plan.perch), y: plan.perch.y * 2 }
   } else if (t < LAUNCH_MS) {
     pixels = flyingPixels(7, -0.9)
-    at = { x: plan.perch.x * 2, y: plan.perch.y * 2 - 3 * easeOut(t / LAUNCH_MS) }
+    at = { x: talonX(plan.perch), y: plan.perch.y * 2 - 3 * easeOut(t / LAUNCH_MS) }
   } else if (t < LAUNCH_MS + STOOP_MS) {
     const p = path(plan, stoopK(t))
     pixels = p.steep ? STOOP_PX : SWEEP_PX

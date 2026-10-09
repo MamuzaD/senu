@@ -940,9 +940,10 @@ export function UsagePopup({
   }
   const perchAt = (to: number | null): Point => {
     if (to == null) return snagAt(cols)
-    // Stand beside the profile's limits, level with its last row.
+    // Stand beside the profile's limits, level with its last row. Talons in the
+    // cell's top half, as on the snag, so the sprite splits into the same glyphs.
     const last = topOf(to) + sectionRows(sections[to]!, folded(to)) - 1
-    return { x: (width - GUTTER) * 2 + 5, y: last * 2 + 1 }
+    return { x: (width - GUTTER) * 2 + 5, y: last * 2 }
   }
   const hop: Hop | null = travel && { from: travel.from, to: perchAt(travel.to), at: travel.at }
   const goal = perches && flightDone(plan) ? gaze : null
@@ -983,16 +984,16 @@ export function UsagePopup({
   const costRows = height - (noColor ? 0 : SCENE_ROWS + GAP_ROWS) - FOOTER_ROWS
   const gutter = new Canvas(GUTTER, Math.max(0, costRows + GAP_ROWS))
   if (hop && perches) {
-    paintHop(gutter, hop, t, time, { x: width - GUTTER, y: SCENE_ROWS })
     // Perched, senu stands on a branch that reaches in from the right edge.
     if (gaze != null && travel?.to === gaze && !hopRunning(hop, t)) {
-      const row = (hop.to.y - 1) / 2 + 1 - SCENE_ROWS
-      // In the scene's pixel blocks: a half-cell limb under the talons, tapering to a tip.
+      // A half-cell limb in the talons' cell, under them, tapering to a tip; painted
+      // first so the bird sits over it.
+      const row = hop.to.y / 2 - SCENE_ROWS
       const bark = mix(brand.shadow, brand.sand, 0.3)
-      gutter.put(1, row, "▝", bark)
-      for (let x = 2; x < GUTTER - 1; x++) gutter.put(x, row, "▀", bark)
-      gutter.put(GUTTER - 1, row, "█", bark)
+      gutter.put(1, row, "▗", bark)
+      for (let x = 2; x < GUTTER; x++) gutter.put(x, row, "▄", bark)
     }
+    paintHop(gutter, hop, t, time, { x: width - GUTTER, y: SCENE_ROWS })
   }
 
   return (
