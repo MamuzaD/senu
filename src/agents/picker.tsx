@@ -9,6 +9,7 @@ import { Canvas, CanvasView } from "~/ui/canvas.tsx"
 import { DIVE_MS, paintSenu, rowGlow, type DivePlan } from "~/ui/dive.ts"
 import { FPS, now, reducedMotion, useTicker } from "~/ui/motion.ts"
 import { brand, colors, hex, icons, mix, noColor, states } from "~/ui/theme.ts"
+import { UpdateGate, updateGate } from "~/update/gate.tsx"
 import { formatDuration } from "~/usage/format.ts"
 
 import { jump, kill } from "./actions.ts"
@@ -360,11 +361,15 @@ export async function runPicker(
     createCliRenderer({ useMouse: false, onDestroy: resolve }),
   ])
   const keymap = createDefaultOpenTuiKeymap(renderer)
+  const gate = updateGate(renderer)
   createRoot(renderer).render(
     <KeymapProvider keymap={keymap}>
-      <Picker collector={collector} initial={initial} raiseGhosttyTab={opts.raiseGhosttyTab} />
+      <UpdateGate release={gate.release} onUpdate={gate.onUpdate}>
+        <Picker collector={collector} initial={initial} raiseGhosttyTab={opts.raiseGhosttyTab} />
+      </UpdateGate>
     </KeymapProvider>,
   )
   await closed
+  await gate.finish()
   process.exit(0)
 }

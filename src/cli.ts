@@ -31,6 +31,10 @@ const COMMANDS: Record<string, Command> = {
     about: "show or change Senu's chimes",
     run: async (a, c) => (await import("./watch/sound-command.ts")).soundCommand(a, c),
   },
+  update: {
+    about: "update senu to the latest release",
+    run: async (a, c) => (await import("./update/command.ts")).updateCommand(a, c),
+  },
 }
 
 async function help(): Promise<string> {
@@ -54,23 +58,35 @@ async function help(): Promise<string> {
   ].join("\n")
 }
 
-const write = (stream: NodeJS.WriteStream, text: string) =>
-  stream.write(stream.isTTY ? text : Bun.stripANSI(text))
+/** Mentions a newer release the daemon has already seen; never hits the network. */
+async function hintUpdate() {
+  const latest = (await import("./update/release.ts")).newerRelease()
+  if (!latest) return
+  const [{ write }, { availableLine }] = await Promise.all([
+    import("./ui/banner.ts"),
+    import("./update/command.ts"),
+  ])
+  write(process.stderr, `${availableLine(latest)}\n`)
+}
 
 async function main(argv: string[]): Promise<number> {
   const [name, ...args] = argv
   if (!name || name === "help" || name === "-h" || name === "--help") {
+    const { write } = await import("./ui/banner.ts")
     write(process.stdout, await help())
+    await hintUpdate()
     return 0
   }
   if (name === "version" || name === "-v" || name === "--version") {
     console.log(`senu ${version}`)
+    await hintUpdate()
     return 0
   }
 
   const command = COMMANDS[name]
   if (!command) {
     console.error(`senu: unknown command "${name}"\n`)
+    const { write } = await import("./ui/banner.ts")
     write(process.stderr, await help())
     return 2
   }

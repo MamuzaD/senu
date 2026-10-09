@@ -8,7 +8,6 @@ import { bundledManifest } from "~/detect/manifest.ts"
 import claudeToml from "~/detect/manifests/claude.toml" with { type: "text" }
 import codexToml from "~/detect/manifests/codex.toml" with { type: "text" }
 import {
-  compareVersions,
   manifestsCommand,
   MIRROR,
   PRIMARY,
@@ -16,6 +15,7 @@ import {
   syncedRecently,
   type Fetcher,
 } from "~/detect/refresh.ts"
+import { compareVersions } from "~/version.ts"
 
 const bundled = { claude: claudeToml as string, codex: codexToml as string }
 const codexVersion = bundledManifest("codex").manifest.version!

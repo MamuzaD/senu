@@ -15,6 +15,7 @@ import {
   type Pane,
 } from "~/detect/panes.ts"
 import { compiled, selfCommand, stateDir } from "~/paths.ts"
+import { checkLatest } from "~/update/release.ts"
 
 import { claimPidFile, isWatcher, lockLost, releasePidFile } from "./lock.ts"
 import { binaryChanged, handOff, HandOffSchedule } from "./rebuild.ts"
@@ -37,6 +38,8 @@ import {
 
 export const POLL_MS = 1000
 const SERVER_GONE_MS = 30_000
+/** How often to consult the release cache; it only asks GitHub once a day. senu mentions a newer release when you next use it. */
+const UPDATE_CHECK_MS = 60 * 60 * 1000
 /** tmux option stamped with epoch seconds so clients can detect a stale watcher. */
 export const HEARTBEAT_OPTION = "@ai_watch_heartbeat"
 
@@ -243,6 +246,7 @@ export async function runDaemon(): Promise<number> {
   let ownerElsewhere = false
 
   let lastFull = 0
+  let lastUpdateCheck = -Infinity
   let goneSince: number | null = null
   const poll = async (full: boolean, now: number) => {
     if (await watcher.tick(full, now)) {
@@ -265,6 +269,11 @@ export async function runDaemon(): Promise<number> {
       if (full) lastFull = started
       await poll(full, started).catch(() => {})
       if (full && rebuilt()) handOffs.rebuilt(started)
+      if (started - lastUpdateCheck >= UPDATE_CHECK_MS) {
+        lastUpdateCheck = started
+        // Not awaited: a slow network must not stall polling.
+        checkLatest().catch(() => {})
+      }
       if (!stopping && handOffs.due(started)) {
         const command = [...selfCommand(), "watch", "-S", socket]
         const result = await handOff(lock, command, {

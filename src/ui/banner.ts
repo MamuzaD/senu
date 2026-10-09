@@ -57,3 +57,7 @@ export function banner(message: Span[]): string {
   paintSenu(c, { t: null, perch, target: perch })
   return `\n${ansi(c)}\n`
 }
+
+/** Writes text with its colours to a terminal, and without them anywhere else. */
+export const write = (stream: NodeJS.WriteStream, text: string) =>
+  stream.write(stream.isTTY ? text : Bun.stripANSI(text))

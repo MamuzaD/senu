@@ -10,6 +10,7 @@ import { dirname, join } from "node:path"
 
 import type { Config } from "~/config.ts"
 import { stateDir } from "~/paths.ts"
+import { compareVersions } from "~/version.ts"
 
 import {
   AGENTS,
@@ -57,17 +58,6 @@ export const httpFetch: Fetcher = async (url) => {
   const text = await res.text()
   if (text.length > MAX_BYTES) throw new Error(`larger than ${MAX_BYTES} bytes`)
   return text
-}
-
-/** herdr's ManifestVersion order: numeric by segment, missing segments count as 0. */
-export function compareVersions(a: string, b: string): number {
-  const x = a.split(".").map(BigInt)
-  const y = b.split(".").map(BigInt)
-  for (let i = 0; i < Math.max(x.length, y.length); i++) {
-    const d = (x[i] ?? 0n) - (y[i] ?? 0n)
-    if (d !== 0n) return d > 0n ? 1 : -1
-  }
-  return 0
 }
 
 /** A fetched manifest the engine would load for `agent`, with a version to compare. */

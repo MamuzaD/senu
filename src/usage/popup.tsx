@@ -23,6 +23,8 @@ import {
 import { flightDone, leaveAfter, snagAt, type FlightPlan } from "~/ui/senu.ts"
 import { Sky } from "~/ui/sky.tsx"
 import { brand, colors, icons, mix, noColor } from "~/ui/theme.ts"
+import { UpdateGate, updateGate } from "~/update/gate.tsx"
+import { newerRelease } from "~/update/release.ts"
 
 import { getSnapshot, readCache } from "./cache.ts"
 import { axis, stackedBars } from "./chart.ts"
@@ -745,7 +747,16 @@ const viewKeys = (view: View, looking: boolean) => [
   ...quitKeys(view === "limits" && looking),
 ]
 
-export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time: SceneTime }) {
+export function UsagePopup({
+  profiles,
+  time,
+  release = null,
+}: {
+  profiles: UsageProfile[]
+  time: SceneTime
+  /** A newer release to mention once senu settles. */
+  release?: string | null
+}) {
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
   const [sections, setSections] = useState<Section[]>(() =>
@@ -952,15 +963,19 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
   useTicker(flying || tweening ? FPS : busy ? 1000 / DOTS_MS : 0)
 
   const dots = reducedMotion ? "..." : ".".repeat((Math.floor((t - openedAt) / DOTS_MS) % 3) + 1)
+  const settled = !skyless && !busy && flightDone(plan) && !(away && view === "limits")
+  const announcing = settled && release != null
   const note = skyless
     ? ""
     : busy
       ? "senu is circling"
       : !flightDone(plan)
         ? "senu comes in to land"
-        : away && view === "limits"
+        : !settled
           ? "senu looks closer"
-          : "senu keeps watch"
+          : announcing
+            ? `v${release} is out · senu update`
+            : "senu keeps watch"
   const hint = activeKeys
     .map((key) => key.bindingAttrs?.desc)
     .filter((desc): desc is string => typeof desc === "string")
@@ -1035,7 +1050,7 @@ export function UsagePopup({ profiles, time }: { profiles: UsageProfile[]; time:
         {HEADER.length + hint.length + 2 + note.length <= right ? (
           <>
             {" ".repeat(right - HEADER.length - hint.length - note.length)}
-            <span fg={busy ? brand.dusk : brand.shadow}>{note}</span>
+            <span fg={busy ? brand.dusk : announcing ? brand.gold : brand.shadow}>{note}</span>
           </>
         ) : null}
       </Line>
@@ -1047,12 +1062,16 @@ export async function runUsagePopup(profiles: UsageProfile[], scene: UsageScene)
   const { promise: closed, resolve } = Promise.withResolvers<void>()
   const renderer = await createCliRenderer({ useMouse: false, onDestroy: resolve })
   const keymap = createDefaultOpenTuiKeymap(renderer)
+  const gate = updateGate(renderer)
   createRoot(renderer).render(
     <KeymapProvider keymap={keymap}>
-      <UsagePopup profiles={profiles} time={sceneTime(scene)} />
+      <UpdateGate release={gate.release} onUpdate={gate.onUpdate}>
+        <UsagePopup profiles={profiles} time={sceneTime(scene)} release={newerRelease()} />
+      </UpdateGate>
     </KeymapProvider>,
   )
   await closed
+  await gate.finish()
   // In-flight snapshot fetches can keep a closed tmux popup alive and leave it blank.
   process.exit(0)
 }

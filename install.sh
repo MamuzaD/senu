@@ -88,6 +88,10 @@ main() {
   actual=$(sha256 "$tmp/$asset")
   [ "$expected" = "$actual" ] || die "checksum mismatch for $asset (expected $expected, got $actual)"
 
+  # An update replaces an existing senu and skips the first-run setup tips.
+  upgrade=
+  [ ! -e "$install_dir/senu" ] || upgrade=1
+
   mkdir -p "$install_dir" || die "cannot create $install_dir"
   chmod 755 "$tmp/$asset"
   # Stage beside the target so the final mv is an atomic rename.
@@ -96,6 +100,7 @@ main() {
   mv -f "$staged" "$install_dir/senu" || die "cannot install to $install_dir/senu"
   staged=
   say "installed $install_dir/senu"
+  [ -z "$upgrade" ] || return 0
 
   case ":$PATH:" in
     *":$install_dir:"*) ;;
