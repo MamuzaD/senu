@@ -12,8 +12,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  version:
+    name: Tag matches package.json
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # A binary built from a stale package.json reports the old version, and
+      # its update check then sees its own release as newer, forever.
+      - name: Compare
+        run: |
+          want="v$(jq -r .version package.json)"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json ($want); bump with bun pm version"
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.target }}
+    needs: version
     strategy:
       fail-fast: true
       matrix:
