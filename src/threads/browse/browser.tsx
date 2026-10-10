@@ -1,6 +1,6 @@
 import { basename } from "node:path"
 
-import { TextAttributes, createCliRenderer } from "@opentui/core"
+import { TextAttributes, createCliRenderer, type MouseEvent, type RGBA } from "@opentui/core"
 import { type Binding } from "@opentui/keymap"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { KeymapProvider, useActiveKeys, useBindings } from "@opentui/keymap/react"
@@ -23,6 +23,7 @@ const HEAD_ROWS = 3
 const PREVIEW_MIN_WIDTH = 90
 const LIST_MIN_WIDTH = 36
 const MESSAGE_LINES = 6
+const WHEEL_LINES = 3
 
 type BrowserBinding = Binding & { desc?: string }
 const browserKeys: BrowserBinding[] = [
@@ -42,13 +43,17 @@ const browserKeys: BrowserBinding[] = [
   { key: "return", cmd: "open", desc: "⏎ open" },
   { key: "/", cmd: "search", desc: "/ search" },
   { key: "p", cmd: "preview", desc: "p preview" },
+  { key: "shift+k", cmd: "preview-older", desc: "K/J scroll" },
+  { key: "shift+j", cmd: "preview-newer" },
+  { key: "ctrl+y", cmd: "preview-older" },
+  { key: "ctrl+e", cmd: "preview-newer" },
   { key: "y", cmd: "copy-id", desc: "y copy" },
   { key: "shift+y", cmd: "copy-path" },
   { key: "x", cmd: "kill", desc: "x kill" },
   { key: "r", cmd: "refresh", desc: "r refresh" },
   { key: "q", cmd: "quit", desc: "q quit" },
   { key: "escape", cmd: "quit" },
-  ...Array.from({ length: 9 }, (_, i) => ({ key: String(i + 1), cmd: `pick-${i + 1}` })),
+  ...Array.from({ length: 10 }, (_, d) => ({ key: String(d), cmd: `count-${d}` })),
 ]
 
 const BOLD = TextAttributes.BOLD
@@ -124,9 +129,39 @@ export function wrap(text: string, width: number, maxLines: number): string[] {
   return lines
 }
 
-type Row =
-  | { kind: "header"; label: string; count: number }
-  | { kind: "entry"; entry: Entry; n: number }
+export interface Line {
+  text: string
+  fg: RGBA
+  mark: string
+}
+
+export function previewLines(turns: Turn[], width: number): Line[] {
+  const lines: Line[] = []
+  for (const t of turns) {
+    if (lines.length) lines.push({ text: "", fg: colors.dim, mark: "" })
+    if ("tools" in t)
+      for (const text of wrap(`⚙ ${toolSummary(t.tools)}`, width, 2))
+        lines.push({ text, fg: colors.dim, mark: "" })
+    else
+      wrap(t.text.replaceAll("**", ""), width, MESSAGE_LINES).forEach((text, i) =>
+        lines.push({
+          text,
+          fg: t.fromUser ? brand.papyrus : colors.fg,
+          mark: t.fromUser && i === 0 ? ">" : "",
+        }),
+      )
+  }
+  return lines
+}
+
+export function layout(width: number, showPreview: boolean) {
+  const split = showPreview && width >= PREVIEW_MIN_WIDTH
+  const listW = split ? Math.max(LIST_MIN_WIDTH, Math.floor(width * 0.35)) : width
+  const previewX = split ? listW : -2
+  return { split, listW, previewX, previewTextW: width - previewX - 6 }
+}
+
+type Row = { kind: "header"; label: string; count: number } | { kind: "entry"; entry: Entry }
 
 interface View {
   rows: Row[]
@@ -139,7 +174,9 @@ interface View {
   total: number
   showPreview: boolean
   turns: Turn[] | null
+  hiddenBelow: number
   note: string
+  count: string
   confirming: Entry | null
   hints: { command: string; desc: string }[]
 }
@@ -164,7 +201,6 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
 
   y = HEAD_ROWS
   const bottom = v.height - 1
-  let onScreen = 0
   for (let i = v.top; i < v.rows.length && y < bottom; i++) {
     const r = v.rows[i]!
     if (y + rowHeight(r) - 1 > bottom) break
@@ -177,7 +213,6 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
     const e = r.entry
     const selected = v.sel === e
     if (selected) for (const dy of [0, 1]) c.put(x0 + 1, y + dy, "▌", brand.gold)
-    if (++onScreen <= 9) c.text(x0 + 2, y + 1, String(onScreen), colors.dim)
     if (e.live) {
       const st = states[e.live.state]
       c.put(x0 + 3, y, st.glyph, st.fg, { attrs: st.bold ? BOLD : 0 })
@@ -228,34 +263,46 @@ function paintPreview(c: Canvas, v: View, x0: number, w: number) {
     c.text(left, top, "reading…", colors.dim)
     return
   }
-  // Fill from the bottom so the latest turn is always in view.
-  const blocks = v.turns.map((t) =>
-    "tools" in t
-      ? { lines: wrap(`⚙ ${toolSummary(t.tools)}`, width - 2, 2), fg: colors.dim, mark: "" }
-      : {
-          lines: wrap(t.text.replaceAll("**", ""), width - 2, MESSAGE_LINES),
-          fg: t.fromUser ? brand.papyrus : colors.fg,
-          mark: t.fromUser ? ">" : "",
-        },
-  )
-  let y = bottom
-  for (let b = blocks.length - 1; b >= 0 && y >= top; b--) {
-    const block = blocks[b]!
-    for (let l = block.lines.length - 1; l >= 0 && y >= top; l--, y--) {
-      if (l === 0 && block.mark) c.text(left, y, block.mark, brand.gold, { attrs: BOLD })
-      c.text(left + 2, y, block.lines[l]!, block.fg, { max: left + width })
+  const lines = previewLines(v.turns, width - 3)
+  const rows = bottom - top + 1
+  const end = lines.length - v.hiddenBelow
+  const start = Math.max(0, end - rows)
+  lines.slice(start, end).forEach((line, i) => {
+    const y = top + i
+    if (line.mark) c.text(left, y, line.mark, brand.gold, { attrs: BOLD })
+    c.text(left + 2, y, line.text, line.fg, { max: left + width - 1 })
+  })
+  if (lines.length > rows) {
+    const bar = left + width - 1
+    const thumb = Math.max(1, Math.round((rows * rows) / lines.length))
+    const at = Math.round((start / (lines.length - rows)) * (rows - thumb))
+    for (let i = 0; i < rows; i++) {
+      const on = i >= at && i < at + thumb
+      c.put(bar, top + i, on ? "┃" : "│", on ? brand.sand : colors.rule)
     }
-    y--
+  }
+}
+
+function paintListBar(c: Canvas, v: View, x: number) {
+  const rows = v.height - HEAD_ROWS - 1
+  const heights = v.rows.map(rowHeight)
+  const total = heights.reduce((a, b) => a + b, 0)
+  if (total <= rows) return
+  const above = heights.slice(0, v.top).reduce((a, b) => a + b, 0)
+  const thumb = Math.max(1, Math.round((rows * rows) / total))
+  const at = Math.round((Math.min(above, total - rows) / (total - rows)) * (rows - thumb))
+  for (let i = 0; i < rows; i++) {
+    const on = i >= at && i < at + thumb
+    c.put(x, HEAD_ROWS + i, on ? "┃" : "│", on ? colors.dim : colors.rule)
   }
 }
 
 function paint(v: View): Canvas {
   const c = new Canvas(v.width, v.height)
-  const split = v.showPreview && v.width >= PREVIEW_MIN_WIDTH
-  const listW = split ? Math.max(LIST_MIN_WIDTH, Math.floor(v.width * 0.35)) : v.width
+  const { split, listW, previewX } = layout(v.width, v.showPreview)
   if (!v.showPreview || split) paintList(c, v, 0, listW)
-  if (split) paintPreview(c, v, listW, v.width - listW)
-  else if (v.showPreview) paintPreview(c, v, -2, v.width + 2)
+  if (v.showPreview) paintPreview(c, v, previewX, v.width - previewX)
+  if (!v.showPreview || split) paintListBar(c, v, split ? listW : v.width - 1)
 
   const fy = v.height - 1
   if (v.confirming) {
@@ -280,6 +327,7 @@ function paint(v: View): Canvas {
       : v.hints.map((h) => h.desc).join(" · ")
     c.text(1, fy, hint, colors.dim)
   }
+  if (v.count) c.text(v.width - v.count.length - 2, fy, v.count, brand.gold, { attrs: BOLD })
   return c
 }
 
@@ -324,14 +372,29 @@ export function Browser({
   const choose = (key: string) => {
     selKeyRef.current = key
     setSelKey(key)
+    setOffset({ key, lines: 0 })
   }
   const [scroll, setScroll] = useState(0)
+  const [offset, setOffset] = useState({ key: "", lines: 0 })
   const [note, setNote] = useState("")
   const [confirming, setConfirmingState] = useState<Entry | null>(null)
   const confirmingRef = useRef<Entry | null>(null)
   const setConfirming = (e: Entry | null) => {
     confirmingRef.current = e
     setConfirmingState(e)
+  }
+  const [pendingCount, setPendingCount] = useState("")
+  const countRef = useRef("")
+  const addDigit = (d: number) => {
+    if (d === 0 && !countRef.current) return
+    countRef.current = (countRef.current + d).slice(0, 4)
+    setPendingCount(countRef.current)
+  }
+  const takeCount = () => {
+    const n = Number(countRef.current)
+    countRef.current = ""
+    setPendingCount("")
+    return n
   }
   const busy = useRef(false)
 
@@ -358,11 +421,10 @@ export function Browser({
   )
   const sel = flat[selIndex] ?? null
   const rows: Row[] = []
-  let n = 0
   for (const s of shown) {
     rows.push({ kind: "header", label: s.label, count: s.entries.length })
     const open = s.label !== "archived" || !!query || (sel !== null && s.entries.includes(sel))
-    for (const entry of s.entries) if (open) rows.push({ kind: "entry", entry, n: ++n })
+    for (const entry of s.entries) if (open) rows.push({ kind: "entry", entry })
   }
   const selRow = rows.findIndex((r) => r.kind === "entry" && r.entry === sel)
 
@@ -377,6 +439,16 @@ export function Browser({
 
   const selThread = sel?.thread ?? null
   const turns = selThread ? turnsOf(selThread) : null
+  const { previewTextW } = layout(width, showPreview)
+  const previewRows = height - HEAD_ROWS - 1
+  const maxOffset = turns ? Math.max(0, previewLines(turns, previewTextW).length - previewRows) : 0
+  const lines = offset.key === selKey ? Math.min(offset.lines, maxOffset) : 0
+  const scrollPreview = (by: number) =>
+    setOffset((o) => {
+      const key = selKeyRef.current
+      const from = o.key === key ? Math.min(o.lines, maxOffset) : 0
+      return { key, lines: Math.max(0, Math.min(from + by, maxOffset)) }
+    })
   const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const flash = (text: string) => {
     setNote(text)
@@ -433,14 +505,16 @@ export function Browser({
       enabled: () => !searchingRef.current && !confirmingRef.current,
       bindings: browserKeys,
       commands: [
-        { name: "quit", run: close },
-        { name: "move-down", run: () => select(current().i + 1) },
-        { name: "move-up", run: () => select(current().i - 1) },
+        { name: "quit", run: (n: number) => (n ? undefined : close()) },
+        { name: "move-down", run: (n: number) => select(current().i + (n || 1)) },
+        { name: "move-up", run: (n: number) => select(current().i - (n || 1)) },
         { name: "first", run: () => select(0) },
-        { name: "last", run: () => select(flat.length - 1) },
+        { name: "last", run: (n: number) => select(n ? n - 1 : flat.length - 1) },
         { name: "search", run: () => setSearching((searchingRef.current = true)) },
         { name: "preview", run: () => setShowPreview((s) => !s) },
         { name: "refresh", run: () => void refresh() },
+        { name: "preview-older", run: (n: number) => scrollPreview(n || 1) },
+        { name: "preview-newer", run: (n: number) => scrollPreview(-(n || 1)) },
         { name: "copy-id", run: () => copyOut(current().e?.thread?.sessionId, "session id") },
         {
           name: "copy-path",
@@ -463,23 +537,35 @@ export function Browser({
             close()
           },
         },
-        { name: "half-down", run: () => select(current().i + Math.ceil(page / 2)) },
-        { name: "half-up", run: () => select(current().i - Math.ceil(page / 2)) },
-        { name: "page-down", run: () => select(current().i + page) },
-        { name: "page-up", run: () => select(current().i - page) },
-        { name: "screen-top", run: () => selectEntry(screen[0]) },
+        {
+          name: "half-down",
+          run: (n: number) => select(current().i + (n || 1) * Math.ceil(page / 2)),
+        },
+        {
+          name: "half-up",
+          run: (n: number) => select(current().i - (n || 1) * Math.ceil(page / 2)),
+        },
+        { name: "page-down", run: (n: number) => select(current().i + (n || 1) * page) },
+        { name: "page-up", run: (n: number) => select(current().i - (n || 1) * page) },
+        {
+          name: "screen-top",
+          run: (n: number) => selectEntry(screen[Math.min(n || 1, screen.length) - 1]),
+        },
         {
           name: "screen-middle",
           run: () => selectEntry(screen[Math.floor((screen.length - 1) / 2)]),
         },
-        { name: "screen-bottom", run: () => selectEntry(screen.at(-1)) },
-        ...Array.from({ length: 9 }, (_, i) => ({
-          name: `pick-${i + 1}`,
-          run: () => selectEntry(screen[i]),
-        })),
-      ],
+        {
+          name: "screen-bottom",
+          run: (n: number) => selectEntry(screen.at(-Math.min(n || 1, screen.length))),
+        },
+      ]
+        .map((cmd) => ({ name: cmd.name, run: () => cmd.run(takeCount()) }))
+        .concat(
+          Array.from({ length: 10 }, (_, d) => ({ name: `count-${d}`, run: () => addDigit(d) })),
+        ),
     }),
-    [flat, top, page],
+    [flat, top, page, maxOffset],
   )
 
   const canvas = paint({
@@ -493,22 +579,35 @@ export function Browser({
     total: entries.length,
     showPreview,
     turns,
+    hiddenBelow: lines,
     note,
     confirming,
+    count: pendingCount,
     hints: activeKeys.flatMap((key) =>
       typeof key.command === "string" && typeof key.bindingAttrs?.desc === "string"
         ? [{ command: key.command, desc: key.bindingAttrs.desc }]
         : [],
     ),
   })
-  return <CanvasView canvas={canvas} />
+  const onWheel = (event: MouseEvent) => {
+    if (searchingRef.current || confirmingRef.current) return
+    const up = event.scroll?.direction === "up"
+    const { split, listW } = layout(width, showPreview)
+    if (showPreview && (!split || event.x >= listW)) scrollPreview(up ? WHEEL_LINES : -WHEEL_LINES)
+    else select(current().i + (up ? -1 : 1))
+  }
+  return (
+    <box width={width} height={height} onMouseScroll={onWheel}>
+      <CanvasView canvas={canvas} />
+    </box>
+  )
 }
 
 /** Resolves with the entry picked, or null when the browser was quit. */
 export async function runBrowser(initial: Entry[], load: Load): Promise<Entry | null> {
   let picked: Entry | null = null
   const { promise: closed, resolve } = Promise.withResolvers<void>()
-  const renderer = await createCliRenderer({ useMouse: false, onDestroy: resolve })
+  const renderer = await createCliRenderer({ useMouse: true, onDestroy: resolve })
   const keymap = createDefaultOpenTuiKeymap(renderer)
   const gate = updateGate(renderer)
   createRoot(renderer).render(
