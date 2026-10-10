@@ -1,14 +1,14 @@
-import { TextAttributes, createCliRenderer, type RGBA } from "@opentui/core"
-import { type Binding } from "@opentui/keymap"
-import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
-import { KeymapProvider, useActiveKeys, useBindings } from "@opentui/keymap/react"
-import { createRoot, useRenderer, useTerminalDimensions } from "@opentui/react"
+import { TextAttributes, type RGBA } from "@opentui/core"
+import { useBindings } from "@opentui/keymap/react"
+import { useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react"
 
 import type { UsageProfile, UsageScene } from "~/config.ts"
+import { runApp } from "~/ui/app.tsx"
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
 import { SCENE_COLS, SCENE_ROWS, sceneCols, type SceneTime } from "~/ui/desert.ts"
 import { hopAt, hopDone, hopRunning, paintHop, type Hop, type Point } from "~/ui/gaze.ts"
+import { useHints, type HintBinding } from "~/ui/keys.ts"
 import { Line } from "~/ui/line.tsx"
 import {
   FPS,
@@ -23,7 +23,6 @@ import {
 import { flightDone, leaveAfter, snagAt, type FlightPlan } from "~/ui/senu.ts"
 import { Sky } from "~/ui/sky.tsx"
 import { brand, colors, icons, mix, noColor } from "~/ui/theme.ts"
-import { UpdateGate, updateGate } from "~/update/gate.tsx"
 import { newerRelease } from "~/update/release.ts"
 
 import { getSnapshot, readCache } from "./cache.ts"
@@ -698,8 +697,6 @@ export function CostView({
 
 type View = "limits" | "cost"
 
-type HintBinding = Binding & { desc?: string }
-
 /** Esc first closes the glance, then quits. */
 const quitKeys = (looking: boolean): HintBinding[] => [
   ...(looking ? [{ key: "escape", cmd: "look-none", desc: "esc close" }] : []),
@@ -868,7 +865,7 @@ export function UsagePopup({
       return at === -1 ? null : at
     })
   }
-  const activeKeys = useActiveKeys({ includeMetadata: true })
+  const hints = useHints()
   useBindings(
     () => ({
       bindings: viewKeys(view, gaze != null),
@@ -984,10 +981,7 @@ export function UsagePopup({
           : announcing
             ? `v${release} is out · senu update`
             : "senu keeps watch"
-  const hint = activeKeys
-    .map((key) => key.bindingAttrs?.desc)
-    .filter((desc): desc is string => typeof desc === "string")
-    .join(" · ")
+  const hint = hints.map((h) => h.desc).join(" · ")
   const costRows = height - (noColor ? 0 : SCENE_ROWS + GAP_ROWS) - FOOTER_ROWS
   const gutter = new Canvas(GUTTER, Math.max(0, costRows + GAP_ROWS))
   if (hop && gutterOpen) {
@@ -1067,19 +1061,10 @@ export function UsagePopup({
 }
 
 export async function runUsagePopup(profiles: UsageProfile[], scene: UsageScene): Promise<number> {
-  const { promise: closed, resolve } = Promise.withResolvers<void>()
-  const renderer = await createCliRenderer({ useMouse: false, onDestroy: resolve })
-  const keymap = createDefaultOpenTuiKeymap(renderer)
-  const gate = updateGate(renderer)
-  createRoot(renderer).render(
-    <KeymapProvider keymap={keymap}>
-      <UpdateGate release={gate.release} onUpdate={gate.onUpdate}>
-        <UsagePopup profiles={profiles} time={sceneTime(scene)} release={newerRelease()} />
-      </UpdateGate>
-    </KeymapProvider>,
+  await runApp(
+    <UsagePopup profiles={profiles} time={sceneTime(scene)} release={newerRelease()} />,
+    { useMouse: false },
   )
-  await closed
-  await gate.finish()
   // In-flight snapshot fetches can keep a closed tmux popup alive and leave it blank.
   process.exit(0)
 }

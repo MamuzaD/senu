@@ -1,22 +1,16 @@
 import { basename } from "node:path"
 
-import {
-  TextAttributes,
-  createCliRenderer,
-  type MouseEvent,
-  type RGBA,
-  type Selection,
-} from "@opentui/core"
-import { type Binding } from "@opentui/keymap"
-import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
-import { KeymapProvider, useActiveKeys, useBindings } from "@opentui/keymap/react"
-import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
+import { TextAttributes, type MouseEvent, type RGBA } from "@opentui/core"
+import { useBindings } from "@opentui/keymap/react"
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import { useMemo, useRef, useState } from "react"
 
 import { kill } from "~/threads/live/actions.ts"
+import { runApp } from "~/ui/app.tsx"
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
+import { useFlash, usePoll, useSelectionDone } from "~/ui/hooks.ts"
+import { fitHints, useHints, type Hint, type HintBinding } from "~/ui/keys.ts"
 import { brand, colors, icons, noColor, states } from "~/ui/theme.ts"
-import { UpdateGate, updateGate } from "~/update/gate.tsx"
 import { formatDuration } from "~/usage/format.ts"
 
 import { copy } from "../clipboard.ts"
@@ -31,8 +25,7 @@ const LIST_MIN_WIDTH = 36
 const MESSAGE_LINES = 6
 const WHEEL_LINES = 3
 
-type BrowserBinding = Binding & { desc?: string }
-const browserKeys: BrowserBinding[] = [
+const browserKeys: HintBinding[] = [
   { key: "j", cmd: "move-down", desc: "j/k move" },
   { key: "k", cmd: "move-up" },
   { key: "down", cmd: "move-down" },
@@ -184,7 +177,7 @@ interface View {
   note: string
   count: string
   confirming: Entry | null
-  hints: { command: string; desc: string }[]
+  hints: Hint[]
 }
 
 const rowHeight = (r: Row) => (r.kind === "header" ? 2 : PER_ROW)
@@ -330,7 +323,7 @@ function paint(v: View): Canvas {
   else {
     const hint = v.searching
       ? "type to filter · ⏎ done · esc clear"
-      : v.hints.map((h) => h.desc).join(" · ")
+      : fitHints(v.hints, v.width - v.count.length - 4, ["open", "search", "quit"])
     c.text(1, fy, hint, colors.dim)
   }
   if (v.count) c.text(v.width - v.count.length - 2, fy, v.count, brand.gold, { attrs: BOLD })
@@ -366,7 +359,6 @@ export function Browser({
 }) {
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
-  const activeKeys = useActiveKeys({ includeMetadata: true })
   const [entries, setEntries] = useState(initial)
   const [query, setQuery] = useState("")
   const [searching, setSearching] = useState(false)
@@ -382,7 +374,6 @@ export function Browser({
   }
   const [scroll, setScroll] = useState(0)
   const [offset, setOffset] = useState({ key: "", lines: 0 })
-  const [note, setNote] = useState("")
   const [confirming, setConfirmingState] = useState<Entry | null>(null)
   const confirmingRef = useRef<Entry | null>(null)
   const setConfirming = (e: Entry | null) => {
@@ -402,22 +393,7 @@ export function Browser({
     setPendingCount("")
     return n
   }
-  const busy = useRef(false)
-
-  const refresh = async () => {
-    if (busy.current) return
-    busy.current = true
-    try {
-      setEntries(await load())
-    } finally {
-      busy.current = false
-    }
-  }
-  const onInterval = useEffectEvent(() => void refresh().catch(() => {}))
-  useEffect(() => {
-    const id = setInterval(onInterval, REFRESH_MS)
-    return () => clearInterval(id)
-  }, [])
+  const refresh = usePoll(async () => setEntries(await load()), REFRESH_MS)
 
   const shown = useMemo(() => sections(entries.filter((e) => matches(e, query))), [entries, query])
   const flat = useMemo(() => shown.flatMap((s) => s.entries), [shown])
@@ -455,28 +431,17 @@ export function Browser({
       const from = o.key === key ? Math.min(o.lines, maxOffset) : 0
       return { key, lines: Math.max(0, Math.min(from + by, maxOffset)) }
     })
-  const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const flash = (text: string) => {
-    setNote(text)
-    clearTimeout(noteTimer.current)
-    noteTimer.current = setTimeout(() => setNote(""), 2000)
-  }
+  const [note, flash] = useFlash()
   const copyOut = (text: string | undefined, what: string) => {
     if (!text) return flash("no saved thread yet")
     void copy(text).then((ok) => flash(ok ? `copied ${what}` : "couldn't reach the clipboard"))
   }
   const [selecting, setSelecting] = useState<"list" | "preview" | null>(null)
-  const onSelection = useEffectEvent((selection: Selection | null) => {
-    if (!selection || selection.isDragging) return
+  useSelectionDone((text) => {
     setSelecting(null)
-    const text = selection.getSelectedText().trim()
     if (text)
       void copy(text).then((ok) => flash(ok ? "copied selection" : "couldn't reach the clipboard"))
   })
-  useEffect(() => {
-    renderer.on("selection", onSelection)
-    return () => void renderer.off("selection", onSelection)
-  }, [renderer])
 
   const select = (i: number) => {
     const e = flat[Math.max(0, Math.min(i, flat.length - 1))]
@@ -601,11 +566,7 @@ export function Browser({
     note,
     confirming,
     count: pendingCount,
-    hints: activeKeys.flatMap((key) =>
-      typeof key.command === "string" && typeof key.bindingAttrs?.desc === "string"
-        ? [{ command: key.command, desc: key.bindingAttrs.desc }]
-        : [],
-    ),
+    hints: useHints(),
   })
   const onWheel = (event: MouseEvent) => {
     if (searchingRef.current || confirmingRef.current) return
@@ -658,18 +619,8 @@ export function Browser({
 /** Resolves with the entry picked, or null when the browser was quit. */
 export async function runBrowser(initial: Entry[], load: Load): Promise<Entry | null> {
   let picked: Entry | null = null
-  const { promise: closed, resolve } = Promise.withResolvers<void>()
-  const renderer = await createCliRenderer({ useMouse: true, onDestroy: resolve })
-  const keymap = createDefaultOpenTuiKeymap(renderer)
-  const gate = updateGate(renderer)
-  createRoot(renderer).render(
-    <KeymapProvider keymap={keymap}>
-      <UpdateGate release={gate.release} onUpdate={gate.onUpdate}>
-        <Browser initial={initial} load={load} onOpen={(e) => (picked = e)} />
-      </UpdateGate>
-    </KeymapProvider>,
-  )
-  await closed
-  await gate.finish()
+  await runApp(<Browser initial={initial} load={load} onOpen={(e) => (picked = e)} />, {
+    useMouse: true,
+  })
   return picked
 }

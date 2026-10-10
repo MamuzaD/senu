@@ -1,15 +1,15 @@
-import { TextAttributes, createCliRenderer, type RGBA } from "@opentui/core"
-import { type Binding } from "@opentui/keymap"
-import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
-import { KeymapProvider, useActiveKeys, useBindings } from "@opentui/keymap/react"
-import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { useEffect, useEffectEvent, useRef, useState } from "react"
+import { TextAttributes, type RGBA } from "@opentui/core"
+import { useBindings } from "@opentui/keymap/react"
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import { useRef, useState } from "react"
 
+import { runApp } from "~/ui/app.tsx"
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
 import { DIVE_MS, paintSenu, rowGlow, type DivePlan } from "~/ui/dive.ts"
+import { useFlash, usePoll } from "~/ui/hooks.ts"
+import { fitHints, useHints, type Hint, type HintBinding } from "~/ui/keys.ts"
 import { FPS, now, reducedMotion, useTicker } from "~/ui/motion.ts"
 import { brand, colors, hex, icons, mix, noColor, states } from "~/ui/theme.ts"
-import { UpdateGate, updateGate } from "~/update/gate.tsx"
 import { formatDuration } from "~/usage/format.ts"
 
 import { copy } from "../clipboard.ts"
@@ -22,8 +22,7 @@ export type Lookup = (row: AgentRow) => Promise<{ sessionId: string; transcript:
 
 const REFRESH_MS = 1000
 
-type PickerBinding = Binding & { desc?: string }
-const pickerKeys: PickerBinding[] = [
+const pickerKeys: HintBinding[] = [
   { key: "j", cmd: "move-down", desc: "j/k move" },
   { key: "shift+j", cmd: "move-down" },
   { key: "k", cmd: "move-up" },
@@ -88,7 +87,7 @@ interface View {
   dive: DivePlan | null
   width: number
   height: number
-  hints: { command: string; desc: string }[]
+  hints: Hint[]
   note: string
 }
 
@@ -183,15 +182,9 @@ function paint(v: View): Canvas {
   const live = v.daemon === "dead" || rows.some((r) => r.source === "live")
   const note = v.dive ? "senu dives" : live ? "senu scouts live" : "senu keeps watch"
   const noteFg = v.dive ? brand.gold : live ? brand.dusk : brand.shadow
-  const fullHint = v.hints.map((hint) => hint.desc).join(" · ")
   const keys = v.confirming
     ? "y kill · any other key keeps it"
-    : Bun.stringWidth(fullHint) + more.length + note.length + 6 <= W
-      ? fullHint
-      : v.hints
-          .filter((hint) => ["jump", "kill", "quit"].includes(hint.command))
-          .map((hint) => hint.desc)
-          .join(" · ")
+    : fitHints(v.hints, W - more.length - note.length - 6, ["jump", "kill", "quit"])
   if (v.note) c.text(1, fy, v.note, brand.gold)
   else c.text(1, fy, keys, colors.dim)
   const room = right - Bun.stringWidth(keys) - 3
@@ -221,7 +214,6 @@ export function Picker({
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
   const [data, setData] = useState(initial)
-  const activeKeys = useActiveKeys({ includeMetadata: true })
   const [cursor, setCursor] = useState<{ id: string | null; index: number }>({
     id: initial.rows[0]?.windowId ?? null,
     index: 0,
@@ -234,44 +226,23 @@ export function Picker({
     setConfirmingState(row)
   }
   const [diveAt, setDiveAt] = useState<number | null>(null)
-  const [note, setNote] = useState("")
-  const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const flash = (text: string) => {
-    setNote(text)
-    clearTimeout(noteTimer.current)
-    noteTimer.current = setTimeout(() => setNote(""), 2000)
-  }
+  const [note, flash] = useFlash()
   const copyOut = async (row: AgentRow, pick: "sessionId" | "transcript", what: string) => {
     const linked = lookup ? await lookup(row) : null
     if (!linked) return flash("no saved thread yet")
     flash((await copy(linked[pick])) ? `copied ${what}` : "couldn't reach the clipboard")
   }
   const [minute, setMinute] = useState(() => Math.floor(Date.now() / 60_000))
-  const busy = useRef(false)
   const last = useRef(JSON.stringify(initial))
-
-  const refresh = async () => {
-    if (busy.current) return
-    busy.current = true
-    try {
-      const next = await collector.collect()
-      const key = JSON.stringify(next)
-      if (key !== last.current) {
-        last.current = key
-        setData(next)
-      }
-      setMinute(Math.floor(Date.now() / 60_000))
-    } finally {
-      busy.current = false
+  const refresh = usePoll(async () => {
+    const next = await collector.collect()
+    const key = JSON.stringify(next)
+    if (key !== last.current) {
+      last.current = key
+      setData(next)
     }
-  }
-
-  // A failed poll keeps the last rows; the next tick retries.
-  const onInterval = useEffectEvent(() => void refresh().catch(() => {}))
-  useEffect(() => {
-    const id = setInterval(onInterval, REFRESH_MS)
-    return () => clearInterval(id)
-  }, [])
+    setMinute(Math.floor(Date.now() / 60_000))
+  }, REFRESH_MS)
 
   const rows = data.rows
   const indexOf = (c: typeof cursor, list: AgentRow[]) => {
@@ -378,11 +349,7 @@ export function Picker({
     dive: plan,
     width,
     height,
-    hints: activeKeys.flatMap((key) =>
-      typeof key.command === "string" && typeof key.bindingAttrs?.desc === "string"
-        ? [{ command: key.command, desc: key.bindingAttrs.desc }]
-        : [],
-    ),
+    hints: useHints(),
   })
   return <CanvasView canvas={canvas} />
 }
@@ -391,26 +358,18 @@ export async function runPicker(
   collector: Source,
   opts: { raiseGhosttyTab: boolean; lookup?: Lookup },
 ): Promise<number> {
-  const { promise: closed, resolve } = Promise.withResolvers<void>()
-  const [initial, renderer] = await Promise.all([
-    collector.collect(),
-    createCliRenderer({ useMouse: false, onDestroy: resolve }),
-  ])
-  const keymap = createDefaultOpenTuiKeymap(renderer)
-  const gate = updateGate(renderer)
-  createRoot(renderer).render(
-    <KeymapProvider keymap={keymap}>
-      <UpdateGate release={gate.release} onUpdate={gate.onUpdate}>
+  await runApp(
+    collector
+      .collect()
+      .then((initial) => (
         <Picker
           collector={collector}
           initial={initial}
           raiseGhosttyTab={opts.raiseGhosttyTab}
           lookup={opts.lookup}
         />
-      </UpdateGate>
-    </KeymapProvider>,
+      )),
+    { useMouse: false },
   )
-  await closed
-  await gate.finish()
   process.exit(0)
 }
