@@ -935,7 +935,6 @@ export function UsagePopup({
   const folded = foldsAt(fold)
   // senu leaves the snag only once landed, and only where the limits leave it a gutter.
   const perches = gutters && !skyless
-  const sectionRight = perches ? right - GUTTER : right
   const sectionsTop = SCENE_ROWS + GAP_ROWS
   const topOf = (to: number) => {
     let top = sectionsTop
@@ -956,6 +955,9 @@ export function UsagePopup({
     setTravel({ from: hop ? hopAt(hop, t) : snagAt(cols), to: goal, at: t })
   const away = hop != null && !(travel?.to == null && hopDone(hop, t))
   plan.away = away
+  // The limits give senu a gutter only while she's beside them or flying back.
+  const gutterOpen = perches && (gaze != null || away)
+  const sectionRight = gutterOpen ? right - GUTTER : right
 
   const fillFrom = sections.map(
     (s, i) =>
@@ -988,7 +990,7 @@ export function UsagePopup({
     .join(" · ")
   const costRows = height - (noColor ? 0 : SCENE_ROWS + GAP_ROWS) - FOOTER_ROWS
   const gutter = new Canvas(GUTTER, Math.max(0, costRows + GAP_ROWS))
-  if (hop && perches) {
+  if (hop && gutterOpen) {
     // Perched, senu stands on a branch that reaches in from the right edge.
     if (gaze != null && travel?.to === gaze && !hopRunning(hop, t)) {
       // A half-cell limb in the talons' cell, under them, tapering to a tip; painted
@@ -1013,8 +1015,8 @@ export function UsagePopup({
         )}
         {view === "limits" ? (
           // The gutter reaches up over the gap row so senu never vanishes between the sky and the limits.
-          <box flexDirection="row" flexShrink={1} marginTop={perches ? -GAP_ROWS : 0}>
-            <box flexDirection="column" flexGrow={1} paddingTop={perches ? GAP_ROWS : 0}>
+          <box flexDirection="row" flexShrink={1} marginTop={gutterOpen ? -GAP_ROWS : 0}>
+            <box flexDirection="column" flexGrow={1} paddingTop={gutterOpen ? GAP_ROWS : 0}>
               {profiles.map((profile, i) => (
                 <ProfileSection
                   key={`${profile.kind}:${profile.name}`}
@@ -1032,7 +1034,7 @@ export function UsagePopup({
                 />
               ))}
             </box>
-            {perches ? <CanvasView canvas={gutter} /> : null}
+            {gutterOpen ? <CanvasView canvas={gutter} /> : null}
           </box>
         ) : (
           <CostView
