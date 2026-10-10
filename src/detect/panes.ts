@@ -60,7 +60,7 @@ const FIELDS = [
 ]
 const FORMAT = FIELDS.map((f) => `#{${f}}`).join(SEP)
 
-async function run(argv: string[]): Promise<{ ok: boolean; out: string }> {
+export async function run(argv: string[]): Promise<{ ok: boolean; out: string }> {
   try {
     const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
     const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
