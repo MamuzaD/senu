@@ -14,10 +14,10 @@ import {
   trustsState,
   type AgentRow,
   type Attention,
-} from "~/agents/collect.ts"
+} from "~/threads/live/collect.ts"
 
 const fixture = (name: string) =>
-  readFileSync(join(import.meta.dir, "../fixtures/detect", name), "utf8")
+  readFileSync(join(import.meta.dir, "../../fixtures/detect", name), "utf8")
 
 function row(
   windowId: string,

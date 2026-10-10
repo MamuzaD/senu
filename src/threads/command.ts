@@ -1,13 +1,13 @@
-import { jump } from "~/agents/actions.ts"
-import { Collector, type AgentRow, type Attention, type Collected } from "~/agents/collect.ts"
 import type { Config, UsageProfile } from "~/config.ts"
 import type { Agent } from "~/detect/manifest.ts"
 import { listPanes, setTmuxSocket, tmux, type Pane } from "~/detect/panes.ts"
+import { jump } from "~/threads/live/actions.ts"
+import { Collector, type AgentRow, type Attention, type Collected } from "~/threads/live/collect.ts"
 import { profileKey } from "~/usage/cache.ts"
 import { formatDuration } from "~/usage/format.ts"
 
-import { liveSessions } from "./live.ts"
 import { resume, ResumeError } from "./resume.ts"
+import { runningThreads } from "./running.ts"
 import { listThreads, type Thread } from "./thread.ts"
 
 const HELP = `usage: senu threads [--live] [--json] [--profile key]... [--limit n] [-L socket | -S path]
@@ -93,7 +93,7 @@ async function listEntries(profiles: UsageProfile[], withUnthreaded: boolean) {
   let seen: TmuxState = { panes: [], rows: [], paneBySession: new Map() }
   if ((await tmux("info")).ok) {
     const [panes, { rows }] = await Promise.all([listPanes(), new Collector().collect()])
-    seen = { panes, rows, paneBySession: await liveSessions(profiles, panes) }
+    seen = { panes, rows, paneBySession: await runningThreads(profiles, panes) }
   }
   return { entries: joinEntries(threads, seen, withUnthreaded), failed }
 }
@@ -154,7 +154,7 @@ function narrowed(profiles: UsageProfile[], byProfile: boolean, limit: number) {
       let rows = got.rows
       if (byProfile) {
         const panes = await listPanes()
-        const seen = { panes, rows, paneBySession: await liveSessions(profiles, panes) }
+        const seen = { panes, rows, paneBySession: await runningThreads(profiles, panes) }
         const windows = new Set(joinEntries(threads, seen, false).map((e) => e.live?.windowId))
         rows = rows.filter((r) => windows.has(r.windowId))
       }
@@ -173,7 +173,7 @@ async function pickLive(
     console.error("senu threads: no tmux server")
     return 1
   }
-  const { runPicker } = await import("~/agents/picker.tsx")
+  const { runPicker } = await import("~/threads/live/picker.tsx")
   return runPicker(narrowed(profiles, byProfile, limit), {
     raiseGhosttyTab: config.agents.raiseGhosttyTab,
   })

@@ -6,8 +6,8 @@ import { KeymapProvider } from "@opentui/keymap/react"
 import { createRoot } from "@opentui/react"
 import { act } from "react"
 
-import type { Collected, Collector } from "~/agents/collect.ts"
-import { Picker } from "~/agents/picker.tsx"
+import type { Collected, Collector } from "~/threads/live/collect.ts"
+import { Picker } from "~/threads/live/picker.tsx"
 
 let destroy: (() => void) | null = null
 afterEach(() => {

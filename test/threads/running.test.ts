@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { panesFor, parseLsof, parseProcs, stillClaude } from "~/threads/live.ts"
+import { panesFor, parseLsof, parseProcs, stillClaude } from "~/threads/running.ts"
 
 describe("parseLsof", () => {
   test("groups the locks each process holds", () => {

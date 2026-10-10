@@ -3,9 +3,9 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { planJump, type Client } from "~/agents/actions.ts"
-import { appleString, raiseTabScript } from "~/agents/ghostty.ts"
 import { loadConfig } from "~/config.ts"
+import { planJump, type Client } from "~/threads/live/actions.ts"
+import { appleString, raiseTabScript } from "~/threads/live/ghostty.ts"
 
 const clients: Client[] = [
   { name: "/dev/ttys001", session: "work", termname: "xterm-ghostty" },

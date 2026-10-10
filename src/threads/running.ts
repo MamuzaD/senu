@@ -97,7 +97,7 @@ export function panesFor(
   return live
 }
 
-export async function liveSessions(
+export async function runningThreads(
   profiles: UsageProfile[],
   panes: Pane[],
 ): Promise<Map<string, string>> {
