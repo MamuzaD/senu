@@ -1,6 +1,7 @@
 import type { RGBA } from "@opentui/core"
 
 import { Line } from "./line.tsx"
+import { colors } from "./theme.ts"
 
 export interface Cell {
   ch: string
@@ -34,6 +35,12 @@ export class Canvas {
     this.cells[y]![x] = { ch, fg, bg: opts.bg ?? null, attrs: opts.attrs ?? 0 }
   }
 
+  region(x: number, y: number, w: number, h: number): Canvas {
+    const out = new Canvas(w, h)
+    for (let r = 0; r < h; r++) out.cells[r] = (this.cells[y + r] ?? []).slice(x, x + w)
+    return out
+  }
+
   /**
    * Write text from column `x`, clipped at `max` (the canvas's width by
    * default). A wide character takes two cells, the second left empty so
@@ -63,7 +70,19 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
 
 const same = (a: RGBA | null, b: RGBA | null) => a === b || (!!a && !!b && a.equals(b))
 
-export function CanvasView({ canvas, from = 0 }: { canvas: Canvas; from?: number }) {
+/**
+ * `selectable` hands the text to OpenTUI's own selection. Every run then
+ * becomes a span, since OpenTUI highlights spans and skips bare text.
+ */
+export function CanvasView({
+  canvas,
+  from = 0,
+  selectable = false,
+}: {
+  canvas: Canvas
+  from?: number
+  selectable?: boolean
+}) {
   return (
     <box flexDirection="column" height={canvas.height} flexShrink={0}>
       {canvas.cells.map((row, y) => {
@@ -79,12 +98,16 @@ export function CanvasView({ canvas, from = 0 }: { canvas: Canvas; from?: number
         }
         while (runs.length && !runs.at(-1)!.fg && !runs.at(-1)!.bg) runs.pop()
         return (
-          // oxlint-disable-next-line react/no-array-index-key -- rows are positional
-          <Line key={y} selectable={false}>
+          <Line
+            // oxlint-disable-next-line react/no-array-index-key -- rows are positional
+            key={y}
+            selectable={selectable}
+            {...(selectable ? { selectionBg: colors.selection } : {})}
+          >
             {runs.length === 0
               ? " "
               : runs.map((r, i) =>
-                  r.fg || r.bg ? (
+                  r.fg || r.bg || selectable ? (
                     <span
                       // oxlint-disable-next-line react/no-array-index-key -- runs are positional
                       key={i}

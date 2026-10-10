@@ -17,6 +17,7 @@ export const colors = {
   dim: indexed(240),
   muted: indexed(245),
   rule: indexed(238),
+  selection: hex("#283457"),
 }
 
 export const brand = {

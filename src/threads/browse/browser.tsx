@@ -1,6 +1,12 @@
 import { basename } from "node:path"
 
-import { TextAttributes, createCliRenderer, type MouseEvent, type RGBA } from "@opentui/core"
+import {
+  TextAttributes,
+  createCliRenderer,
+  type MouseEvent,
+  type RGBA,
+  type Selection,
+} from "@opentui/core"
 import { type Binding } from "@opentui/keymap"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { KeymapProvider, useActiveKeys, useBindings } from "@opentui/keymap/react"
@@ -459,6 +465,18 @@ export function Browser({
     if (!text) return flash("no saved thread yet")
     void copy(text).then((ok) => flash(ok ? `copied ${what}` : "couldn't reach the clipboard"))
   }
+  const [selecting, setSelecting] = useState<"list" | "preview" | null>(null)
+  const onSelection = useEffectEvent((selection: Selection | null) => {
+    if (!selection || selection.isDragging) return
+    setSelecting(null)
+    const text = selection.getSelectedText().trim()
+    if (text)
+      void copy(text).then((ok) => flash(ok ? "copied selection" : "couldn't reach the clipboard"))
+  })
+  useEffect(() => {
+    renderer.on("selection", onSelection)
+    return () => void renderer.off("selection", onSelection)
+  }, [renderer])
 
   const select = (i: number) => {
     const e = flat[Math.max(0, Math.min(i, flat.length - 1))]
@@ -596,9 +614,43 @@ export function Browser({
     if (showPreview && (!split || event.x >= listW)) scrollPreview(up ? WHEEL_LINES : -WHEEL_LINES)
     else select(current().i + (up ? -1 : 1))
   }
+  // Each pane is its own selectable view; a drag that starts in one turns the other off, since
+  // OpenTUI widens a selection past the view it started in but only ever picks up selectable text.
+  const { split, listW } = layout(width, showPreview)
+  const bodyH = height - 1
+  const listCols = showPreview ? (split ? listW : 0) : width - 1
+  const previewFrom = split ? listW + 1 : 0
   return (
-    <box width={width} height={height} onMouseScroll={onWheel}>
-      <CanvasView canvas={canvas} />
+    <box width={width} height={height} flexDirection="column" onMouseScroll={onWheel}>
+      <box flexDirection="row" height={bodyH}>
+        {listCols > 0 && (
+          <box width={listCols} onMouseDown={() => setSelecting("list")}>
+            <CanvasView
+              canvas={canvas.region(0, 0, listCols, bodyH)}
+              selectable={selecting !== "preview"}
+            />
+          </box>
+        )}
+        {listCols > 0 && (
+          <box width={1}>
+            <CanvasView canvas={canvas.region(listCols, 0, 1, bodyH)} />
+          </box>
+        )}
+        {showPreview && (
+          <box width={width - previewFrom - 2} onMouseDown={() => setSelecting("preview")}>
+            <CanvasView
+              canvas={canvas.region(previewFrom, 0, width - previewFrom - 2, bodyH)}
+              selectable={selecting !== "list"}
+            />
+          </box>
+        )}
+        {showPreview && (
+          <box width={2}>
+            <CanvasView canvas={canvas.region(width - 2, 0, 2, bodyH)} />
+          </box>
+        )}
+      </box>
+      <CanvasView canvas={canvas.region(0, bodyH, width, 1)} />
     </box>
   )
 }
