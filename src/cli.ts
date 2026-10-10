@@ -23,6 +23,10 @@ const COMMANDS: Record<string, Command> = {
     about: "pick an agent to jump to",
     run: async (a, c) => (await import("./agents/command.ts")).agentsCommand(a, c),
   },
+  threads: {
+    about: "list past and running conversations, or resume one",
+    run: async (a, c) => (await import("./threads/command.ts")).threadsCommand(a, c),
+  },
   scout: {
     about: "scan agent panes, explain a state, or refresh detection manifests",
     run: async (a, c) => (await import("./detect/command.ts")).scoutCommand(a, c),
