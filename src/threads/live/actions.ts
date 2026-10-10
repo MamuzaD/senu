@@ -82,6 +82,6 @@ export async function jump(
   return plan
 }
 
-export async function kill(row: AgentRow): Promise<boolean> {
+export async function kill(row: Pick<AgentRow, "paneId">): Promise<boolean> {
   return (await tmux("kill-pane", "-t", row.paneId)).ok
 }

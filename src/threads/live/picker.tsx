@@ -12,10 +12,13 @@ import { brand, colors, hex, icons, mix, noColor, states } from "~/ui/theme.ts"
 import { UpdateGate, updateGate } from "~/update/gate.tsx"
 import { formatDuration } from "~/usage/format.ts"
 
+import { copy } from "../clipboard.ts"
 import { jump, kill } from "./actions.ts"
 import { type AgentRow, type Attention, type Collected, type Collector } from "./collect.ts"
 
 export type Source = Pick<Collector, "collect">
+/** The saved thread a row's agent is in, if one links. */
+export type Lookup = (row: AgentRow) => Promise<{ sessionId: string; transcript: string } | null>
 
 const REFRESH_MS = 1000
 
@@ -36,6 +39,8 @@ const pickerKeys: PickerBinding[] = [
   { key: "shift+x", cmd: "kill" },
   { key: "d", cmd: "kill" },
   { key: "shift+d", cmd: "kill" },
+  { key: "y", cmd: "copy-id", desc: "y copy" },
+  { key: "shift+y", cmd: "copy-path" },
   { key: "r", cmd: "refresh", desc: "r refresh" },
   { key: "shift+r", cmd: "refresh" },
   { key: "q", cmd: "quit", desc: "q quit" },
@@ -84,6 +89,7 @@ interface View {
   width: number
   height: number
   hints: { command: string; desc: string }[]
+  note: string
 }
 
 const visibleCount = (height: number) => Math.max(1, Math.floor((height - LIST_TOP - 1) / PER_ROW))
@@ -186,7 +192,8 @@ function paint(v: View): Canvas {
           .filter((hint) => ["jump", "kill", "quit"].includes(hint.command))
           .map((hint) => hint.desc)
           .join(" · ")
-  c.text(1, fy, keys, colors.dim)
+  if (v.note) c.text(1, fy, v.note, brand.gold)
+  else c.text(1, fy, keys, colors.dim)
   const room = right - Bun.stringWidth(keys) - 3
   const tail = more.length + note.length + 2 <= room ? [more, note] : [more]
   let tx = right + 1 - tail.filter(Boolean).reduce((n, s) => n + Bun.stringWidth(s) + 2, -2)
@@ -204,10 +211,12 @@ export function Picker({
   collector,
   initial,
   raiseGhosttyTab,
+  lookup,
 }: {
   collector: Source
   initial: Collected
   raiseGhosttyTab: boolean
+  lookup?: Lookup | undefined
 }) {
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
@@ -225,6 +234,18 @@ export function Picker({
     setConfirmingState(row)
   }
   const [diveAt, setDiveAt] = useState<number | null>(null)
+  const [note, setNote] = useState("")
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const flash = (text: string) => {
+    setNote(text)
+    clearTimeout(noteTimer.current)
+    noteTimer.current = setTimeout(() => setNote(""), 2000)
+  }
+  const copyOut = async (row: AgentRow, pick: "sessionId" | "transcript", what: string) => {
+    const linked = lookup ? await lookup(row) : null
+    if (!linked) return flash("no saved thread yet")
+    flash((await copy(linked[pick])) ? `copied ${what}` : "couldn't reach the clipboard")
+  }
   const [minute, setMinute] = useState(() => Math.floor(Date.now() / 60_000))
   const busy = useRef(false)
   const last = useRef(JSON.stringify(initial))
@@ -319,6 +340,18 @@ export function Picker({
           run: () => rows.length && setConfirming(rows[indexOf(cursorRef.current, rows)]!),
         },
         { name: "jump", run: () => rows.length && go(rows[indexOf(cursorRef.current, rows)]!) },
+        {
+          name: "copy-id",
+          run: () =>
+            rows.length &&
+            void copyOut(rows[indexOf(cursorRef.current, rows)]!, "sessionId", "session id"),
+        },
+        {
+          name: "copy-path",
+          run: () =>
+            rows.length &&
+            void copyOut(rows[indexOf(cursorRef.current, rows)]!, "transcript", "transcript path"),
+        },
       ],
     }),
     [confirming, diveAt, renderer, rows, width, raiseGhosttyTab],
@@ -337,6 +370,7 @@ export function Picker({
     : null
   const canvas = paint({
     rows,
+    note,
     daemon: data.daemon,
     sel,
     top,
@@ -355,7 +389,7 @@ export function Picker({
 
 export async function runPicker(
   collector: Source,
-  opts: { raiseGhosttyTab: boolean },
+  opts: { raiseGhosttyTab: boolean; lookup?: Lookup },
 ): Promise<number> {
   const { promise: closed, resolve } = Promise.withResolvers<void>()
   const [initial, renderer] = await Promise.all([
@@ -367,7 +401,12 @@ export async function runPicker(
   createRoot(renderer).render(
     <KeymapProvider keymap={keymap}>
       <UpdateGate release={gate.release} onUpdate={gate.onUpdate}>
-        <Picker collector={collector} initial={initial} raiseGhosttyTab={opts.raiseGhosttyTab} />
+        <Picker
+          collector={collector}
+          initial={initial}
+          raiseGhosttyTab={opts.raiseGhosttyTab}
+          lookup={opts.lookup}
+        />
       </UpdateGate>
     </KeymapProvider>,
   )

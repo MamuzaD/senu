@@ -1,6 +1,7 @@
 import type { Config, UsageProfile } from "~/config.ts"
 import { listPanes, setTmuxSocket, tmux } from "~/detect/panes.ts"
 import { Collector, type Collected } from "~/threads/live/collect.ts"
+import type { Lookup } from "~/threads/live/picker.tsx"
 import { profileKey } from "~/usage/cache.ts"
 import { formatDuration } from "~/usage/format.ts"
 
@@ -79,6 +80,20 @@ function narrowed(profiles: UsageProfile[], byProfile: boolean, limit: number) {
   }
 }
 
+function lookupIn(profiles: UsageProfile[]): Lookup {
+  return async (row) => {
+    const panes = await listPanes()
+    const windowOf = new Map(panes.map((p) => [p.id, p.windowId]))
+    const inWindow = new Set(
+      [...(await runningThreads(profiles, panes))]
+        .filter(([, pane]) => windowOf.get(pane) === row.windowId)
+        .map(([sessionId]) => sessionId),
+    )
+    const thread = listThreads(profiles).threads.find((t) => inWindow.has(t.sessionId))
+    return thread ? { sessionId: thread.sessionId, transcript: thread.transcript } : null
+  }
+}
+
 async function pickLive(
   config: Config,
   profiles: UsageProfile[],
@@ -92,6 +107,7 @@ async function pickLive(
   const { runPicker } = await import("~/threads/live/picker.tsx")
   return runPicker(narrowed(profiles, byProfile, limit), {
     raiseGhosttyTab: config.agents.raiseGhosttyTab,
+    lookup: lookupIn(profiles),
   })
 }
 

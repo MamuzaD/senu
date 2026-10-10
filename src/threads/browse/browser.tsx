@@ -7,11 +7,13 @@ import { KeymapProvider, useActiveKeys, useBindings } from "@opentui/keymap/reac
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 
+import { kill } from "~/threads/live/actions.ts"
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
 import { brand, colors, icons, noColor, states } from "~/ui/theme.ts"
 import { UpdateGate, updateGate } from "~/update/gate.tsx"
 import { formatDuration } from "~/usage/format.ts"
 
+import { copy } from "../clipboard.ts"
 import type { Entry } from "../entries.ts"
 import { preview, type Thread, type ToolKind, type Turn } from "../thread.ts"
 
@@ -40,6 +42,9 @@ const browserKeys: BrowserBinding[] = [
   { key: "return", cmd: "open", desc: "⏎ open" },
   { key: "/", cmd: "search", desc: "/ search" },
   { key: "p", cmd: "preview", desc: "p preview" },
+  { key: "y", cmd: "copy-id", desc: "y copy" },
+  { key: "shift+y", cmd: "copy-path" },
+  { key: "x", cmd: "kill", desc: "x kill" },
   { key: "r", cmd: "refresh", desc: "r refresh" },
   { key: "q", cmd: "quit", desc: "q quit" },
   { key: "escape", cmd: "quit" },
@@ -130,6 +135,8 @@ interface View {
   total: number
   showPreview: boolean
   turns: Turn[] | null
+  note: string
+  confirming: Entry | null
   hints: { command: string; desc: string }[]
 }
 
@@ -246,10 +253,29 @@ function paint(v: View): Canvas {
   if (split) paintPreview(c, v, listW, v.width - listW)
   else if (v.showPreview) paintPreview(c, v, -2, v.width + 2)
 
-  const hint = v.searching
-    ? "type to filter · ⏎ done · esc clear"
-    : v.hints.map((h) => h.desc).join(" · ")
-  c.text(1, v.height - 1, hint, colors.dim)
+  const fy = v.height - 1
+  if (v.confirming) {
+    let kx = c.text(1, fy, "kill this ", colors.bad)
+    kx = c.text(kx, fy, v.confirming.agent, colors.bad, { attrs: BOLD })
+    const title = v.confirming.title
+    const room = v.width - kx - 40
+    if (room > 8)
+      kx = c.text(
+        kx,
+        fy,
+        ` “${Bun.stringWidth(title) > room ? `${title.slice(0, room - 1)}…` : title}”`,
+        colors.bad,
+      )
+    kx = c.text(kx, fy, "?  ", colors.bad)
+    kx = c.text(kx, fy, "y", brand.papyrus, { attrs: BOLD })
+    c.text(kx, fy, " kill · any other key keeps it", colors.muted)
+  } else if (v.note) c.text(1, fy, v.note, brand.gold)
+  else {
+    const hint = v.searching
+      ? "type to filter · ⏎ done · esc clear"
+      : v.hints.map((h) => h.desc).join(" · ")
+    c.text(1, fy, hint, colors.dim)
+  }
   return c
 }
 
@@ -289,7 +315,20 @@ export function Browser({
   const searchingRef = useRef(false)
   const [showPreview, setShowPreview] = useState(true)
   const [selKey, setSelKey] = useState(() => keyOf(initial.find((e) => e.live) ?? initial[0]))
+  // Keys can arrive before React re-renders; actions read the selection from here, not from render.
+  const selKeyRef = useRef(selKey)
+  const choose = (key: string) => {
+    selKeyRef.current = key
+    setSelKey(key)
+  }
   const [scroll, setScroll] = useState(0)
+  const [note, setNote] = useState("")
+  const [confirming, setConfirmingState] = useState<Entry | null>(null)
+  const confirmingRef = useRef<Entry | null>(null)
+  const setConfirming = (e: Entry | null) => {
+    confirmingRef.current = e
+    setConfirmingState(e)
+  }
   const busy = useRef(false)
 
   const refresh = async () => {
@@ -333,10 +372,20 @@ export function Browser({
 
   const selThread = sel?.thread ?? null
   const turns = selThread ? turnsOf(selThread) : null
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const flash = (text: string) => {
+    setNote(text)
+    clearTimeout(noteTimer.current)
+    noteTimer.current = setTimeout(() => setNote(""), 2000)
+  }
+  const copyOut = (text: string | undefined, what: string) => {
+    if (!text) return flash("no saved thread yet")
+    void copy(text).then((ok) => flash(ok ? `copied ${what}` : "couldn't reach the clipboard"))
+  }
 
   const select = (i: number) => {
     const e = flat[Math.max(0, Math.min(i, flat.length - 1))]
-    if (e) setSelKey(keyOf(e))
+    if (e) choose(keyOf(e))
   }
   const screen: Entry[] = []
   for (let i = top, h = 0; i < rows.length; i++) {
@@ -346,10 +395,24 @@ export function Browser({
     if (r.kind === "entry") screen.push(r.entry)
   }
   const page = Math.max(1, screen.length)
-  const selectEntry = (e: Entry | undefined) => e && setSelKey(keyOf(e))
+  const selectEntry = (e: Entry | undefined) => e && choose(keyOf(e))
+  const current = () => {
+    const i = Math.max(
+      0,
+      flat.findIndex((e) => keyOf(e) === selKeyRef.current),
+    )
+    return { i, e: flat[i] ?? null }
+  }
   const close = () => renderer.destroy()
 
   useKeyboard((key) => {
+    const pending = confirmingRef.current
+    if (pending) {
+      setConfirming(null)
+      if ((key.name === "y" || key.name === "x") && pending.live)
+        void kill(pending.live).then(() => refresh())
+      return
+    }
     if (!searchingRef.current) return
     if (key.name === "escape") {
       setQuery("")
@@ -362,29 +425,43 @@ export function Browser({
 
   useBindings(
     () => ({
-      enabled: () => !searchingRef.current,
+      enabled: () => !searchingRef.current && !confirmingRef.current,
       bindings: browserKeys,
       commands: [
         { name: "quit", run: close },
-        { name: "move-down", run: () => select(selIndex + 1) },
-        { name: "move-up", run: () => select(selIndex - 1) },
+        { name: "move-down", run: () => select(current().i + 1) },
+        { name: "move-up", run: () => select(current().i - 1) },
         { name: "first", run: () => select(0) },
         { name: "last", run: () => select(flat.length - 1) },
         { name: "search", run: () => setSearching((searchingRef.current = true)) },
         { name: "preview", run: () => setShowPreview((s) => !s) },
         { name: "refresh", run: () => void refresh() },
+        { name: "copy-id", run: () => copyOut(current().e?.thread?.sessionId, "session id") },
+        {
+          name: "copy-path",
+          run: () => copyOut(current().e?.thread?.transcript, "transcript path"),
+        },
+        {
+          name: "kill",
+          run: () => {
+            const { e } = current()
+            if (e?.live) setConfirming(e)
+            else flash("not running")
+          },
+        },
         {
           name: "open",
           run: () => {
-            if (!sel) return
-            onOpen(sel)
+            const { e } = current()
+            if (!e) return
+            onOpen(e)
             close()
           },
         },
-        { name: "half-down", run: () => select(selIndex + Math.ceil(page / 2)) },
-        { name: "half-up", run: () => select(selIndex - Math.ceil(page / 2)) },
-        { name: "page-down", run: () => select(selIndex + page) },
-        { name: "page-up", run: () => select(selIndex - page) },
+        { name: "half-down", run: () => select(current().i + Math.ceil(page / 2)) },
+        { name: "half-up", run: () => select(current().i - Math.ceil(page / 2)) },
+        { name: "page-down", run: () => select(current().i + page) },
+        { name: "page-up", run: () => select(current().i - page) },
         { name: "screen-top", run: () => selectEntry(screen[0]) },
         {
           name: "screen-middle",
@@ -397,7 +474,7 @@ export function Browser({
         })),
       ],
     }),
-    [flat, selIndex, sel, top],
+    [flat, top, page],
   )
 
   const canvas = paint({
@@ -411,6 +488,8 @@ export function Browser({
     total: entries.length,
     showPreview,
     turns,
+    note,
+    confirming,
     hints: activeKeys.flatMap((key) =>
       typeof key.command === "string" && typeof key.bindingAttrs?.desc === "string"
         ? [{ command: key.command, desc: key.bindingAttrs.desc }]
