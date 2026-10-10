@@ -4,13 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import type { Config } from "~/config.ts"
-import {
-  installCommand,
-  installedBinary,
-  scriptUrl,
-  updateCommand,
-  type Runner,
-} from "~/update/command.ts"
+import { installedBinary, updateCommand, type Runner } from "~/update/command.ts"
 import {
   checkLatest,
   LATEST_URL,
@@ -62,6 +56,14 @@ describe("checkLatest", () => {
     const { get, calls } = release("v9.9.9")
     await checkLatest({ fetch: get, path, now: 0 })
     await checkLatest({ fetch: get, path, now: 60_000 })
+    expect(calls).toHaveLength(1)
+  })
+
+  test("a check a day old asks GitHub again", async () => {
+    const day = 24 * 60 * 60 * 1000
+    await checkLatest({ fetch: release("v1.0.0").get, path, now: 0 })
+    const { get, calls } = release("v2.0.0")
+    expect((await checkLatest({ fetch: get, path, now: day })).latest).toBe("2.0.0")
     expect(calls).toHaveLength(1)
   })
 
@@ -157,10 +159,11 @@ describe("updateCommand", () => {
     err.mockRestore()
   })
 
-  test("already latest runs nothing", async () => {
+  test("already latest says so and runs nothing", async () => {
     const { calls, code } = run([], `v${version}`)
     expect(await code).toBe(0)
     expect(calls).toEqual([])
+    expect(log.mock.calls.flat().join()).toContain(`senu ${version} is the latest`)
   })
 
   test("--check reports without installing", async () => {
@@ -175,13 +178,12 @@ describe("updateCommand", () => {
     expect(await code).toBe(0)
     expect(calls).toEqual([
       {
-        url: scriptUrl("v999.0.0"),
+        url: "https://raw.githubusercontent.com/MamuzaD/senu/v999.0.0/install.sh",
         env: { SENU_VERSION: "v999.0.0", SENU_INSTALL_DIR: join(dir, "bin") },
       },
     ])
-    expect(installCommand("v999.0.0")).toContain("/MamuzaD/senu/v999.0.0/install.sh | sh")
     expect(printed()).toContain(
-      `updating senu ${version} → 999.0.0 via ${installCommand("v999.0.0")}`,
+      `updating senu ${version} → 999.0.0 via curl -fsSL https://raw.githubusercontent.com/MamuzaD/senu/v999.0.0/install.sh | sh`,
     )
   })
 
@@ -194,6 +196,28 @@ describe("updateCommand", () => {
   test("unknown flags print usage", async () => {
     const write = spyOn(process.stderr, "write").mockImplementation(() => true)
     expect(await updateCommand(["--force"], config, { path })).toBe(2)
+    expect(write.mock.calls.flat().join()).toContain("usage: senu update [--check]")
     write.mockRestore()
+  })
+
+  test("GitHub out of reach fails without installing", async () => {
+    const calls: string[] = []
+    const fetch = async () => {
+      throw new Error("offline")
+    }
+    const runner: Runner = async (url) => (calls.push(url), 0)
+    expect(await updateCommand([], config, { fetch, path, run: runner })).toBe(1)
+    expect(calls).toEqual([])
+    expect(err.mock.calls.flat().join()).toContain("could not reach GitHub: offline")
+  })
+
+  // The tests run from source, where there's no senu binary to replace.
+  test("refuses from source instead of installing beside bun", async () => {
+    const calls: string[] = []
+    const runner: Runner = async (url) => (calls.push(url), 0)
+    const fetch = release("v999.0.0").get
+    expect(await updateCommand([], config, { fetch, path, run: runner })).toBe(1)
+    expect(calls).toEqual([])
+    expect(err.mock.calls.flat().join()).toContain("running from source")
   })
 })
