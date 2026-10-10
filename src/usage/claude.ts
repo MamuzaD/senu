@@ -14,7 +14,8 @@ type TokenResult = { token: string } | { error: string }
 function tokenFromOauth(raw: string): TokenResult | null {
   const creds = JSON.parse(raw)?.claudeAiOauth
   if (!creds?.accessToken) return null
-  if (creds.expiresAt && Date.now() > creds.expiresAt) return { error: "Claude token expired" }
+  if (creds.expiresAt && Date.now() > creds.expiresAt)
+    return { error: "token expired · open Claude to refresh" }
   return { token: creds.accessToken }
 }
 

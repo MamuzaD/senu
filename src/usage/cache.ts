@@ -79,6 +79,11 @@ function fetchProfile(p: UsageProfile): Promise<Snapshot> {
   return p.kind === "codex" ? fetchCodex(p.home) : fetchClaude(p.home)
 }
 
+function orLastGood(p: UsageProfile, snapshot: Snapshot): Snapshot {
+  const good = readCache(p)?.snapshot
+  return !snapshot.ok && good?.ok ? { ...good, refreshError: snapshot.error } : snapshot
+}
+
 /** Fetches and caches a snapshot. The caller must already hold the lock; it's released here. */
 export async function refreshLocked(p: UsageProfile): Promise<Snapshot> {
   const release = () => releaseLock(p)
@@ -86,7 +91,7 @@ export async function refreshLocked(p: UsageProfile): Promise<Snapshot> {
   try {
     const snapshot = await fetchProfile(p)
     writeCache(p, snapshot)
-    return snapshot
+    return orLastGood(p, snapshot)
   } finally {
     process.off("exit", release)
     releaseLock(p)
@@ -120,5 +125,5 @@ export async function getSnapshot(p: UsageProfile): Promise<Snapshot> {
   if (claimLock(p)) return refreshLocked(p)
   const snapshot = await fetchProfile(p)
   writeCache(p, snapshot)
-  return snapshot
+  return orLastGood(p, snapshot)
 }

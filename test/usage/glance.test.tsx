@@ -222,3 +222,74 @@ test("a reached spend cap doesn't read as a lockout while plan limits have room"
   // With no plan limits, the cap is all there is.
   expect(await frame(true, [], 96, false, today, cap)).toContain("Spend empty")
 })
+
+test("usage kept after a failed refresh shows its age and why, beside the limits", async () => {
+  const kept: Snapshot = {
+    ...snapshot([fiveHour(40), weekly]),
+    updatedAt: nowSeconds() - 3 * HOUR,
+    refreshError: "token expired · open Claude to refresh",
+  }
+  const section: Section = {
+    snapshot: kept,
+    refreshing: false,
+    justUpdated: false,
+    loadedAt: 0,
+    landedAt: null,
+  }
+  const t = await testRender(
+    <ProfileSection
+      profile={profile}
+      section={section}
+      dots="..."
+      fillFrom={null}
+      right={95}
+      looked={false}
+      collapsed={false}
+      today={today}
+      days={7}
+      scanning={false}
+    />,
+    { width: 96, height: 6 },
+  )
+  destroy = () => act(() => t.renderer.destroy())
+  await act(() => t.renderOnce())
+  const f = t.captureCharFrame()
+  expect(f).toMatch(/Claude · personal\s+3h old · token expired · open Claude to refresh/)
+  expect(f).toContain("40%")
+  expect(f).not.toContain("✗")
+})
+
+test("a failed fetch with nothing to fall back on shows the error, without a check mark", async () => {
+  const failed: Snapshot = {
+    ...snapshot([]),
+    ok: false,
+    error: "token expired · open Claude to refresh",
+  }
+  const t = await testRender(
+    <ProfileSection
+      profile={profile}
+      section={{
+        snapshot: failed,
+        refreshing: false,
+        justUpdated: false,
+        loadedAt: 0,
+        landedAt: null,
+      }}
+      dots="..."
+      fillFrom={null}
+      right={95}
+      looked={false}
+      collapsed={false}
+      today={today}
+      days={7}
+      scanning={false}
+    />,
+    { width: 96, height: 4 },
+  )
+  destroy = () => act(() => t.renderer.destroy())
+  await act(() => t.renderOnce())
+  const f = t.captureCharFrame()
+  expect(f).toMatch(/Claude · personal\s+tried just now/)
+  expect(f).toContain("✗ token expired · open Claude to refresh")
+  expect(f).not.toContain("✓")
+})

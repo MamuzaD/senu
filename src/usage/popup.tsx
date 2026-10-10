@@ -231,12 +231,16 @@ function freshness(
 ): { text: string; fg: RGBA } {
   const { snapshot } = section
   if (!snapshot) return { text: `fetching${dots}`, fg: colors.muted }
-  if (section.justUpdated) return { text: "✓ now updated", fg: glow(colors.good) }
   const age = nowSeconds() - snapshot.updatedAt
+  const ago = age < 60 ? "just now" : `${formatDuration(age)} ago`
+  if (!snapshot.ok) return { text: `tried ${ago}`, fg: colors.muted }
+  if (section.justUpdated) return { text: "✓ now updated", fg: glow(colors.good) }
   if (section.refreshing)
     return { text: `${formatDuration(age)} old · refreshing${dots}`, fg: colors.warn }
+  if (snapshot.refreshError)
+    return { text: `${formatDuration(age)} old · ${snapshot.refreshError}`, fg: colors.warn }
   return {
-    text: `✓ updated ${age < 60 ? "just now" : `${formatDuration(age)} ago`}`,
+    text: `✓ updated ${ago}`,
     fg: glow(colors.muted),
   }
 }
@@ -785,7 +789,8 @@ export function UsagePopup({
           const t = now()
           update(i, {
             snapshot,
-            refreshing: nowSeconds() - snapshot.updatedAt > STALE_NOTICE_SECONDS,
+            refreshing:
+              !snapshot.refreshError && nowSeconds() - snapshot.updatedAt > STALE_NOTICE_SECONDS,
             loadedAt: t,
             landedAt: t - openedAt > FETCHED_AFTER_MS ? t : null,
           })
