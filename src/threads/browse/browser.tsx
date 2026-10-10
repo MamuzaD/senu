@@ -74,13 +74,17 @@ export function matches(e: Entry, query: string): boolean {
     .every((token) => hay.includes(token))
 }
 
-/** Running first, then everything else; each keeps the list's newest-first order. */
-export function sections(entries: Entry[]): { label: string; entries: Entry[] }[] {
-  const running = entries.filter((e) => e.live)
-  const rest = entries.filter((e) => !e.live)
+export const ARCHIVE_AFTER_MS = 3 * 24 * 60 * 60 * 1000
+
+export function sections(
+  entries: Entry[],
+  now = Date.now(),
+): { label: string; entries: Entry[] }[] {
+  const old = (e: Entry) => now - e.updatedMs > ARCHIVE_AFTER_MS
   return [
-    { label: "running", entries: running },
-    { label: "threads", entries: rest },
+    { label: "running", entries: entries.filter((e) => e.live) },
+    { label: "recent", entries: entries.filter((e) => !e.live && !old(e)) },
+    { label: "archived", entries: entries.filter((e) => !e.live && old(e)) },
   ].filter((s) => s.entries.length)
 }
 
@@ -346,19 +350,20 @@ export function Browser({
     return () => clearInterval(id)
   }, [])
 
-  const shown = useMemo(() => entries.filter((e) => matches(e, query)), [entries, query])
-  const rows: Row[] = []
-  let n = 0
-  for (const s of sections(shown)) {
-    rows.push({ kind: "header", label: s.label, count: s.entries.length })
-    for (const entry of s.entries) rows.push({ kind: "entry", entry, n: ++n })
-  }
-  const flat = useMemo(() => sections(shown).flatMap((s) => s.entries), [shown])
+  const shown = useMemo(() => sections(entries.filter((e) => matches(e, query))), [entries, query])
+  const flat = useMemo(() => shown.flatMap((s) => s.entries), [shown])
   const selIndex = Math.max(
     0,
     flat.findIndex((e) => keyOf(e) === selKey),
   )
   const sel = flat[selIndex] ?? null
+  const rows: Row[] = []
+  let n = 0
+  for (const s of shown) {
+    rows.push({ kind: "header", label: s.label, count: s.entries.length })
+    const open = s.label !== "archived" || !!query || (sel !== null && s.entries.includes(sel))
+    for (const entry of s.entries) if (open) rows.push({ kind: "entry", entry, n: ++n })
+  }
   const selRow = rows.findIndex((r) => r.kind === "entry" && r.entry === sel)
 
   const fits = (from: number, to: number) => {
