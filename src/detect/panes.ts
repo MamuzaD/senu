@@ -26,6 +26,7 @@ export interface Pane {
   windowActive: boolean
   /** Last activity in the window, epoch seconds. */
   windowActivity: number
+  cwd: string
   /** The window's `@ai_state`, as the daemon last wrote it. */
   aiState: string
 }
@@ -52,6 +53,7 @@ const FIELDS = [
   "window_name",
   "window_active",
   "window_activity",
+  "pane_current_path",
   "@ai_state",
   "host",
   "host_short",
@@ -129,6 +131,7 @@ function parsePanes(out: string): Pane[] {
       windowName,
       windowActive,
       activity,
+      cwd,
       aiState,
       host,
       hostShort,
@@ -150,6 +153,7 @@ function parsePanes(out: string): Pane[] {
       windowName: windowName!,
       windowActive: windowActive === "1",
       windowActivity: Number(activity),
+      cwd: cwd!,
       aiState: aiState!,
     })
   }

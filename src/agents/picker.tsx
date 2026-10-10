@@ -15,6 +15,8 @@ import { formatDuration } from "~/usage/format.ts"
 import { jump, kill } from "./actions.ts"
 import { type AgentRow, type Attention, type Collected, type Collector } from "./collect.ts"
 
+export type Source = Pick<Collector, "collect">
+
 const REFRESH_MS = 1000
 
 type PickerBinding = Binding & { desc?: string }
@@ -203,7 +205,7 @@ export function Picker({
   initial,
   raiseGhosttyTab,
 }: {
-  collector: Collector
+  collector: Source
   initial: Collected
   raiseGhosttyTab: boolean
 }) {
@@ -352,7 +354,7 @@ export function Picker({
 }
 
 export async function runPicker(
-  collector: Collector,
+  collector: Source,
   opts: { raiseGhosttyTab: boolean },
 ): Promise<number> {
   const { promise: closed, resolve } = Promise.withResolvers<void>()

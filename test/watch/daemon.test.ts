@@ -244,7 +244,7 @@ for (const c of cmds) {
   const target = c[c.indexOf("-t") + 1] ?? ""
   if (c[0] === "list-panes")
     for (const id of panes)
-      out += [id, "123", "claude", "1", "0", "main", "0", win(id), "0", "agent", "1", "0", state[win(id)] ?? "", "host", "host", "host"].join("|senu|") + "\\n"
+      out += [id, "123", "claude", "1", "0", "main", "0", win(id), "0", "agent", "1", "0", "/", state[win(id)] ?? "", "host", "host", "host"].join("|senu|") + "\\n"
   // Like tmux: display-message tolerates a gone target, capture-pane fails and stops the chain.
   else if (c[0] === "capture-pane" && !panes.includes(target)) { code = 1; break }
   else if (c[0] === "display-message") out += c.at(-1) + "\\n"

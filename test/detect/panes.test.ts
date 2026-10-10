@@ -32,6 +32,7 @@ const pane: Pane = {
   windowName: "test",
   windowActive: true,
   windowActivity: 0,
+  cwd: "/",
   aiState: "",
 }
 

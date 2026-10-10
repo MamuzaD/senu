@@ -8,7 +8,7 @@ import { version } from "../../package.json"
 
 /**
  * Release checks against GitHub. The watch daemon refreshes the cached newest
- * version once a day; help, `senu --version`, and the vision and agents popups
+ * version once a day; help, `senu --version`, and the vision and threads popups
  * read it to mention or offer an update without touching the network.
  */
 

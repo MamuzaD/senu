@@ -19,10 +19,6 @@ const COMMANDS: Record<string, Command> = {
     about: "classify agent panes in the background, for the status bar",
     run: async (a, c) => (await import("./watch/command.ts")).watchCommand(a, c),
   },
-  agents: {
-    about: "pick an agent to jump to",
-    run: async (a, c) => (await import("./agents/command.ts")).agentsCommand(a, c),
-  },
   threads: {
     about: "list past and running conversations, or resume one",
     run: async (a, c) => (await import("./threads/command.ts")).threadsCommand(a, c),

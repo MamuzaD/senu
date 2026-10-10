@@ -55,7 +55,10 @@ export function planJump(
 }
 
 /** Waits for the tmux/Ghostty navigation attempts and returns the chosen plan; tmux failures do not reject. */
-export async function jump(row: AgentRow, opts: { raiseGhosttyTab: boolean }): Promise<JumpPlan> {
+export async function jump(
+  row: Pick<AgentRow, "session" | "windowId">,
+  opts: { raiseGhosttyTab: boolean },
+): Promise<JumpPlan> {
   const [all, current] = await Promise.all([clients(), currentClient()])
   let plan = planJump(row, all, current, { ...opts, platform: process.platform })
   if (plan === "raise" && !(await raiseGhosttyTab(row.session))) plan = "switch"
