@@ -95,6 +95,19 @@ async function pickLive(
   })
 }
 
+async function browse(config: Config, initial: Entry[], load: () => Promise<Entry[]>) {
+  const { runBrowser } = await import("./browse/browser.tsx")
+  const picked = await runBrowser(initial, load)
+  if (!picked) return 0
+  try {
+    return await openEntry(picked, { raiseGhosttyTab: config.agents.raiseGhosttyTab })
+  } catch (e) {
+    if (!(e instanceof ResumeError || e instanceof OpenError)) throw e
+    console.error(`senu threads: ${e.message}`)
+    return 1
+  }
+}
+
 export async function threadsCommand(args: string[], config: Config): Promise<number> {
   if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(HELP)
@@ -150,6 +163,8 @@ export async function threadsCommand(args: string[], config: Config): Promise<nu
   }
   const { entries: shown, failed } = await load()
   warnFailed(failed)
+  if (!json && process.stdout.isTTY)
+    return browse(config, shown, async () => (await load()).entries)
 
   if (json) console.log(JSON.stringify(shown.map(entryJson), null, 2))
   else if (!shown.length) console.log(liveOnly ? "no running agents" : "no threads")

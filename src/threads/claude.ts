@@ -4,7 +4,7 @@ import { basename, join } from "node:path"
 import type { UsageProfile } from "~/config.ts"
 import { profileKey } from "~/usage/cache.ts"
 
-import type { Message, Thread } from "./thread.ts"
+import type { Message, Thread, ToolKind } from "./thread.ts"
 import { firstLine, headRecords, tailRecords } from "./transcript.ts"
 
 /**
@@ -17,6 +17,35 @@ import { firstLine, headRecords, tailRecords } from "./transcript.ts"
 
 const HEAD_BYTES = 64 << 10
 const TAIL_BYTES = 256 << 10
+
+const CLAUDE_TOOL_KINDS: Record<string, ToolKind> = {
+  Read: "read",
+  NotebookRead: "read",
+  Edit: "edit",
+  MultiEdit: "edit",
+  Write: "edit",
+  NotebookEdit: "edit",
+  Bash: "run",
+  BashOutput: "run",
+  Grep: "search",
+  Glob: "search",
+  WebFetch: "web",
+  WebSearch: "web",
+  Agent: "agent",
+  Task: "agent",
+  SendMessage: "agent",
+  TaskStop: "agent",
+  ListAgents: "agent",
+}
+
+export function claudeTools(r: Record<string, unknown>): ToolKind[] {
+  if (r.type !== "assistant" || r.isSidechain) return []
+  const content = (r.message as { content?: unknown } | undefined)?.content
+  if (!Array.isArray(content)) return []
+  return content
+    .filter((b) => b?.type === "tool_use")
+    .map((b) => CLAUDE_TOOL_KINDS[String(b.name)] ?? "other")
+}
 
 export function claudeMessage(r: Record<string, unknown>): Message | null {
   if ((r.type !== "user" && r.type !== "assistant") || r.isMeta || r.isSidechain) return null

@@ -2,8 +2,8 @@ import type { UsageProfile } from "~/config.ts"
 import type { Agent } from "~/detect/manifest.ts"
 import { profileKey } from "~/usage/cache.ts"
 
-import { claudeMessage, claudeThreads } from "./claude.ts"
-import { codexMessage, codexThreads } from "./codex.ts"
+import { claudeMessage, claudeThreads, claudeTools } from "./claude.ts"
+import { codexMessage, codexThreads, codexTools } from "./codex.ts"
 import { tailRecords } from "./transcript.ts"
 
 export interface Thread {
@@ -21,6 +21,10 @@ export interface Message {
   fromUser: boolean
   text: string
 }
+
+export type ToolKind = "read" | "edit" | "run" | "search" | "web" | "agent" | "other"
+
+export type Turn = Message | { tools: Partial<Record<ToolKind, number>> }
 
 export interface Listed {
   threads: Thread[]
@@ -42,10 +46,18 @@ export function listThreads(profiles: UsageProfile[]): Listed {
 
 const PREVIEW_BYTES = 1 << 20
 
-export function preview(thread: Thread, count: number): Message[] {
-  const read = thread.agent === "codex" ? codexMessage : claudeMessage
-  return tailRecords(thread.transcript, PREVIEW_BYTES)
-    .map(read)
-    .filter((m): m is Message => m !== null)
-    .slice(-count)
+export function preview(thread: Thread, count: number): Turn[] {
+  const [read, tools] =
+    thread.agent === "codex" ? [codexMessage, codexTools] : [claudeMessage, claudeTools]
+  const turns: Turn[] = []
+  for (const r of tailRecords(thread.transcript, PREVIEW_BYTES)) {
+    const m = read(r)
+    if (m) turns.push(m)
+    const kinds = tools(r)
+    if (!kinds.length) continue
+    let last = turns.at(-1)
+    if (!last || !("tools" in last)) turns.push((last = { tools: {} }))
+    for (const k of kinds) last.tools[k] = (last.tools[k] ?? 0) + 1
+  }
+  return turns.slice(-count)
 }

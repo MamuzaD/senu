@@ -5,7 +5,7 @@ import { join } from "node:path"
 import type { UsageProfile } from "~/config.ts"
 import { profileKey } from "~/usage/cache.ts"
 
-import type { Message, Thread } from "./thread.ts"
+import type { Message, Thread, ToolKind } from "./thread.ts"
 import { firstLine } from "./transcript.ts"
 
 /**
@@ -54,6 +54,36 @@ export function codexThreads(p: UsageProfile): Thread[] {
   } finally {
     db.close()
   }
+}
+
+const CODEX_TOOL_KINDS: Record<string, ToolKind> = {
+  exec_command: "run",
+  write_stdin: "run",
+  shell: "run",
+  apply_patch: "edit",
+  view_image: "read",
+  web__run: "web",
+  spawn_agent: "agent",
+  wait_agent: "agent",
+  send_message: "agent",
+  followup_task: "agent",
+  list_agents: "agent",
+}
+
+export function codexTools(r: Record<string, unknown>): ToolKind[] {
+  if (r.type !== "response_item") return []
+  const p = r.payload as { type?: unknown; name?: unknown; input?: unknown } | undefined
+  if (p?.type === "local_shell_call") return ["run"]
+  if (p?.type === "web_search_call") return ["web"]
+  if (p?.type !== "function_call" && p?.type !== "custom_tool_call") return []
+  // Code mode sends one `exec` holding the real calls, written as `tools.<name>(…)`
+  if (p.name === "exec" && typeof p.input === "string") {
+    const inner = [...p.input.matchAll(/\btools\.(\w+)\(/g)].map(
+      (m) => CODEX_TOOL_KINDS[m[1]!] ?? "other",
+    )
+    return inner.length ? inner : ["run"]
+  }
+  return [CODEX_TOOL_KINDS[String(p.name)] ?? "other"]
 }
 
 export function codexMessage(r: Record<string, unknown>): Message | null {

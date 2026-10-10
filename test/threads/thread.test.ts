@@ -4,8 +4,8 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { claudeMessage, claudeSummary } from "~/threads/claude.ts"
-import { CODEX_STATE_DB, codexMessage } from "~/threads/codex.ts"
+import { claudeMessage, claudeSummary, claudeTools } from "~/threads/claude.ts"
+import { CODEX_STATE_DB, codexMessage, codexTools } from "~/threads/codex.ts"
 import { listThreads, preview } from "~/threads/thread.ts"
 import { headRecords, tailRecords } from "~/threads/transcript.ts"
 
@@ -98,6 +98,39 @@ describe("claude summary", () => {
   })
 })
 
+describe("tool kinds", () => {
+  const toolUse = (...names: string[]) => ({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "text", text: "on it" },
+        ...names.map((name) => ({ type: "tool_use", name })),
+      ],
+    },
+  })
+  const codexCall = (type: string, name?: string, input?: string) => ({
+    type: "response_item",
+    payload: { type, name, input },
+  })
+
+  test("claude tools by name, unknown ones as other", () => {
+    expect(
+      claudeTools(toolUse("Read", "Edit", "Bash", "Grep", "WebFetch", "Agent", "Skill")),
+    ).toEqual(["read", "edit", "run", "search", "web", "agent", "other"])
+    expect(claudeTools({ ...toolUse("Bash"), isSidechain: true })).toEqual([])
+  })
+
+  test("codex calls, counting each tool inside a code-mode exec", () => {
+    const exec =
+      'await tools.exec_command({cmd:"ls"}); await tools.apply_patch("x"); tools.web__run({})'
+    expect(codexTools(codexCall("custom_tool_call", "exec", exec))).toEqual(["run", "edit", "web"])
+    expect(codexTools(codexCall("custom_tool_call", "exec", "text(1)"))).toEqual(["run"])
+    expect(codexTools(codexCall("function_call", "spawn_agent"))).toEqual(["agent"])
+    expect(codexTools(codexCall("local_shell_call"))).toEqual(["run"])
+    expect(codexTools(codexCall("function_call_output"))).toEqual([])
+  })
+})
+
 describe("codex messages", () => {
   test("keep conversation turns", () => {
     expect(codexMessage(codexTurn("user", "hi"))).toEqual({ fromUser: true, text: "hi" })
@@ -170,6 +203,25 @@ describe("listThreads", () => {
     expect(preview(claude!, 5)).toEqual([
       { fromUser: true, text: "hello claude" },
       { fromUser: false, text: "hey" },
+    ])
+  })
+
+  test("previews a run of tool calls as one turn, counted by kind", () => {
+    const path = join(dir, "tools.jsonl")
+    const tool = (...names: string[]) => ({
+      type: "assistant",
+      message: { content: names.map((name) => ({ type: "tool_use", name })) },
+    })
+    writeFileSync(
+      path,
+      jsonl(user("go"), tool("Read"), tool("Bash", "Bash"), assistant("done"), tool("Edit")),
+    )
+    const thread = { ...listThreads(profiles).threads[1]!, transcript: path }
+    expect(preview(thread, 9)).toEqual([
+      { fromUser: true, text: "go" },
+      { tools: { read: 1, run: 2 } },
+      { fromUser: false, text: "done" },
+      { tools: { edit: 1 } },
     ])
   })
 
