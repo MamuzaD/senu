@@ -1,14 +1,13 @@
 import type { Config, UsageProfile } from "~/config.ts"
-import type { Agent } from "~/detect/manifest.ts"
-import { listPanes, setTmuxSocket, tmux, type Pane } from "~/detect/panes.ts"
-import { jump } from "~/threads/live/actions.ts"
-import { Collector, type AgentRow, type Attention, type Collected } from "~/threads/live/collect.ts"
+import { listPanes, setTmuxSocket, tmux } from "~/detect/panes.ts"
+import { Collector, type Collected } from "~/threads/live/collect.ts"
 import { profileKey } from "~/usage/cache.ts"
 import { formatDuration } from "~/usage/format.ts"
 
-import { resume, ResumeError } from "./resume.ts"
+import { joinEntries, listEntries, openEntry, OpenError, type Entry } from "./entries.ts"
+import { ResumeError } from "./resume.ts"
 import { runningThreads } from "./running.ts"
-import { listThreads, type Thread } from "./thread.ts"
+import { listThreads } from "./thread.ts"
 
 const HELP = `usage: senu threads [--live] [--json] [--profile key]... [--limit n] [-L socket | -S path]
        senu threads resume <session-id>
@@ -23,80 +22,6 @@ Lists agent threads, newest first.
 
 resume jumps to a running thread, or reopens it in its own CLI.
 `
-
-export interface Live {
-  state: Attention
-  paneId: string
-  windowId: string
-  session: string
-}
-
-export interface Entry {
-  thread: Thread | null
-  agent: Agent
-  title: string
-  cwd: string
-  updatedMs: number
-  live: Live | null
-}
-
-const threadEntry = (t: Thread, live: Live | null): Entry => ({
-  thread: t,
-  agent: t.agent,
-  title: t.title,
-  cwd: t.cwd,
-  updatedMs: t.updatedMs,
-  live,
-})
-
-export const agentEntry = (r: AgentRow, cwd: string): Entry => ({
-  thread: null,
-  agent: r.agent,
-  title: r.label,
-  cwd,
-  updatedMs: r.activity * 1000,
-  live: { state: r.state, paneId: r.paneId, windowId: r.windowId, session: r.session },
-})
-
-export interface TmuxState {
-  panes: Pick<Pane, "id" | "windowId" | "session" | "cwd">[]
-  rows: AgentRow[]
-  paneBySession: Map<string, string>
-}
-
-export function joinEntries(threads: Thread[], seen: TmuxState, withUnthreaded: boolean): Entry[] {
-  const paneById = new Map(seen.panes.map((p) => [p.id, p]))
-  const rowByWindow = new Map(seen.rows.map((r) => [r.windowId, r]))
-  const listed = new Set(threads.map((t) => t.sessionId))
-  const live = new Map<string, Live>()
-  const threaded = new Set<string>()
-  for (const [sessionId, paneId] of seen.paneBySession) {
-    const pane = paneById.get(paneId)
-    if (!pane || !listed.has(sessionId)) continue
-    const state = rowByWindow.get(pane.windowId)?.state ?? "idle"
-    live.set(sessionId, { state, paneId, windowId: pane.windowId, session: pane.session })
-    threaded.add(pane.windowId)
-  }
-  const unthreaded = withUnthreaded
-    ? seen.rows
-        .filter((r) => !threaded.has(r.windowId))
-        .map((r) => agentEntry(r, paneById.get(r.paneId)?.cwd ?? ""))
-    : []
-  return [
-    ...threads.map((t) => threadEntry(t, live.get(t.sessionId) ?? null)),
-    ...unthreaded,
-  ].toSorted((a, b) => b.updatedMs - a.updatedMs)
-}
-
-async function listEntries(profiles: UsageProfile[], withUnthreaded: boolean) {
-  const { threads, failed } = listThreads(profiles)
-  let seen: TmuxState = { panes: [], rows: [], paneBySession: new Map() }
-  if ((await tmux("info")).ok) {
-    const [panes, { rows }] = await Promise.all([listPanes(), new Collector().collect()])
-    seen = { panes, rows, paneBySession: await runningThreads(profiles, panes) }
-  }
-  return { entries: joinEntries(threads, seen, withUnthreaded), failed }
-}
 
 export const entryJson = (e: Entry) => ({
   sessionId: e.thread?.sessionId ?? null,
@@ -123,24 +48,15 @@ async function resumeCommand(sessionId: string, config: Config): Promise<number>
   const { entries, failed } = await listEntries(config.usage.profiles, false)
   warnFailed(failed)
   const entry = entries.find((e) => e.thread?.sessionId === sessionId)
-  if (!entry?.thread) {
+  if (!entry) {
     console.error(`senu threads: no thread ${sessionId}`)
     return 1
   }
-  if (entry.live) {
-    if (!process.env.TMUX) {
-      console.error(`senu threads: ${sessionId} is running in tmux session ${entry.live.session}`)
-      return 1
-    }
-    await jump(entry.live, { raiseGhosttyTab: config.agents.raiseGhosttyTab })
-    await tmux("select-pane", "-t", entry.live.paneId)
-    return 0
-  }
   try {
-    return await resume(entry.thread)
+    return await openEntry(entry, { raiseGhosttyTab: config.agents.raiseGhosttyTab })
   } catch (e) {
-    if (!(e instanceof ResumeError)) throw e
-    console.error(`senu threads: ${e.message}`)
+    if (!(e instanceof ResumeError || e instanceof OpenError)) throw e
+    console.error(`senu threads: ${e instanceof OpenError ? `${sessionId} is ` : ""}${e.message}`)
     return 1
   }
 }
@@ -228,9 +144,12 @@ export async function threadsCommand(args: string[], config: Config): Promise<nu
   if (liveOnly && !json && process.stdout.isTTY)
     return pickLive(config, profiles, keys.length > 0, limit)
 
-  const { entries, failed } = await listEntries(profiles, !keys.length)
+  const load = async () => {
+    const { entries, failed } = await listEntries(profiles, !keys.length)
+    return { entries: entries.filter((e) => !liveOnly || e.live).slice(0, limit), failed }
+  }
+  const { entries: shown, failed } = await load()
   warnFailed(failed)
-  const shown = entries.filter((e) => !liveOnly || e.live).slice(0, limit)
 
   if (json) console.log(JSON.stringify(shown.map(entryJson), null, 2))
   else if (!shown.length) console.log(liveOnly ? "no running agents" : "no threads")

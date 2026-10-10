@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { agentEntry, entryJson, joinEntries } from "~/threads/command.ts"
+import { entryJson } from "~/threads/command.ts"
+import { agentEntry, joinEntries } from "~/threads/entries.ts"
 import { launchFor } from "~/threads/resume.ts"
 
 describe("launchFor", () => {
