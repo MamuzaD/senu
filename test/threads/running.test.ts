@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { panesFor, parseLsof, parseProcs, stillClaude } from "~/threads/running.ts"
+import { codexPids, panesFor, parseLsof, parseProcs, stillClaude } from "~/threads/running.ts"
 
 describe("parseLsof", () => {
   test("groups the locks each process holds", () => {
@@ -65,6 +65,17 @@ describe("stillClaude", () => {
     ])
     expect(stillClaude(claude, procs, argv)).toEqual(new Map())
   })
+})
+
+test("codexPids finds codex, natively or under node", () => {
+  const procs = new Map([
+    [10, { ppid: 1, command: "/opt/codex/bin/codex" }],
+    [11, { ppid: 1, command: "node" }],
+    [12, { ppid: 1, command: "claude" }],
+    [13, { ppid: 1, command: "zsh" }],
+  ])
+  const argv = (pid: number) => (pid === 11 ? ["node", "/usr/local/bin/codex"] : [])
+  expect(codexPids(procs, argv)).toEqual([10, 11])
 })
 
 describe("panesFor", () => {

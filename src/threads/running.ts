@@ -104,10 +104,20 @@ export async function runningThreads(
   const claude: SessionsByPid = new Map()
   for (const p of profiles) if (p.kind === "claude") claudeSessionsByPid(p.home, claude)
   const locks = profiles.filter((p) => p.kind === "codex").flatMap((p) => codexLocks(p.home))
-  const [lsof, ps] = await Promise.all([
-    locks.length ? run(["lsof", "-Fpn", "--", ...locks]) : { out: "" },
-    run(["ps", "-axo", "pid=,ppid=,comm="]),
-  ])
-  const procs = parseProcs(ps.out)
+  const procs = parseProcs((await run(["ps", "-axo", "pid=,ppid=,comm="])).out)
+  // lsof checks every process's files unless given pids, which takes it ~400 ms
+  const pids = locks.length ? codexPids(procs) : []
+  const lsof = pids.length
+    ? await run(["lsof", "-nP", "-a", "-p", pids.join(","), "-Fpn", "--", ...locks])
+    : { out: "" }
   return panesFor(parseLsof(lsof.out, stillClaude(claude, procs)), procs, panes)
+}
+
+export function codexPids(
+  procs: Map<number, Proc>,
+  argv: (pid: number) => string[] = processArgv,
+): number[] {
+  return [...procs]
+    .filter(([pid, p]) => agentFromProcess(p.command, () => argv(pid)) === "codex")
+    .map(([pid]) => pid)
 }
