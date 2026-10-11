@@ -43,5 +43,7 @@ function runHere(launch: Launch): Promise<number> {
 export async function resume(t: Thread): Promise<number> {
   const launch = launchFor(t)
   if (!existsSync(launch.cwd)) throw new ResumeError(`${launch.cwd} no longer exists`)
-  return process.env.TMUX ? openWindow(launch) : runHere(launch)
+  // A popup is a throwaway, so the thread gets its own window; tmux gives a popup TMUX but no TMUX_PANE
+  const popup = process.env.TMUX && !process.env.TMUX_PANE
+  return popup ? openWindow(launch) : runHere(launch)
 }
