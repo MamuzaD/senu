@@ -4,7 +4,7 @@ import { basename, join } from "node:path"
 import type { UsageProfile } from "~/config.ts"
 import { profileKey } from "~/usage/cache.ts"
 
-import type { Message, Thread, ToolKind } from "./thread.ts"
+import type { Message, Only, Thread, ToolKind } from "./thread.ts"
 import { firstLine, headRecords, tailRecords } from "./transcript.ts"
 
 /**
@@ -82,7 +82,7 @@ export function claudeSummary(
   return { title, cwd: firstCwd(head) ?? firstCwd(tail) ?? "" }
 }
 
-export function claudeThreads(p: UsageProfile): Thread[] {
+export function claudeThreads(p: UsageProfile, only?: Only): Thread[] {
   const root = join(p.home, "projects")
   let dirs
   try {
@@ -96,15 +96,19 @@ export function claudeThreads(p: UsageProfile): Thread[] {
     for (const name of readdirSync(join(root, dir.name))) {
       if (!name.endsWith(".jsonl")) continue
       const path = join(root, dir.name, name)
+      const sessionId = basename(name, ".jsonl")
+      // Reading a transcript costs far more than its mtime, so skipped ones are never opened
+      const updatedMs = statSync(path).mtimeMs
+      if (only && !only.ids.has(sessionId) && updatedMs < (only.since ?? Infinity)) continue
       const summary = claudeSummary(headRecords(path, HEAD_BYTES), tailRecords(path, TAIL_BYTES))
       if (!summary) continue
       threads.push({
-        sessionId: basename(name, ".jsonl"),
+        sessionId,
         agent: "claude",
         profile: profileKey(p),
         home: p.home,
         ...summary,
-        updatedMs: statSync(path).mtimeMs,
+        updatedMs,
         transcript: path,
       })
     }

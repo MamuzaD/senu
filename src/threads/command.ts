@@ -4,7 +4,14 @@ import { Collector } from "~/threads/live/collect.ts"
 import { profileKey } from "~/usage/cache.ts"
 import { formatDuration } from "~/usage/format.ts"
 
-import { listEntries, openEntry, OpenError, refreshLive, type Entry } from "./entries.ts"
+import {
+  listEntries,
+  openEntry,
+  OpenError,
+  refreshLive,
+  type Entry,
+  type Scope,
+} from "./entries.ts"
 import { ResumeError } from "./resume.ts"
 
 const HELP = `usage: senu threads [--live] [--json] [--profile key]... [--limit n] [-L socket | -S path]
@@ -66,18 +73,21 @@ async function browse(
   limit: number,
   live: boolean,
 ): Promise<number> {
-  const load = async () => {
-    const { entries, failed } = await listEntries(profiles, withUnthreaded)
-    return { entries, failed }
-  }
-  const { entries, failed } = await load()
-  warnFailed(failed)
   const collector = new Collector()
+  const failures = new Set<string>()
+  const load = async (scope: Scope) => {
+    const { entries, failed } = await listEntries(profiles, withUnthreaded, scope)
+    for (const f of failed) failures.add(`${f.profile}: ${f.error}`)
+    return entries
+  }
+  // The first screen needs only the running threads, or those and the recent ones, so it reads
+  // just those while the screen starts and leaves the rest to the browser
+  const entries = load(live ? "live" : "recent")
+  const { runBrowser } = await import("./browse/browser.tsx")
   const opts = { raiseGhosttyTab: config.agents.raiseGhosttyTab }
   let jumpFailed: unknown = null
-  const { runBrowser } = await import("./browse/browser.tsx")
   const picked = await runBrowser(entries, {
-    load: async () => (await load()).entries,
+    load,
     watch: async () => {
       const { rows, panes, daemon } = await collector.collect()
       return {
@@ -87,8 +97,10 @@ async function browse(
     },
     live,
     limit,
+    partial: true,
     jump: (e) => openEntry(e, opts).catch((err: unknown) => (jumpFailed = err)),
   })
+  for (const f of failures) console.error(`senu threads: ${f}`)
   try {
     if (jumpFailed) throw jumpFailed
     return picked ? await openEntry(picked, opts) : 0
@@ -147,7 +159,7 @@ export async function threadsCommand(args: string[], config: Config): Promise<nu
   const profiles = keys.length ? all.filter((p) => keys.includes(profileKey(p))) : all
   if (!json && process.stdout.isTTY) return browse(config, profiles, !keys.length, limit, liveOnly)
 
-  const { entries, failed } = await listEntries(profiles, !keys.length)
+  const { entries, failed } = await listEntries(profiles, !keys.length, liveOnly ? "live" : "all")
   const shown = entries.filter((e) => !liveOnly || e.live).slice(0, limit)
   warnFailed(failed)
 

@@ -7,7 +7,7 @@ import { createRoot } from "@opentui/react"
 import { act } from "react"
 
 import { Browser } from "~/threads/browse/browser.tsx"
-import { agentEntry, type Entry } from "~/threads/entries.ts"
+import { agentEntry, ARCHIVE_AFTER_MS, type Entry, type Scope } from "~/threads/entries.ts"
 
 let destroy: (() => void) | null = null
 afterEach(() => {
@@ -197,4 +197,56 @@ test("live limits prioritize blocked agents over newer idle agents", async () =>
   expect(t.captureCharFrame()).not.toContain("new idle")
   act(() => t.mockInput.pressEnter())
   expect(jumped).toEqual([initial[1]!])
+})
+
+test("a partial start loads every thread right away, with the archived ones' place held", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const t = await createTestRenderer({ width: 100, height: 22 })
+  destroy = () => act(() => t.renderer.destroy())
+  const running: Entry = {
+    thread: { sessionId: "t", profile: "codex-p" } as Entry["thread"],
+    agent: "codex",
+    title: "running thread",
+    cwd: "/p",
+    updatedMs: Date.now(),
+    live: { state: "idle", paneId: "%1", windowId: "@1", windowIndex: 1, session: "s" },
+  }
+  const archived: Entry = {
+    ...running,
+    thread: { sessionId: "old", profile: "codex-p" } as Entry["thread"],
+    title: "archived thread",
+    updatedMs: Date.now() - 10 * ARCHIVE_AFTER_MS,
+    live: null,
+  }
+  const scopes: Scope[] = []
+  const loaded = Promise.withResolvers<Entry[]>()
+  const keymap = createDefaultOpenTuiKeymap(t.renderer)
+  act(() =>
+    createRoot(t.renderer).render(
+      <KeymapProvider keymap={keymap}>
+        <Browser
+          initial={[running]}
+          load={(scope) => {
+            scopes.push(scope)
+            return loaded.promise
+          }}
+          watch={async () => ({ merge: (es) => es, scouting: false })}
+          live={false}
+          partial
+          jump={async () => {}}
+          onOpen={() => {}}
+        />
+      </KeymapProvider>,
+    ),
+  )
+  await act(() => t.renderOnce())
+  expect(scopes).toEqual(["all"])
+  expect(t.captureCharFrame()).toContain("running thread")
+  expect(t.captureCharFrame()).toContain("archived …")
+  expect(t.captureCharFrame()).toContain("threads  …")
+  await act(async () => loaded.resolve([running, archived]))
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).toContain("running thread")
+  expect(t.captureCharFrame()).toContain("archived 1")
+  expect(t.captureCharFrame()).toContain("threads  2")
 })

@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { entryJson } from "~/threads/command.ts"
-import { agentEntry, joinEntries, refreshLive } from "~/threads/entries.ts"
+import { agentEntry, joinEntries, mergeLoaded, refreshLive, type Entry } from "~/threads/entries.ts"
 import { launchFor } from "~/threads/resume.ts"
 import type { Thread } from "~/threads/thread.ts"
 
@@ -210,6 +210,38 @@ describe("refreshLive", () => {
       ["other", "%other", "working"],
     ])
   })
+})
+
+test("mergeLoaded keeps the threads a narrower load skipped, stopped if they were running", () => {
+  const live = {
+    state: "idle" as const,
+    paneId: "%1",
+    windowId: "@1",
+    windowIndex: 1,
+    session: "s",
+  }
+  const entry = (id: string | null, title: string, updatedMs: number, running = false): Entry => ({
+    thread: id ? ({ sessionId: id } as Thread) : null,
+    agent: "codex",
+    title,
+    cwd: "/p",
+    updatedMs,
+    live: running ? live : null,
+  })
+  const last = [
+    entry("a", "renamed later", 4, true),
+    entry("b", "stopped since", 3, true),
+    entry(null, "agent with no thread", 2, true),
+    entry("c", "archived", 1),
+  ]
+  const got = mergeLoaded(last, [entry("a", "renamed", 5, true)])
+  expect(got.map((e) => [e.title, !!e.live])).toEqual([
+    ["renamed", true],
+    ["stopped since", false],
+    ["archived", false],
+  ])
+  // Past the cutoff the load read everything, so a thread it missed was archived or deleted
+  expect(mergeLoaded(last, [], 2).map((e) => e.title)).toEqual(["archived"])
 })
 
 describe("senu threads", () => {

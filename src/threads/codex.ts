@@ -5,7 +5,7 @@ import { join } from "node:path"
 import type { UsageProfile } from "~/config.ts"
 import { profileKey } from "~/usage/cache.ts"
 
-import type { Message, Thread, ToolKind } from "./thread.ts"
+import type { Message, Only, Thread, ToolKind } from "./thread.ts"
 import { firstLine } from "./transcript.ts"
 
 /**
@@ -33,7 +33,10 @@ interface Row {
   updated_at: number
 }
 
-export function codexThreads(p: UsageProfile): Thread[] {
+const ONLY = `
+  AND (id IN (SELECT value FROM json_each(?)) OR coalesce(updated_at_ms, updated_at * 1000) >= ?)`
+
+export function codexThreads(p: UsageProfile, only?: Only): Thread[] {
   const path = join(p.home, CODEX_STATE_DB)
   if (!existsSync(path)) return []
   // The db is in WAL mode, and a read-only open needs its -shm, which codex deletes when it closes
@@ -46,8 +49,8 @@ export function codexThreads(p: UsageProfile): Thread[] {
   )
   try {
     return db
-      .query<Row, []>(QUERY)
-      .all()
+      .query<Row, (string | number)[]>(only ? QUERY + ONLY : QUERY)
+      .all(...(only ? [JSON.stringify([...only.ids]), only.since ?? Number.MAX_SAFE_INTEGER] : []))
       .map((r) => ({
         sessionId: r.id,
         agent: "codex" as const,

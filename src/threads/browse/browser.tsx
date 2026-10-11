@@ -3,7 +3,7 @@ import { basename } from "node:path"
 import { TextAttributes, type MouseEvent, type RGBA } from "@opentui/core"
 import { useBindings } from "@opentui/keymap/react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 
 import { kill } from "~/threads/live/actions.ts"
 import { PRIORITY, type Attention } from "~/threads/live/collect.ts"
@@ -17,7 +17,7 @@ import { brand, colors, hex, icons, mix, noColor, states } from "~/ui/theme.ts"
 import { formatDuration } from "~/usage/format.ts"
 
 import { copy } from "../clipboard.ts"
-import type { Entry } from "../entries.ts"
+import { ARCHIVE_AFTER_MS, mergeLoaded, type Entry, type Scope } from "../entries.ts"
 import { preview, type Thread, type ToolKind, type Turn } from "../thread.ts"
 
 const REFRESH_MS = 5000
@@ -97,8 +97,6 @@ export function matches(e: Entry, query: string): boolean {
 const byAttention = (a: Entry, b: Entry) =>
   PRIORITY[b.live?.state ?? "idle"] - PRIORITY[a.live?.state ?? "idle"]
 
-export const ARCHIVE_AFTER_MS = 3 * 24 * 60 * 60 * 1000
-
 export function sections(entries: Entry[], at = Date.now()): { label: string; entries: Entry[] }[] {
   const old = (e: Entry) => at - e.updatedMs > ARCHIVE_AFTER_MS
   return [
@@ -176,7 +174,7 @@ export function layout(width: number, showPreview: boolean) {
   return { split, listW, previewX, previewTextW: width - previewX - 6 }
 }
 
-type Row = { kind: "header"; label: string; count: number } | { kind: "entry"; entry: Entry }
+type Row = { kind: "header"; label: string; count: number | null } | { kind: "entry"; entry: Entry }
 
 interface View {
   rows: Row[]
@@ -186,7 +184,7 @@ interface View {
   height: number
   query: string
   searching: boolean
-  total: number
+  total: number | null
   showPreview: boolean
   turns: Turn[] | null
   hiddenBelow: number
@@ -222,7 +220,7 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
       }
   } else {
     let x = c.text(x0 + 1, y, "threads", brand.sand, { attrs: BOLD })
-    x = c.text(x + 2, y, String(v.total), colors.muted)
+    x = c.text(x + 2, y, v.total === null ? "…" : String(v.total), colors.muted)
     const running = v.rows.filter((r) => r.kind === "entry" && r.entry.live).length
     if (running) c.text(x + 2, y, `${states.working.glyph} ${running}`, states.working.fg)
   }
@@ -243,7 +241,7 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
     if (y + rowHeight(r) - 1 > bottom) break
     if (r.kind === "header") {
       const hx = c.text(x0 + 1, y, r.label, colors.muted, { attrs: BOLD })
-      c.text(hx + 1, y, String(r.count), colors.dim)
+      c.text(hx + 1, y, r.count === null ? "…" : String(r.count), colors.dim)
       y += rowHeight(r)
       continue
     }
@@ -406,7 +404,7 @@ function turnsOf(t: Thread): Turn[] {
   return turns
 }
 
-export type Load = () => Promise<Entry[]>
+export type Load = (scope: Scope) => Promise<Entry[]>
 export type Watch = () => Promise<{ merge: (entries: Entry[]) => Entry[]; scouting: boolean }>
 
 export function Browser({
@@ -415,6 +413,7 @@ export function Browser({
   watch,
   live: startLive,
   limit = Infinity,
+  partial = false,
   jump,
   onOpen,
 }: {
@@ -423,6 +422,8 @@ export function Browser({
   watch: Watch
   live: boolean
   limit?: number
+  /** `initial` holds only some saved threads, so the rest load right away. */
+  partial?: boolean
   jump: (e: Entry) => Promise<unknown>
   onOpen: (e: Entry) => void
 }) {
@@ -466,7 +467,26 @@ export function Browser({
     setPendingCount("")
     return n
   }
-  const refresh = usePoll(async () => setEntries(await load()), REFRESH_MS)
+  const [complete, setComplete] = useState(!partial)
+  const loadAll = useRef(partial)
+  // Reloads read only what the view shows; the archived threads come back on start and on `r`
+  const refresh = usePoll(async () => {
+    const scope = loadAll.current ? "all" : live ? "live" : "recent"
+    const loaded = await load(scope)
+    const since = scope === "recent" ? Date.now() - ARCHIVE_AFTER_MS : Infinity
+    if (scope !== "all") return setEntries((es) => mergeLoaded(es, loaded, since))
+    loadAll.current = false
+    setEntries(loaded)
+    setComplete(true)
+  }, REFRESH_MS)
+  const refreshAll = () => {
+    loadAll.current = true
+    return refresh()
+  }
+  const loadRest = useEffectEvent(() => {
+    if (partial) void refresh().catch(() => {})
+  })
+  useEffect(() => loadRest(), [])
   const watchNow = usePoll(async () => {
     const seen = await watch()
     setEntries((es) => seen.merge(es))
@@ -491,6 +511,8 @@ export function Browser({
     const open = s.label !== "archived" || !!query || (sel !== null && s.entries.includes(sel))
     for (const entry of s.entries) if (open) rows.push({ kind: "entry", entry })
   }
+  // Holds the archived threads' place until they load
+  if (!live && !complete) rows.push({ kind: "header", label: "archived", count: null })
   const selRow = rows.findIndex((r) => r.kind === "entry" && r.entry === sel)
 
   const fits = (from: number, to: number) => {
@@ -602,7 +624,7 @@ export function Browser({
         {
           name: "refresh",
           run: () =>
-            void Promise.all([watchNow(), refresh()]).then(
+            void Promise.all([watchNow(), refreshAll()]).then(
               () => flash("refreshed"),
               () => flash("couldn't refresh"),
             ),
@@ -672,7 +694,7 @@ export function Browser({
     height,
     query,
     searching,
-    total: entries.length,
+    total: complete ? entries.length : null,
     showPreview,
     turns,
     hiddenBelow: lines,
@@ -732,18 +754,20 @@ export function Browser({
 
 /** Resolves with the entry to open, or null when the browser was quit or already jumped to an agent. */
 export async function runBrowser(
-  initial: Entry[],
+  initial: Entry[] | Promise<Entry[]>,
   opts: {
     load: Load
     watch: Watch
     live: boolean
     limit?: number
+    partial?: boolean
     jump: (e: Entry) => Promise<unknown>
   },
 ): Promise<Entry | null> {
   let picked: Entry | null = null
-  await runApp(<Browser initial={initial} {...opts} onOpen={(e) => (picked = e)} />, {
-    useMouse: true,
-  })
+  const app = Promise.resolve(initial).then((es) => (
+    <Browser initial={es} {...opts} onOpen={(e) => (picked = e)} />
+  ))
+  await runApp(app, { useMouse: true })
   return picked
 }

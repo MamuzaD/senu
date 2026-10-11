@@ -197,6 +197,15 @@ describe("listThreads", () => {
     })
   })
 
+  test("reads only the sessions asked for, plus any updated since a time", () => {
+    const ids = (only: Parameters<typeof listThreads>[1]) =>
+      listThreads(profiles, only).threads.map((t) => t.sessionId)
+    expect(ids({ ids: new Set(["c-old", "s1"]) })).toEqual(["s1", "c-old"])
+    expect(ids({ ids: new Set(["c-old"]), since: 2500 })).toEqual(["c-user", "s1", "c-old"])
+    // Asking for a session doesn't bring back threads the listing leaves out
+    expect(ids({ ids: new Set(["c-sub", "c-archived"]) })).toEqual([])
+  })
+
   test("previews the last messages, oldest first", () => {
     const [codex, claude] = listThreads(profiles).threads
     expect(preview(codex!, 1)).toEqual([{ fromUser: false, text: "hi" }])

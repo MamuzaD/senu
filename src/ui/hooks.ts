@@ -14,22 +14,18 @@ export function useFlash(ms = 2000): [string, (text: string) => void] {
 }
 
 export function usePoll(load: () => Promise<void>, ms: number): () => Promise<void> {
-  const busy = useRef(false)
-  const run = async () => {
-    if (busy.current) return
-    busy.current = true
-    try {
-      await load()
-    } finally {
-      busy.current = false
-    }
-  }
+  const running = useRef<Promise<void> | null>(null)
+  const run = () => (running.current ??= load().finally(() => (running.current = null)))
   const onTick = useEffectEvent(() => void run().catch(() => {}))
   useEffect(() => {
     const id = setInterval(onTick, ms)
     return () => clearInterval(id)
   }, [ms])
-  return run
+  // A call during a run waits it out and runs again, so it sees what changed since it was made
+  return async () => {
+    await running.current?.catch(() => {})
+    return run()
+  }
 }
 
 export function useSelectionDone(done: (text: string) => void): void {

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 
-import { ARCHIVE_AFTER_MS, sections, toolSummary } from "~/threads/browse/browser.tsx"
+import { sections, toolSummary } from "~/threads/browse/browser.tsx"
+import { ARCHIVE_AFTER_MS } from "~/threads/entries.ts"
 
 test("tool summaries read by kind, in a fixed order, singular when one", () => {
   expect(toolSummary({ run: 4, read: 1, other: 2 })).toBe(

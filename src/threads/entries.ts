@@ -13,7 +13,7 @@ import {
 
 import { resume } from "./resume.ts"
 import { runningThreads } from "./running.ts"
-import { listThreads, type Thread } from "./thread.ts"
+import { listThreads, type Only, type Thread } from "./thread.ts"
 
 export interface Live {
   state: Attention
@@ -107,13 +107,44 @@ export function refreshLive(
   return [...kept, ...added].toSorted((a, b) => b.updatedMs - a.updatedMs)
 }
 
-export async function listEntries(profiles: UsageProfile[], withUnthreaded: boolean) {
-  const { threads, failed } = listThreads(profiles)
+/**
+ * Puts a narrower load over the last list. Threads older than `since` it didn't read keep their
+ * place, and any that were running have stopped, since every running thread is read. A newer one
+ * it didn't read is gone.
+ */
+export function mergeLoaded(last: Entry[], loaded: Entry[], since = Infinity): Entry[] {
+  const read = new Set(loaded.map((e) => e.thread?.sessionId))
+  const skipped = (e: Entry) => !!e.thread && !read.has(e.thread.sessionId) && e.updatedMs < since
+  const kept = last.flatMap((e) => (skipped(e) ? [e.live ? { ...e, live: null } : e] : []))
+  return [...loaded, ...kept].toSorted((a, b) => b.updatedMs - a.updatedMs)
+}
+
+export const ARCHIVE_AFTER_MS = 3 * 24 * 60 * 60 * 1000
+
+/** Which saved threads to read: all, the running ones, or those plus any not yet archived */
+export type Scope = "all" | "live" | "recent"
+
+export async function listEntries(
+  profiles: UsageProfile[],
+  withUnthreaded: boolean,
+  scope: Scope = "all",
+) {
   let seen: TmuxState = { panes: [], rows: [], paneBySession: new Map() }
   if ((await tmux("info")).ok) {
-    const [panes, { rows }] = await Promise.all([listPanes(), new Collector().collect()])
-    seen = { panes, rows, paneBySession: await runningThreads(profiles, panes) }
+    const panes = listPanes()
+    const [{ rows }, paneBySession] = await Promise.all([
+      new Collector().collect(),
+      panes.then((ps) => runningThreads(profiles, ps)),
+    ])
+    seen = { panes: await panes, rows, paneBySession }
   }
+  const ids = new Set(seen.paneBySession.keys())
+  const only: Record<Scope, Only | undefined> = {
+    all: undefined,
+    live: { ids },
+    recent: { ids, since: Date.now() - ARCHIVE_AFTER_MS },
+  }
+  const { threads, failed } = listThreads(profiles, only[scope])
   return { entries: joinEntries(threads, seen, withUnthreaded), failed }
 }
 

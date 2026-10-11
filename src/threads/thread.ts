@@ -26,17 +26,23 @@ export type ToolKind = "read" | "edit" | "run" | "search" | "web" | "agent" | "o
 
 export type Turn = Message | { tools: Partial<Record<ToolKind, number>> }
 
+/** Narrows a listing to these sessions and any thread updated since `since`. */
+export interface Only {
+  ids: Set<string>
+  since?: number
+}
+
 export interface Listed {
   threads: Thread[]
   failed: { profile: string; error: string }[]
 }
 
-export function listThreads(profiles: UsageProfile[]): Listed {
+export function listThreads(profiles: UsageProfile[], only?: Only): Listed {
   const threads: Thread[] = []
   const failed: Listed["failed"] = []
   for (const p of profiles) {
     try {
-      threads.push(...(p.kind === "codex" ? codexThreads(p) : claudeThreads(p)))
+      threads.push(...(p.kind === "codex" ? codexThreads(p, only) : claudeThreads(p, only)))
     } catch (e) {
       failed.push({ profile: profileKey(p), error: e instanceof Error ? e.message : String(e) })
     }
