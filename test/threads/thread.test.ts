@@ -237,6 +237,25 @@ describe("listThreads", () => {
     expect(failed).toEqual([{ profile: "codex-broken", error: expect.stringContaining("threads") }])
   })
 
+  test("reads codex's WAL db after codex closed it and its -shm is gone", () => {
+    const home = join(dir, "codex-closed")
+    mkdirSync(home)
+    const wal = new Database(join(home, CODEX_STATE_DB))
+    wal.run("PRAGMA journal_mode=WAL")
+    wal.run(`CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, name TEXT,
+      updated_at INTEGER, updated_at_ms INTEGER, archived INTEGER, thread_source TEXT)`)
+    wal.run("INSERT INTO threads VALUES ('c-wal', ?, '/p', 'from wal', null, 0, 1, 0, 'user')", [
+      rollout,
+    ])
+    // As codex leaves it after a clean close: everything in the db, no -wal or -shm
+    wal.run("PRAGMA wal_checkpoint(TRUNCATE)")
+    wal.close()
+    for (const side of ["-wal", "-shm"]) rmSync(join(home, CODEX_STATE_DB + side), { force: true })
+    const { threads, failed } = listThreads([{ kind: "codex", name: "closed", home }])
+    expect(failed).toEqual([])
+    expect(threads.map((t) => t.sessionId)).toEqual(["c-wal"])
+  })
+
   test("a missing home has no threads", () => {
     expect(listThreads([{ kind: "codex", name: "x", home: join(dir, "nope") }])).toEqual({
       threads: [],

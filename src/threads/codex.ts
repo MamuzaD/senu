@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite"
+import { constants, Database } from "bun:sqlite"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 
@@ -36,7 +36,14 @@ interface Row {
 export function codexThreads(p: UsageProfile): Thread[] {
   const path = join(p.home, CODEX_STATE_DB)
   if (!existsSync(path)) return []
-  const db = new Database(path, { readonly: true })
+  // The db is in WAL mode, and a read-only open needs its -shm, which codex deletes when it closes
+  // cleanly. With no -shm nothing is writing, so the file can be read as it is. Linux builds of
+  // SQLite only read `file:` names as URIs when asked.
+  const shm = existsSync(`${path}-shm`)
+  const db = new Database(
+    shm ? path : `file:${encodeURI(path)}?immutable=1`,
+    constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI,
+  )
   try {
     return db
       .query<Row, []>(QUERY)
