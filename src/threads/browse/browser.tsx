@@ -6,11 +6,14 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useMemo, useRef, useState } from "react"
 
 import { kill } from "~/threads/live/actions.ts"
+import { PRIORITY, type Attention } from "~/threads/live/collect.ts"
 import { runApp } from "~/ui/app.tsx"
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
+import { DIVE_MS, paintSenu, rowGlow, type DivePlan } from "~/ui/dive.ts"
 import { useFlash, usePoll, useSelectionDone } from "~/ui/hooks.ts"
 import { fitHints, useHints, type Hint, type HintBinding } from "~/ui/keys.ts"
-import { brand, colors, icons, noColor, states } from "~/ui/theme.ts"
+import { FPS, now, reducedMotion, useTicker } from "~/ui/motion.ts"
+import { brand, colors, hex, icons, mix, noColor, states } from "~/ui/theme.ts"
 import { formatDuration } from "~/usage/format.ts"
 
 import { copy } from "../clipboard.ts"
@@ -18,14 +21,16 @@ import type { Entry } from "../entries.ts"
 import { preview, type Thread, type ToolKind, type Turn } from "../thread.ts"
 
 const REFRESH_MS = 5000
+const WATCH_MS = 1000
 const PER_ROW = 3
-const HEAD_ROWS = 3
+const RULE_ROW = 3
+const HEAD_ROWS = RULE_ROW + 1
 const PREVIEW_MIN_WIDTH = 90
 const LIST_MIN_WIDTH = 36
 const MESSAGE_LINES = 6
 const WHEEL_LINES = 3
 
-const browserKeys: HintBinding[] = [
+const keysFor = (live: boolean): HintBinding[] => [
   { key: "j", cmd: "move-down", desc: "j/k move" },
   { key: "k", cmd: "move-up" },
   { key: "down", cmd: "move-down" },
@@ -39,7 +44,7 @@ const browserKeys: HintBinding[] = [
   { key: "shift+l", cmd: "screen-bottom" },
   { key: "g", cmd: "first" },
   { key: "shift+g", cmd: "last" },
-  { key: "return", cmd: "open", desc: "⏎ open" },
+  { key: "return", cmd: "open", desc: live ? "⏎ jump" : "⏎ open" },
   { key: "/", cmd: "search", desc: "/ search" },
   { key: "p", cmd: "preview", desc: "p preview" },
   { key: "shift+k", cmd: "preview-older", desc: "K/J scroll" },
@@ -56,6 +61,16 @@ const browserKeys: HintBinding[] = [
 ]
 
 const BOLD = TextAttributes.BOLD
+const faint = hex("#3b3d57")
+
+const STARS: [number, number, string][] = [
+  [0.14, 0, "·"],
+  [0.31, 1, "·"],
+  [0.47, 0, "✦"],
+  [0.6, 1, "·"],
+  [0.72, 0, "·"],
+  [0.83, 1, "⋆"],
+]
 
 const keyOf = (e: Entry | undefined) => e?.thread?.sessionId ?? e?.live?.paneId ?? ""
 const project = (e: Entry) => (e.cwd ? basename(e.cwd) : "")
@@ -78,15 +93,15 @@ export function matches(e: Entry, query: string): boolean {
     .every((token) => hay.includes(token))
 }
 
+const byAttention = (a: Entry, b: Entry) =>
+  PRIORITY[b.live?.state ?? "idle"] - PRIORITY[a.live?.state ?? "idle"]
+
 export const ARCHIVE_AFTER_MS = 3 * 24 * 60 * 60 * 1000
 
-export function sections(
-  entries: Entry[],
-  now = Date.now(),
-): { label: string; entries: Entry[] }[] {
-  const old = (e: Entry) => now - e.updatedMs > ARCHIVE_AFTER_MS
+export function sections(entries: Entry[], at = Date.now()): { label: string; entries: Entry[] }[] {
+  const old = (e: Entry) => at - e.updatedMs > ARCHIVE_AFTER_MS
   return [
-    { label: "running", entries: entries.filter((e) => e.live) },
+    { label: "running", entries: entries.filter((e) => e.live).toSorted(byAttention) },
     { label: "recent", entries: entries.filter((e) => !e.live && !old(e)) },
     { label: "archived", entries: entries.filter((e) => !e.live && old(e)) },
   ].filter((s) => s.entries.length)
@@ -178,28 +193,50 @@ interface View {
   count: string
   confirming: Entry | null
   hints: Hint[]
+  live: boolean
+  scouting: boolean
+  senu: DivePlan | null
 }
 
 const rowHeight = (r: Row) => (r.kind === "header" ? 2 : PER_ROW)
 
 function paintList(c: Canvas, v: View, x0: number, w: number) {
   const right = x0 + w - 2
-  let y = 0
-  let x = c.text(x0 + 1, y, "threads", brand.sand, { attrs: BOLD })
-  x = c.text(x + 2, y, String(v.total), colors.muted)
-  const running = v.rows.filter((r) => r.kind === "entry" && r.entry.live).length
-  if (running) c.text(x + 2, y, `${states.working.glyph} ${running}`, states.working.fg)
+  let y = 1
+  if (v.live) {
+    let x = c.text(x0 + 1, y, "agents", brand.sand, { attrs: BOLD }) + 1
+    for (const s of ["blocked", "working", "done", "idle"] as Attention[]) {
+      const n = v.rows.filter((r) => r.kind === "entry" && r.entry.live?.state === s).length
+      if (!n) continue
+      x =
+        c.text(x + 1, y, states[s].glyph, states[s].fg, { attrs: states[s].bold ? BOLD : 0 }) +
+        (s === "idle" ? 1 : 0)
+      x = c.text(x + 1, y, String(n), colors.muted)
+    }
+    if (!noColor)
+      for (const [fx, sy, ch] of STARS) {
+        const sx = x0 + Math.round(fx * (w - 10))
+        if (sy !== y || sx > x + 1)
+          c.put(sx, sy, ch, mix(faint, brand.papyrus, ch === "·" ? 0.25 : 0.45))
+      }
+  } else {
+    let x = c.text(x0 + 1, y, "threads", brand.sand, { attrs: BOLD })
+    x = c.text(x + 2, y, String(v.total), colors.muted)
+    const running = v.rows.filter((r) => r.kind === "entry" && r.entry.live).length
+    if (running) c.text(x + 2, y, `${states.working.glyph} ${running}`, states.working.fg)
+  }
 
-  y = 1
+  y = 2
   if (v.searching || v.query) {
     let sx = c.text(x0 + 1, y, "/ ", brand.gold, { attrs: BOLD })
     sx = c.text(sx, y, v.query, brand.papyrus, { max: right })
     if (v.searching) c.put(sx, y, "▏", brand.gold)
   }
-  for (let i = x0 + 1; i <= right; i++) c.put(i, 2, "─", colors.rule)
+  for (let i = x0 + 1; i <= right; i++) c.put(i, RULE_ROW, "─", colors.rule)
 
   y = HEAD_ROWS
   const bottom = v.height - 1
+  const glow = v.senu ? rowGlow(v.senu) : { from: Infinity, k: 0 }
   for (let i = v.top; i < v.rows.length && y < bottom; i++) {
     const r = v.rows[i]!
     if (y + rowHeight(r) - 1 > bottom) break
@@ -211,32 +248,40 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
     }
     const e = r.entry
     const selected = v.sel === e
+    const lit = (fg: RGBA, col: number) =>
+      selected && col >= glow.from ? mix(fg, brand.gold, glow.k) : fg
     if (selected) for (const dy of [0, 1]) c.put(x0 + 1, y + dy, "▌", brand.gold)
     if (e.live) {
       const st = states[e.live.state]
-      c.put(x0 + 3, y, st.glyph, st.fg, { attrs: st.bold ? BOLD : 0 })
+      c.put(x0 + 3, y, st.glyph, lit(st.fg, x0 + 3), { attrs: st.bold ? BOLD : 0 })
     }
     const when = age(e.updatedMs)
     const whenX = right - when.length + 1
-    const titleFg = selected ? brand.papyrus : e.live ? colors.fg : colors.muted
+    const titleFg = lit(selected ? brand.papyrus : e.live ? colors.fg : colors.muted, x0 + 5)
     const end = c.text(x0 + 5, y, e.title, titleFg, {
       attrs: selected ? BOLD : 0,
       max: whenX - 1,
     })
     if (end >= whenX - 1 && Bun.stringWidth(e.title) > whenX - 1 - (x0 + 5))
       c.put(whenX - 2, y, "…", titleFg)
-    c.text(whenX, y, when, colors.dim)
+    c.text(whenX, y, when, lit(colors.dim, whenX))
 
     const agentFg = noColor ? colors.fg : e.agent === "codex" ? colors.codex : colors.claude
     let mx = c.text(x0 + 5, y + 1, e.agent === "codex" ? icons.codex : icons.claude, agentFg)
     const profile = profileName(e)
     if (profile) mx = c.text(mx + 1, y + 1, profile, colors.dim, { max: right })
     const proj = project(e)
-    if (proj) c.text(mx + 2, y + 1, proj, selected ? brand.sand : colors.muted, { max: right })
+    if (proj) mx = c.text(mx + 2, y + 1, proj, selected ? brand.sand : colors.muted, { max: right })
+    if (e.live) {
+      mx = c.text(mx + 2, y + 1, e.live.session, colors.muted, { max: right })
+      c.text(mx, y + 1, `:${e.live.windowIndex}`, colors.dim, { max: right })
+    }
     y += rowHeight(r)
   }
-  if (!v.rows.length)
-    c.text(x0 + 5, HEAD_ROWS, v.query ? "no threads match" : "no threads yet", colors.dim)
+  if (!v.rows.length) {
+    const empty = v.query ? "no threads match" : v.live ? "no agents in sight" : "no threads yet"
+    c.text(x0 + 5, HEAD_ROWS, empty, colors.dim)
+  }
 }
 
 function paintPreview(c: Canvas, v: View, x0: number, w: number) {
@@ -245,12 +290,12 @@ function paintPreview(c: Canvas, v: View, x0: number, w: number) {
   const width = w - 3
   const e = v.sel
   if (!e) return
-  c.text(left, 0, e.title, brand.papyrus, { attrs: BOLD, max: left + width })
+  c.text(left, 1, e.title, brand.papyrus, { attrs: BOLD, max: left + width })
   const meta = [e.agent, profileName(e), project(e), e.live?.state, age(e.updatedMs)]
     .filter(Boolean)
     .join(" · ")
-  c.text(left, 1, meta, colors.dim, { max: left + width })
-  for (let i = left; i < left + width; i++) c.put(i, 2, "─", colors.rule)
+  c.text(left, 2, meta, colors.dim, { max: left + width })
+  for (let i = left; i < left + width; i++) c.put(i, RULE_ROW, "─", colors.rule)
 
   const top = HEAD_ROWS
   const bottom = v.height - 2
@@ -321,12 +366,26 @@ function paint(v: View): Canvas {
     c.text(kx, fy, " kill · any other key keeps it", colors.muted)
   } else if (v.note) c.text(1, fy, v.note, brand.gold)
   else {
+    const diving = v.senu?.t != null
+    const watch = !v.live
+      ? ""
+      : diving
+        ? "senu dives"
+        : v.scouting
+          ? "senu scouts live"
+          : "senu keeps watch"
+    const room = v.width - v.count.length - 4
     const hint = v.searching
       ? "type to filter · ⏎ done · esc clear"
-      : fitHints(v.hints, v.width - v.count.length - 4, ["open", "search", "quit"])
+      : fitHints(v.hints, room - watch.length - 2, ["open", "search", "quit"])
     c.text(1, fy, hint, colors.dim)
+    if (watch && !v.count && Bun.stringWidth(hint) + watch.length + 2 <= room) {
+      const fg = diving ? brand.gold : v.scouting ? brand.dusk : brand.shadow
+      c.text(v.width - watch.length - 1, fy, watch, fg)
+    }
   }
   if (v.count) c.text(v.width - v.count.length - 2, fy, v.count, brand.gold, { attrs: BOLD })
+  if (v.senu && (!v.showPreview || split) && listW >= 30) paintSenu(c, v.senu)
   return c
 }
 
@@ -347,23 +406,36 @@ function turnsOf(t: Thread): Turn[] {
 }
 
 export type Load = () => Promise<Entry[]>
+export type Watch = () => Promise<{ merge: (entries: Entry[]) => Entry[]; scouting: boolean }>
 
 export function Browser({
   initial,
   load,
+  watch,
+  live: startLive,
+  limit = Infinity,
+  jump,
   onOpen,
 }: {
   initial: Entry[]
   load: Load
+  watch: Watch
+  live: boolean
+  limit?: number
+  jump: (e: Entry) => Promise<unknown>
   onOpen: (e: Entry) => void
 }) {
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
   const [entries, setEntries] = useState(initial)
+  const live = startLive
+  const [scouting, setScouting] = useState(false)
+  const [diveAt, setDiveAt] = useState<number | null>(null)
+  const divingRef = useRef(false)
   const [query, setQuery] = useState("")
   const [searching, setSearching] = useState(false)
   const searchingRef = useRef(false)
-  const [showPreview, setShowPreview] = useState(true)
+  const [showPreview, setShowPreview] = useState(() => !startLive && width >= PREVIEW_MIN_WIDTH)
   const [selKey, setSelKey] = useState(() => keyOf(initial.find((e) => e.live) ?? initial[0]))
   // Keys can arrive before React re-renders; actions read the selection from here, not from render.
   const selKeyRef = useRef(selKey)
@@ -394,8 +466,18 @@ export function Browser({
     return n
   }
   const refresh = usePoll(async () => setEntries(await load()), REFRESH_MS)
+  const watchNow = usePoll(async () => {
+    const seen = await watch()
+    setEntries((es) => seen.merge(es))
+    setScouting(seen.scouting)
+  }, WATCH_MS)
 
-  const shown = useMemo(() => sections(entries.filter((e) => matches(e, query))), [entries, query])
+  const shown = useMemo(() => {
+    const pool = (live ? entries.filter((e) => e.live).toSorted(byAttention) : entries)
+      .slice(0, limit)
+      .filter((e) => matches(e, query))
+    return live ? [{ label: "running", entries: pool }] : sections(pool)
+  }, [entries, query, live, limit])
   const flat = useMemo(() => shown.flatMap((s) => s.entries), [shown])
   const selIndex = Math.max(
     0,
@@ -404,7 +486,7 @@ export function Browser({
   const sel = flat[selIndex] ?? null
   const rows: Row[] = []
   for (const s of shown) {
-    rows.push({ kind: "header", label: s.label, count: s.entries.length })
+    if (!live) rows.push({ kind: "header", label: s.label, count: s.entries.length })
     const open = s.label !== "archived" || !!query || (sel !== null && s.entries.includes(sel))
     for (const entry of s.entries) if (open) rows.push({ kind: "entry", entry })
   }
@@ -465,12 +547,33 @@ export function Browser({
   }
   const close = () => renderer.destroy()
 
+  const { split, listW } = layout(width, showPreview)
+  const listShown = !showPreview || split
+  const go = (e: Entry) => {
+    divingRef.current = true
+    const jumped = jump(e)
+    if (reducedMotion || noColor || !listShown || listW < 30) return void jumped.finally(close)
+    setDiveAt(now())
+    void Promise.all([jumped, Bun.sleep(DIVE_MS)]).finally(close)
+  }
+  useTicker(diveAt == null ? 0 : FPS)
+  let selY = HEAD_ROWS
+  for (let i = top; i < selRow; i++) selY += rowHeight(rows[i]!)
+  const senu: DivePlan | null = !noColor
+    ? {
+        t: diveAt == null ? null : now() - diveAt,
+        perch: { x: listW - 5, y: RULE_ROW },
+        target: { x: 3, y: selY },
+      }
+    : null
+
   useKeyboard((key) => {
+    if (divingRef.current) return
     const pending = confirmingRef.current
     if (pending) {
       setConfirming(null)
       if ((key.name === "y" || key.name === "x") && pending.live)
-        void kill(pending.live).then(() => refresh())
+        void kill(pending.live).then(() => Promise.all([watchNow(), refresh()]))
       return
     }
     if (!searchingRef.current) return
@@ -485,8 +588,8 @@ export function Browser({
 
   useBindings(
     () => ({
-      enabled: () => !searchingRef.current && !confirmingRef.current,
-      bindings: browserKeys,
+      enabled: () => !searchingRef.current && !confirmingRef.current && !divingRef.current,
+      bindings: keysFor(live),
       commands: [
         { name: "quit", run: (n: number) => (n ? undefined : close()) },
         { name: "move-down", run: (n: number) => select(current().i + (n || 1)) },
@@ -495,7 +598,7 @@ export function Browser({
         { name: "last", run: (n: number) => select(n ? n - 1 : flat.length - 1) },
         { name: "search", run: () => setSearching((searchingRef.current = true)) },
         { name: "preview", run: () => setShowPreview((s) => !s) },
-        { name: "refresh", run: () => void refresh() },
+        { name: "refresh", run: () => void Promise.all([watchNow(), refresh()]) },
         { name: "preview-older", run: (n: number) => scrollPreview(n || 1) },
         { name: "preview-newer", run: (n: number) => scrollPreview(-(n || 1)) },
         { name: "copy-id", run: () => copyOut(current().e?.thread?.sessionId, "session id") },
@@ -516,6 +619,7 @@ export function Browser({
           run: () => {
             const { e } = current()
             if (!e) return
+            if (live && e.live) return go(e)
             onOpen(e)
             close()
           },
@@ -548,7 +652,7 @@ export function Browser({
           Array.from({ length: 10 }, (_, d) => ({ name: `count-${d}`, run: () => addDigit(d) })),
         ),
     }),
-    [flat, top, page, maxOffset],
+    [flat, top, page, maxOffset, live, width, showPreview],
   )
 
   const canvas = paint({
@@ -567,17 +671,18 @@ export function Browser({
     confirming,
     count: pendingCount,
     hints: useHints(),
+    live,
+    scouting,
+    senu,
   })
   const onWheel = (event: MouseEvent) => {
-    if (searchingRef.current || confirmingRef.current) return
+    if (searchingRef.current || confirmingRef.current || divingRef.current) return
     const up = event.scroll?.direction === "up"
-    const { split, listW } = layout(width, showPreview)
     if (showPreview && (!split || event.x >= listW)) scrollPreview(up ? WHEEL_LINES : -WHEEL_LINES)
     else select(current().i + (up ? -1 : 1))
   }
   // Each pane is its own selectable view; a drag that starts in one turns the other off, since
   // OpenTUI widens a selection past the view it started in but only ever picks up selectable text.
-  const { split, listW } = layout(width, showPreview)
   const bodyH = height - 1
   const listCols = showPreview ? (split ? listW : 0) : width - 1
   const previewFrom = split ? listW + 1 : 0
@@ -616,10 +721,19 @@ export function Browser({
   )
 }
 
-/** Resolves with the entry picked, or null when the browser was quit. */
-export async function runBrowser(initial: Entry[], load: Load): Promise<Entry | null> {
+/** Resolves with the entry to open, or null when the browser was quit or already jumped to an agent. */
+export async function runBrowser(
+  initial: Entry[],
+  opts: {
+    load: Load
+    watch: Watch
+    live: boolean
+    limit?: number
+    jump: (e: Entry) => Promise<unknown>
+  },
+): Promise<Entry | null> {
   let picked: Entry | null = null
-  await runApp(<Browser initial={initial} load={load} onOpen={(e) => (picked = e)} />, {
+  await runApp(<Browser initial={initial} {...opts} onOpen={(e) => (picked = e)} />, {
     useMouse: true,
   })
   return picked

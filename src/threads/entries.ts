@@ -2,7 +2,14 @@ import type { UsageProfile } from "~/config.ts"
 import type { Agent } from "~/detect/manifest.ts"
 import { listPanes, tmux, type Pane } from "~/detect/panes.ts"
 import { jump } from "~/threads/live/actions.ts"
-import { Collector, type AgentRow, type Attention } from "~/threads/live/collect.ts"
+import {
+  Collector,
+  foldWindows,
+  type AgentRow,
+  type Attention,
+  type Collected,
+  type PaneRow,
+} from "~/threads/live/collect.ts"
 
 import { resume } from "./resume.ts"
 import { runningThreads } from "./running.ts"
@@ -12,6 +19,7 @@ export interface Live {
   state: Attention
   paneId: string
   windowId: string
+  windowIndex: number
   session: string
 }
 
@@ -39,37 +47,64 @@ export const agentEntry = (r: AgentRow, cwd: string): Entry => ({
   title: r.label,
   cwd,
   updatedMs: r.activity * 1000,
-  live: { state: r.state, paneId: r.paneId, windowId: r.windowId, session: r.session },
+  live: {
+    state: r.state,
+    paneId: r.paneId,
+    windowId: r.windowId,
+    windowIndex: r.windowIndex,
+    session: r.session,
+  },
 })
 
 export interface TmuxState {
-  panes: Pick<Pane, "id" | "windowId" | "session" | "cwd">[]
-  rows: AgentRow[]
+  panes: Pick<Pane, "id" | "windowId" | "windowIndex" | "session" | "cwd">[]
+  rows: PaneRow[]
   paneBySession: Map<string, string>
 }
 
+const unthreaded = (rows: PaneRow[], threaded: Set<string>, cwdOf: (paneId: string) => string) =>
+  foldWindows(rows.filter((r) => !threaded.has(r.paneId))).map((r) =>
+    agentEntry(r, cwdOf(r.paneId)),
+  )
+
 export function joinEntries(threads: Thread[], seen: TmuxState, withUnthreaded: boolean): Entry[] {
   const paneById = new Map(seen.panes.map((p) => [p.id, p]))
-  const rowByWindow = new Map(seen.rows.map((r) => [r.windowId, r]))
+  const rowByPane = new Map(seen.rows.map((r) => [r.paneId, r]))
   const listed = new Set(threads.map((t) => t.sessionId))
   const live = new Map<string, Live>()
-  const threaded = new Set<string>()
   for (const [sessionId, paneId] of seen.paneBySession) {
     const pane = paneById.get(paneId)
     if (!pane || !listed.has(sessionId)) continue
-    const state = rowByWindow.get(pane.windowId)?.state ?? "idle"
-    live.set(sessionId, { state, paneId, windowId: pane.windowId, session: pane.session })
-    threaded.add(pane.windowId)
+    const state = rowByPane.get(paneId)?.state ?? "idle"
+    const { windowId, windowIndex, session } = pane
+    live.set(sessionId, { state, paneId, windowId, windowIndex, session })
   }
-  const unthreaded = withUnthreaded
-    ? seen.rows
-        .filter((r) => !threaded.has(r.windowId))
-        .map((r) => agentEntry(r, paneById.get(r.paneId)?.cwd ?? ""))
-    : []
+  const threaded = new Set([...live.values()].map((l) => l.paneId))
   return [
     ...threads.map((t) => threadEntry(t, live.get(t.sessionId) ?? null)),
-    ...unthreaded,
+    ...(withUnthreaded ? unthreaded(seen.rows, threaded, (id) => paneById.get(id)?.cwd ?? "") : []),
   ].toSorted((a, b) => b.updatedMs - a.updatedMs)
+}
+
+export function refreshLive(
+  entries: Entry[],
+  { rows, panes }: Pick<Collected, "rows" | "panes">,
+  withUnthreaded: boolean,
+): Entry[] {
+  const rowByPane = new Map(rows.map((r) => [r.paneId, r]))
+  const cwdByPane = new Map(panes.map((p) => [p.id, p.cwd]))
+  const threaded = new Set<string>()
+  const kept = entries.flatMap((e) => {
+    if (!e.live) return [e]
+    if (!e.thread) return []
+    const r = rowByPane.get(e.live.paneId)
+    if (!r) return [{ ...e, live: null }]
+    threaded.add(r.paneId)
+    const { state, windowId, windowIndex, session } = r
+    return [{ ...e, live: { ...e.live, state, windowId, windowIndex, session } }]
+  })
+  const added = withUnthreaded ? unthreaded(rows, threaded, (id) => cwdByPane.get(id) ?? "") : []
+  return [...kept, ...added].toSorted((a, b) => b.updatedMs - a.updatedMs)
 }
 
 export async function listEntries(profiles: UsageProfile[], withUnthreaded: boolean) {

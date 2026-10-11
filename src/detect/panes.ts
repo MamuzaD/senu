@@ -426,11 +426,6 @@ export async function listAgentPanes(): Promise<AgentPane[]> {
   return identifyAgents(await listPanes())
 }
 
-/**
- * The visible screen of each pane, which is what herdr's engine reads.
- * `history` adds that many scrollback lines above it (the picker's Codex label
- * wants more), but classifying should use 0: rules anchor on the screen's top.
- */
 /** Random per process, so no screen can print a line that passes for a marker. */
 const MARK = `senu-${crypto.randomUUID().slice(0, 8)}`
 const CAPTURE_MARK = new RegExp(`^${MARK} \\d+$`, "m")
@@ -469,6 +464,7 @@ export function parseCaptures(out: string): Map<string, string> {
   return screens
 }
 
+/** herdr's rules anchor on the screen's top, so classifying captures with `history` 0. */
 export async function capturePanes(ids: string[], history = 0): Promise<Map<string, string>> {
   const screens = new Map<string, string>()
   for (let i = 0; i < ids.length; i += MAX_CHAINED) {

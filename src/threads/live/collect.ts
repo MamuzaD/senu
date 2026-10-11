@@ -2,13 +2,6 @@ import { classify } from "~/detect/engine.ts"
 import type { Agent, AgentState } from "~/detect/manifest.ts"
 import { AgentCache, capturePanes, listPanes, tmux, type AgentPane } from "~/detect/panes.ts"
 
-/**
- * What the picker lists: one row per agent window across every session, with
- * the state the status bar shows for it. The state comes from the window's
- * `@ai_state` when `senu watch` has written one, and from classifying the
- * pane live otherwise.
- */
-
 /** The status bar's states: `done` is the daemon's "finished while you weren't looking". */
 export type Attention = "blocked" | "working" | "done" | "idle"
 
@@ -31,21 +24,17 @@ export interface AgentRow {
   source: "watch" | "live"
 }
 
+export type PaneRow = AgentRow & { active: boolean }
+
 /** An `@ai_state` value, or null when there's none (or it's not one senu writes). */
 export function attentionOf(raw: string): Attention | null {
   return Object.hasOwn(PRIORITY, raw) ? (raw as Attention) : null
 }
 
-/** A live classification as the picker shows it. Codex's settled screen is `unknown`, which is idle. */
 export const liveAttention = (s: AgentState): Attention => (s === "unknown" ? "idle" : s)
 
 // ---------------------------------------------------------------- the daemon
 
-/**
- * `senu watch` stamps this global option with the epoch seconds of each poll.
- * A stamp older than `HEARTBEAT_STALE_SECONDS` means the daemon died, and the
- * `@ai_state` it left behind is frozen, so the picker classifies live.
- */
 import { HEARTBEAT_OPTION } from "~/watch/daemon.ts"
 export { HEARTBEAT_OPTION }
 export const HEARTBEAT_STALE_SECONDS = 10
@@ -124,8 +113,8 @@ export function sortRows<T extends { state: Attention; activity: number }>(rows:
  * One row per window: the pane that wants you most stands for it (the active
  * pane on a tie), carrying the window's newest activity.
  */
-export function foldWindows(rows: (AgentRow & { active: boolean })[]): AgentRow[] {
-  const byWindow = new Map<string, AgentRow & { active: boolean }>()
+export function foldWindows(rows: PaneRow[]): AgentRow[] {
+  const byWindow = new Map<string, PaneRow>()
   for (const r of rows) {
     const best = byWindow.get(r.windowId)
     if (!best) byWindow.set(r.windowId, r)
@@ -144,7 +133,8 @@ export function foldWindows(rows: (AgentRow & { active: boolean })[]): AgentRow[
 const LABEL_HISTORY = 200
 
 export interface Collected {
-  rows: AgentRow[]
+  rows: PaneRow[]
+  panes: Pick<AgentPane, "id" | "cwd">[]
   daemon: Daemon
 }
 
@@ -171,7 +161,11 @@ export class Collector {
     ])
     const daemon = daemonFrom(beat.out, Date.now() / 1000)
     const agents = await this.agents.identify(panes)
-    const classifying = agents.filter((p) => !trustsState(p.aiState, daemon))
+    const perWindow = Map.groupBy(agents, (p) => p.windowId)
+    // `@ai_state` is the window's, so it only speaks for a window's sole agent
+    const soleAgent = (p: AgentPane) => perWindow.get(p.windowId)!.length === 1
+    const watched = (p: AgentPane) => soleAgent(p) && trustsState(p.aiState, daemon)
+    const classifying = agents.filter((p) => !watched(p))
     const reading = classifying.filter((p) => this.live.get(p.id)?.seen !== seen(p))
     const relabel = agents.filter(
       (p) => p.agent === "codex" && this.labels.get(p.id)?.seen !== seen(p),
@@ -197,7 +191,7 @@ export class Collector {
       this.labels.set(p.id, { seen: seen(p), label: labelFor(p, scrollback.get(p.id) ?? null) })
 
     const rows = agents.map((p) => {
-      const watched = trustsState(p.aiState, daemon)
+      const w = watched(p)
       return {
         windowId: p.windowId,
         session: p.session,
@@ -205,10 +199,10 @@ export class Collector {
         windowName: p.windowName,
         paneId: p.id,
         agent: p.agent,
-        state: watched ? attentionOf(p.aiState)! : liveAttention(this.live.get(p.id)!.state),
+        state: w ? attentionOf(p.aiState)! : liveAttention(this.live.get(p.id)!.state),
         activity: p.windowActivity || 0,
         label: p.agent === "codex" ? this.labels.get(p.id)!.label : labelFor(p, null),
-        source: watched ? ("watch" as const) : ("live" as const),
+        source: w ? ("watch" as const) : ("live" as const),
         active: p.active,
       }
     })
@@ -216,6 +210,6 @@ export class Collector {
     const ids = new Set(agents.map((p) => p.id))
     for (const m of [this.live, this.labels])
       for (const id of m.keys()) if (!ids.has(id)) m.delete(id)
-    return { rows: foldWindows(rows), daemon }
+    return { rows: sortRows(rows), panes: agents.map(({ id, cwd }) => ({ id, cwd })), daemon }
   }
 }

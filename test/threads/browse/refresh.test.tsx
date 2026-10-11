@@ -34,7 +34,7 @@ test.each(["pane changed", "agent exited"])("Enter uses refreshed data when %s",
       updatedMs: Date.now(),
       transcript: "/missing-transcript",
     },
-    live: { paneId: "%1", windowId: "@1", session: "s", state: "idle" },
+    live: { paneId: "%1", windowId: "@1", windowIndex: 1, session: "s", state: "idle" },
   }
   const updated: Entry = {
     ...entry,
@@ -49,6 +49,9 @@ test.each(["pane changed", "agent exited"])("Enter uses refreshed data when %s",
         <Browser
           initial={[entry]}
           load={async () => [updated]}
+          watch={async () => ({ merge: (es) => es, scouting: false })}
+          live={false}
+          jump={async () => {}}
           onOpen={(e) => void opened.push(e)}
         />
       </KeymapProvider>,
@@ -80,7 +83,7 @@ test.each([4, 5, 6])(
       title,
       cwd: "/p",
       updatedMs: 200 - i,
-      live: { state: "idle", paneId: `%${i}`, windowId: `@${i}`, session: "s" },
+      live: { state: "idle", paneId: `%${i}`, windowId: `@${i}`, windowIndex: 1, session: "s" },
     }))
     const opened: Entry[] = []
     const keymap = createDefaultOpenTuiKeymap(t.renderer)
@@ -90,6 +93,9 @@ test.each([4, 5, 6])(
           <Browser
             initial={initial}
             load={async () => initial}
+            watch={async () => ({ merge: (es) => es, scouting: false })}
+            live={false}
+            jump={async () => {}}
             onOpen={(e) => void opened.push(e)}
           />
         </KeymapProvider>,

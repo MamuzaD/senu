@@ -19,7 +19,9 @@ test("sections: running, then the last 3 days, then archived; running never arch
     title,
     cwd: "/p",
     updatedMs: now - ageMs,
-    live: live ? { state: "idle" as const, paneId: "%1", windowId: "@1", session: "s" } : null,
+    live: live
+      ? { state: "idle" as const, paneId: "%1", windowId: "@1", windowIndex: 1, session: "s" }
+      : null,
   })
   const got = sections(
     [

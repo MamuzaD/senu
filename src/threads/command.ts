@@ -1,21 +1,18 @@
 import type { Config, UsageProfile } from "~/config.ts"
-import { listPanes, setTmuxSocket, tmux } from "~/detect/panes.ts"
-import { Collector, type Collected } from "~/threads/live/collect.ts"
-import type { Lookup } from "~/threads/live/picker.tsx"
+import { setTmuxSocket } from "~/detect/panes.ts"
+import { Collector } from "~/threads/live/collect.ts"
 import { profileKey } from "~/usage/cache.ts"
 import { formatDuration } from "~/usage/format.ts"
 
-import { joinEntries, listEntries, openEntry, OpenError, type Entry } from "./entries.ts"
+import { listEntries, openEntry, OpenError, refreshLive, type Entry } from "./entries.ts"
 import { ResumeError } from "./resume.ts"
-import { runningThreads } from "./running.ts"
-import { listThreads } from "./thread.ts"
 
 const HELP = `usage: senu threads [--live] [--json] [--profile key]... [--limit n] [-L socket | -S path]
        senu threads resume <session-id>
 
 Lists agent threads, newest first.
 
-  --live         only running agents; a picker in a terminal
+  --live         only running agents
   --json         print JSON
   --profile key  only this profile, e.g. codex-work
   --limit n      at most n
@@ -62,61 +59,39 @@ async function resumeCommand(sessionId: string, config: Config): Promise<number>
   }
 }
 
-function narrowed(profiles: UsageProfile[], byProfile: boolean, limit: number) {
-  const all = new Collector()
-  const { threads } = listThreads(profiles)
-  return {
-    async collect(): Promise<Collected> {
-      const got = await all.collect()
-      let rows = got.rows
-      if (byProfile) {
-        const panes = await listPanes()
-        const seen = { panes, rows, paneBySession: await runningThreads(profiles, panes) }
-        const windows = new Set(joinEntries(threads, seen, false).map((e) => e.live?.windowId))
-        rows = rows.filter((r) => windows.has(r.windowId))
-      }
-      return { ...got, rows: rows.slice(0, limit) }
-    },
-  }
-}
-
-function lookupIn(profiles: UsageProfile[]): Lookup {
-  return async (row) => {
-    const panes = await listPanes()
-    const windowOf = new Map(panes.map((p) => [p.id, p.windowId]))
-    const inWindow = new Set(
-      [...(await runningThreads(profiles, panes))]
-        .filter(([, pane]) => windowOf.get(pane) === row.windowId)
-        .map(([sessionId]) => sessionId),
-    )
-    const thread = listThreads(profiles).threads.find((t) => inWindow.has(t.sessionId))
-    return thread ? { sessionId: thread.sessionId, transcript: thread.transcript } : null
-  }
-}
-
-async function pickLive(
+async function browse(
   config: Config,
   profiles: UsageProfile[],
-  byProfile: boolean,
+  withUnthreaded: boolean,
   limit: number,
+  live: boolean,
 ): Promise<number> {
-  if (!(await tmux("info")).ok) {
-    console.error("senu threads: no tmux server")
-    return 1
+  const load = async () => {
+    const { entries, failed } = await listEntries(profiles, withUnthreaded)
+    return { entries, failed }
   }
-  const { runPicker } = await import("~/threads/live/picker.tsx")
-  return runPicker(narrowed(profiles, byProfile, limit), {
-    raiseGhosttyTab: config.agents.raiseGhosttyTab,
-    lookup: lookupIn(profiles),
-  })
-}
-
-async function browse(config: Config, initial: Entry[], load: () => Promise<Entry[]>) {
+  const { entries, failed } = await load()
+  warnFailed(failed)
+  const collector = new Collector()
+  const opts = { raiseGhosttyTab: config.agents.raiseGhosttyTab }
+  let jumpFailed: unknown = null
   const { runBrowser } = await import("./browse/browser.tsx")
-  const picked = await runBrowser(initial, load)
-  if (!picked) return 0
+  const picked = await runBrowser(entries, {
+    load: async () => (await load()).entries,
+    watch: async () => {
+      const { rows, panes, daemon } = await collector.collect()
+      return {
+        merge: (es) => refreshLive(es, { rows, panes }, withUnthreaded),
+        scouting: daemon === "dead" || rows.some((r) => r.source === "live"),
+      }
+    },
+    live,
+    limit,
+    jump: (e) => openEntry(e, opts).catch((err: unknown) => (jumpFailed = err)),
+  })
   try {
-    return await openEntry(picked, { raiseGhosttyTab: config.agents.raiseGhosttyTab })
+    if (jumpFailed) throw jumpFailed
+    return picked ? await openEntry(picked, opts) : 0
   } catch (e) {
     if (!(e instanceof ResumeError || e instanceof OpenError)) throw e
     console.error(`senu threads: ${e.message}`)
@@ -170,17 +145,11 @@ export async function threadsCommand(args: string[], config: Config): Promise<nu
     return 2
   }
   const profiles = keys.length ? all.filter((p) => keys.includes(profileKey(p))) : all
-  if (liveOnly && !json && process.stdout.isTTY)
-    return pickLive(config, profiles, keys.length > 0, limit)
+  if (!json && process.stdout.isTTY) return browse(config, profiles, !keys.length, limit, liveOnly)
 
-  const load = async () => {
-    const { entries, failed } = await listEntries(profiles, !keys.length)
-    return { entries: entries.filter((e) => !liveOnly || e.live).slice(0, limit), failed }
-  }
-  const { entries: shown, failed } = await load()
+  const { entries, failed } = await listEntries(profiles, !keys.length)
+  const shown = entries.filter((e) => !liveOnly || e.live).slice(0, limit)
   warnFailed(failed)
-  if (!json && process.stdout.isTTY)
-    return browse(config, shown, async () => (await load()).entries)
 
   if (json) console.log(JSON.stringify(shown.map(entryJson), null, 2))
   else if (!shown.length) console.log(liveOnly ? "no running agents" : "no threads")

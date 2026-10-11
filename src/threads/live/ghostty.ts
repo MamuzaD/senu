@@ -4,7 +4,7 @@
  * `activate window`). tmux titles each client's terminal with
  * `set-titles-string`, `#S:#I:#W …` by default, so the tab whose name starts
  * with `<session>:` is that session's; failing that, any tab whose name
- * contains the session's name. The tab the picker was opened from is never
+ * contains the session's name. The tab senu was opened from is never
  * the answer.
  */
 

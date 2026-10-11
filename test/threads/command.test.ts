@@ -4,8 +4,9 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { entryJson } from "~/threads/command.ts"
-import { agentEntry, joinEntries } from "~/threads/entries.ts"
+import { agentEntry, joinEntries, refreshLive } from "~/threads/entries.ts"
 import { launchFor } from "~/threads/resume.ts"
+import type { Thread } from "~/threads/thread.ts"
 
 describe("launchFor", () => {
   test("points codex at the thread's home, always", () => {
@@ -49,7 +50,7 @@ test("a running agent with no thread yet keeps its label, pane cwd, and activity
     title: "codex",
     cwd: "/p",
     updatedAt: "1970-01-01T00:00:05.000Z",
-    live: { state: "idle", paneId: "%3", windowId: "@2", session: "s" },
+    live: { state: "idle", paneId: "%3", windowId: "@2", windowIndex: 1, session: "s" },
   })
 })
 
@@ -75,11 +76,12 @@ describe("joinEntries", () => {
     activity,
     label: `label ${windowId}`,
     source: "watch" as const,
+    active: false,
   })
   const panes = [
-    { id: "%1", windowId: "@1", session: "s", cwd: "/one" },
-    { id: "%2", windowId: "@2", session: "s", cwd: "/two" },
-    { id: "%3", windowId: "@3", session: "s", cwd: "/three" },
+    { id: "%1", windowId: "@1", windowIndex: 1, session: "s", cwd: "/one" },
+    { id: "%2", windowId: "@2", windowIndex: 1, session: "s", cwd: "/two" },
+    { id: "%3", windowId: "@3", windowIndex: 1, session: "s", cwd: "/three" },
   ]
   const tmux = {
     panes,
@@ -104,7 +106,7 @@ describe("joinEntries", () => {
       e.live?.paneId ?? null,
     ])
 
-  test("marks running threads with their window's state and keeps agents with no thread, newest first", () => {
+  test("marks running threads with their pane's state and keeps agents with no thread, newest first", () => {
     expect(summary(true)).toEqual([
       ["label @2", "idle", "%2"],
       ["no-row", "idle", "%3"],
@@ -121,6 +123,92 @@ describe("joinEntries", () => {
   test("an agent with no thread takes its pane's cwd and window activity", () => {
     const [unthreaded] = joinEntries(threads, tmux, true)
     expect(unthreaded).toMatchObject({ thread: null, cwd: "/two", updatedMs: 40_000 })
+  })
+
+  test("a thread sharing its window with another agent keeps its own pane's state", () => {
+    const blocked = { ...row("@1", "%9", "idle", 60), state: "blocked" as const, label: "claude" }
+    const split = {
+      panes: [...panes, { id: "%9", windowId: "@1", windowIndex: 1, session: "s", cwd: "/one" }],
+      rows: [blocked, row("@1", "%1", "idle", 50)],
+      paneBySession: new Map([["linked", "%1"]]),
+    }
+    expect(
+      joinEntries([thread("linked", 10)], split, true).map((e) => [e.title, e.live?.state]),
+    ).toEqual([
+      ["claude", "blocked"],
+      ["linked", "idle"],
+    ])
+  })
+})
+
+describe("refreshLive", () => {
+  const row = (windowId: string, state: "idle" | "working", label = windowId) => ({
+    windowId,
+    session: "s",
+    windowIndex: 1,
+    windowName: label,
+    paneId: `%${windowId}`,
+    agent: "codex" as const,
+    state,
+    activity: 5,
+    label,
+    source: "watch" as const,
+    active: false,
+  })
+  const saved = {
+    ...agentEntry(row("@1", "idle"), "/p"),
+    thread: { sessionId: "t" } as Thread,
+    title: "saved",
+  }
+  const loose = agentEntry(row("@2", "idle"), "/q")
+  const seen = (rows: ReturnType<typeof row>[]) => ({
+    rows,
+    panes: rows.map((r) => ({ id: r.paneId, cwd: "/p" })),
+  })
+
+  test("takes each window's new state, and drops agents that are gone", () => {
+    const got = refreshLive([saved, loose], seen([row("@1", "working")]), true)
+    expect(got.map((e) => [e.title, e.live?.state ?? null])).toEqual([["saved", "working"]])
+  })
+
+  test("keeps a thread after its agent exits", () => {
+    expect(refreshLive([saved], seen([]), true)).toMatchObject([{ title: "saved", live: null }])
+  })
+
+  test("adds agents it hasn't seen only when listing ones with no thread", () => {
+    const fresh = [row("@1", "idle"), row("@3", "working", "new")]
+    expect(refreshLive([saved], seen(fresh), true).map((e) => e.title)).toEqual(["saved", "new"])
+    expect(refreshLive([saved], seen(fresh), false).map((e) => e.title)).toEqual(["saved"])
+  })
+
+  test("a surviving agent in the window does not keep an exited thread's pane live", () => {
+    const replacement = { ...row("@1", "working", "replacement"), paneId: "%new" }
+    const got = refreshLive([saved], seen([replacement]), true)
+    expect(got.find((e) => e.thread)?.live).toBeNull()
+    expect(got.find((e) => !e.thread)).toMatchObject({
+      title: "replacement",
+      cwd: "/p",
+      live: { paneId: "%new" },
+    })
+  })
+
+  test("a thread follows its pane to another window", () => {
+    const moved = { ...row("@1", "working"), windowId: "@5", windowIndex: 3, session: "t" }
+    expect(refreshLive([saved], seen([moved]), true)).toMatchObject([
+      {
+        title: "saved",
+        live: { paneId: "%@1", windowId: "@5", windowIndex: 3, session: "t", state: "working" },
+      },
+    ])
+  })
+
+  test("a thread sharing its window keeps its own pane's state, next to the other agent", () => {
+    const other = { ...row("@1", "working", "other"), paneId: "%other" }
+    const got = refreshLive([saved], seen([other, row("@1", "idle")]), true)
+    expect(got.map((e) => [e.title, e.live?.paneId, e.live?.state])).toEqual([
+      ["saved", "%@1", "idle"],
+      ["other", "%other", "working"],
+    ])
   })
 })
 

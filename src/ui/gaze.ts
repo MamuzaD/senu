@@ -64,7 +64,6 @@ export function paintHop(c: Canvas, h: Hop, t: number, time: SceneTime, origin: 
     at.k < FLARE_AT
       ? flyingPixels(5, Math.sin(t / 55) * 0.9)
       : landingPixels(at.k < 1 ? "flare" : hopRunning(h, t) ? "touch" : "perch", -1)
-  // The scene's tone inside the sky, the agents picker's night tone over the terminal.
   const tone = (k: number, key: "near" | "wing") => mix(TONES[time][key], TONES.night[key], k)
   const out = smooth((at.y - (SCENE_ROWS * 2 - 6)) / 8)
   const body = mix(tone(out, "near"), brand.gold, 0.5 * Math.sin(Math.PI * at.k))
