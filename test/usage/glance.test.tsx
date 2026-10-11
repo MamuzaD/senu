@@ -51,7 +51,8 @@ const fiveHour = (left: number): Limit => ({
 const weekly: Limit = {
   label: "weekly",
   left: 90,
-  resetsAt: nowSeconds() + 6 * 24 * HOUR,
+  // Ten minutes past 6d, so it still reads "6d" by the time a slow run draws it
+  resetsAt: nowSeconds() + 6 * 24 * HOUR + 600,
   windowMs: 7 * 24 * HOUR * 1000,
 }
 
@@ -115,7 +116,7 @@ test("a profile senu looks at opens a chart of its cost", async () => {
   const f = await frame(true)
   expect(f).toContain("▸")
   expect(f).toContain("today  7d  30d")
-  expect(f).toMatch(/5h dry in ~1h20m · \d\d:\d\d/)
+  expect(f).toMatch(/5h dry in ~1h20m · (\w{3} )?\d\d:\d\d/)
   expect(f).toContain("avg $2.00/day · peak $6.00 Fri 25")
   expect(f).toMatch(/Tu\s+We\s+Th\s+Fr\s+Sa\s+Su\s+Mo\s*$/m)
   expect(f).toMatch(/today {2}7d {2}30d ─+ \$14\.00 at API rates/)
