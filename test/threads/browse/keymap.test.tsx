@@ -148,6 +148,7 @@ test("live limits apply after filtering and still hold after a watch update", as
   })
   await act(() => t.renderOnce())
   expect(t.captureCharFrame()).toContain("fresh agent")
+  expect(t.captureCharFrame()).toContain("refreshed")
   expect(t.captureCharFrame()).not.toContain("first agent")
   expect(t.captureCharFrame()).not.toContain("second agent")
 })

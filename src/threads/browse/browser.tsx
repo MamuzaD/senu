@@ -599,7 +599,14 @@ export function Browser({
         { name: "last", run: (n: number) => select(n ? n - 1 : flat.length - 1) },
         { name: "search", run: () => setSearching((searchingRef.current = true)) },
         { name: "preview", run: () => setShowPreview((s) => !s) },
-        { name: "refresh", run: () => void Promise.all([watchNow(), refresh()]) },
+        {
+          name: "refresh",
+          run: () =>
+            void Promise.all([watchNow(), refresh()]).then(
+              () => flash("refreshed"),
+              () => flash("couldn't refresh"),
+            ),
+        },
         { name: "live", run: () => setLive((l) => !l) },
         { name: "preview-older", run: (n: number) => scrollPreview(n || 1) },
         { name: "preview-newer", run: (n: number) => scrollPreview(-(n || 1)) },
