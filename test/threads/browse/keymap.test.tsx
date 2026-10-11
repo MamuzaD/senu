@@ -15,7 +15,7 @@ afterEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: false })
 })
 
-test("live mode moves, waits for kill confirmation, and jumps", async () => {
+test("live mode moves, waits for kill confirmation, flips with tab, and jumps", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const t = await createTestRenderer({ width: 100, height: 22 })
   destroy = () => act(() => t.renderer.destroy())
@@ -80,6 +80,13 @@ test("live mode moves, waits for kill confirmation, and jumps", async () => {
   await press("a")
   expect(t.captureCharFrame()).not.toContain("kill this codex")
 
+  act(() => t.mockInput.pressTab())
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).toContain("saved")
+  act(() => t.mockInput.pressTab())
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).not.toContain("saved")
+
   act(() => t.mockInput.pressEnter())
   await act(() => t.renderOnce())
   expect(jumped.map((e) => e.title)).toEqual(["two"])
@@ -127,6 +134,13 @@ test("live limits apply after filtering and still hold after a watch update", as
   await act(() => t.renderOnce())
   expect(t.captureCharFrame()).toContain("first agent")
   expect(t.captureCharFrame()).not.toContain("second agent")
+
+  act(() => t.mockInput.pressTab())
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).toContain("newer saved")
+  expect(t.captureCharFrame()).not.toContain("first agent")
+  act(() => t.mockInput.pressTab())
+  await act(() => t.renderOnce())
 
   await act(async () => {
     t.mockInput.pressKey("r")

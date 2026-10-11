@@ -55,6 +55,7 @@ const keysFor = (live: boolean): HintBinding[] => [
   { key: "shift+y", cmd: "copy-path" },
   { key: "x", cmd: "kill", desc: "x kill" },
   { key: "r", cmd: "refresh", desc: "r refresh" },
+  { key: "tab", cmd: "live", desc: live ? "tab all" : "tab live" },
   { key: "q", cmd: "quit", desc: "q quit" },
   { key: "escape", cmd: "quit" },
   ...Array.from({ length: 10 }, (_, d) => ({ key: String(d), cmd: `count-${d}` })),
@@ -428,7 +429,7 @@ export function Browser({
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
   const [entries, setEntries] = useState(initial)
-  const live = startLive
+  const [live, setLive] = useState(startLive)
   const [scouting, setScouting] = useState(false)
   const [diveAt, setDiveAt] = useState<number | null>(null)
   const divingRef = useRef(false)
@@ -599,6 +600,7 @@ export function Browser({
         { name: "search", run: () => setSearching((searchingRef.current = true)) },
         { name: "preview", run: () => setShowPreview((s) => !s) },
         { name: "refresh", run: () => void Promise.all([watchNow(), refresh()]) },
+        { name: "live", run: () => setLive((l) => !l) },
         { name: "preview-older", run: (n: number) => scrollPreview(n || 1) },
         { name: "preview-newer", run: (n: number) => scrollPreview(-(n || 1)) },
         { name: "copy-id", run: () => copyOut(current().e?.thread?.sessionId, "session id") },
