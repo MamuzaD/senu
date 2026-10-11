@@ -16,6 +16,11 @@ export async function runApp(
     createCliRenderer({ useMouse: opts.useMouse, onDestroy: resolve }),
   ])
   const keymap = createDefaultOpenTuiKeymap(renderer)
+  // On destroy the keymap drops its extra fields before its layers, so a layer re-registered just
+  // before quitting warns about `enabled` and `desc` on the way out; those mean nothing by then
+  keymap.on("warning", ({ code, message }) => {
+    if (!renderer.isDestroyed) console.warn(`[${code}] ${message}`)
+  })
   const gate = updateGate(renderer)
   createRoot(renderer).render(
     <KeymapProvider keymap={keymap}>
