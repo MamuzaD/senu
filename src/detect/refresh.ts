@@ -10,6 +10,7 @@ import { dirname, join } from "node:path"
 
 import type { Config } from "~/config.ts"
 import { stateDir } from "~/paths.ts"
+import { printHelp } from "~/ui/help.ts"
 import { compareVersions } from "~/version.ts"
 
 import {
@@ -194,12 +195,10 @@ const MARK: Record<Outcome["status"], string> = {
 
 const HELP = `usage: senu scout manifest refresh [--check] [--daily]
 
-Pulls herdr's agent-detection manifests (${PRIMARY}/<agent>.toml, with a GitHub
-mirror fallback) into ${overrideDir}. A file is only written if it loads, and
-only if it's newer than the one in use.
+Pulls herdr's agent-detection manifests into ${overrideDir}.
 
---check  report drift, write nothing (exit 1 if anything drifted)
---daily  do nothing if the last clean sync was under 24 hours ago
+  --check  report drift, write nothing; exit 1 if anything drifted
+  --daily  skip if the last clean sync was under 24 hours ago
 `
 
 export async function manifestsCommand(
@@ -210,7 +209,7 @@ export async function manifestsCommand(
   const [sub, ...flags] = args
   if (sub !== "refresh" || flags.some((f) => f !== "--check" && f !== "--daily")) {
     const help = !sub || sub === "-h" || sub === "--help"
-    ;(help ? process.stdout : process.stderr).write(HELP)
+    await printHelp(help ? process.stdout : process.stderr, HELP)
     return help ? 0 : 2
   }
   const check = flags.includes("--check")

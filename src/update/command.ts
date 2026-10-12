@@ -4,6 +4,7 @@ import { basename, dirname } from "node:path"
 import type { Config } from "~/config.ts"
 import { compiled } from "~/paths.ts"
 import { paint, write } from "~/ui/banner.ts"
+import { printHelp } from "~/ui/help.ts"
 import { brand, states } from "~/ui/theme.ts"
 
 import { version } from "../../package.json"
@@ -11,11 +12,9 @@ import { checkLatest, isNewer, REPO, type CheckOptions } from "./release.ts"
 
 const HELP = `usage: senu update [--check]
 
-Runs the latest release's install.sh, which downloads that release, checks it
-against its SHA256SUMS, and replaces this senu binary. A running watcher
-restarts on the new build by itself.
+Downloads the latest release, checks its SHA256SUMS, and replaces this binary.
 
---check  only report whether a newer release is out
+  --check  only report whether a newer release is out
 `
 
 export const scriptUrl = (tag: string) =>
@@ -92,7 +91,7 @@ export async function updateCommand(
 ): Promise<number> {
   if (args.some((a) => a !== "--check")) {
     const help = args.includes("-h") || args.includes("--help")
-    ;(help ? process.stdout : process.stderr).write(HELP)
+    await printHelp(help ? process.stdout : process.stderr, HELP)
     return help ? 0 : 2
   }
 

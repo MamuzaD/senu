@@ -1,4 +1,5 @@
 import type { Config } from "~/config.ts"
+import { printHelp } from "~/ui/help.ts"
 
 import { classify, explain } from "./engine.ts"
 import { parseAgent, type Agent } from "./manifest.ts"
@@ -16,11 +17,11 @@ const HELP = `usage: senu scout [pane] [agent]
        senu scout explain <pane> [agent]
        senu scout manifest refresh [--check] [--daily]
 
-Without a pane, scout lists every agent pane and its state.
-With a pane, it prints that pane's state: working, blocked, idle or unknown.
-explain dumps every rule's verdict and the regions they read.
-scout shows pane IDs such as %8; agent (claude or codex) is found from the
-pane if omitted.
+Lists agent panes and their states, or one pane's state, e.g. %8.
+
+  agent     claude or codex; found from the pane if omitted
+  explain   print every rule's verdict and the regions it read
+  manifest  pull herdr's detection manifests
 `
 
 async function readPane(
@@ -28,12 +29,12 @@ async function readPane(
   args: string[],
 ): Promise<{ agent: Agent; input: DetectionInput } | number> {
   if (args.includes("-h") || args.includes("--help")) {
-    process.stdout.write(HELP)
+    await printHelp(process.stdout, HELP)
     return 0
   }
   const [explicitTarget, agentArg, ...extra] = args
   if (extra.length) {
-    process.stderr.write(HELP)
+    await printHelp(process.stderr, HELP)
     return 2
   }
   const target = explicitTarget
@@ -157,7 +158,7 @@ async function scanCommand(): Promise<number> {
 export async function scoutCommand(args: string[], config: Config): Promise<number> {
   const [sub, ...rest] = args
   if (sub === "-h" || sub === "--help" || sub === "help") {
-    process.stdout.write(HELP)
+    await printHelp(process.stdout, HELP)
     return 0
   }
   if (sub === "explain") return explainCommand(rest, config)

@@ -1,6 +1,7 @@
 import type { Config, Profile } from "~/config.ts"
 import { setTmuxSocket } from "~/detect/panes.ts"
 import { Collector } from "~/threads/live/collect.ts"
+import { printHelp } from "~/ui/help.ts"
 import { profileKey } from "~/usage/cache.ts"
 import { formatDuration } from "~/usage/format.ts"
 
@@ -17,15 +18,14 @@ import { ResumeError } from "./resume.ts"
 const HELP = `usage: senu threads [--live] [--json] [--profile key]... [--limit n] [-L socket | -S path]
        senu threads resume <session-id>
 
-Lists agent threads, newest first.
+Browses agent threads, newest first, or lists them when piped.
 
   --live         only running agents
   --json         print JSON
   --profile key  only this profile, e.g. codex-work
   --limit n      at most n
   -L, -S         the tmux server, as in tmux
-
-resume jumps to a running thread, or reopens it in its own CLI.
+  resume         jump to a running thread, or reopen it in its CLI
 `
 
 export const entryJson = (e: Entry) => ({
@@ -116,7 +116,7 @@ async function browse(
 
 export async function threadsCommand(args: string[], config: Config): Promise<number> {
   if (args.includes("-h") || args.includes("--help")) {
-    process.stdout.write(HELP)
+    await printHelp(process.stdout, HELP)
     return 0
   }
   const server: string[] = []
@@ -130,7 +130,7 @@ export async function threadsCommand(args: string[], config: Config): Promise<nu
 
   if (rest[0] === "resume") {
     if (rest.length !== 2) {
-      process.stderr.write(HELP)
+      await printHelp(process.stderr, HELP)
       return 2
     }
     return resumeCommand(rest[1]!, config)
@@ -147,7 +147,7 @@ export async function threadsCommand(args: string[], config: Config): Promise<nu
     else if (a === "--profile" && rest[i + 1]) keys.push(rest[++i]!)
     else if (a === "--limit" && Number(rest[i + 1]) > 0) limit = Number(rest[++i])
     else {
-      process.stderr.write(HELP)
+      await printHelp(process.stderr, HELP)
       return 2
     }
   }

@@ -1,23 +1,26 @@
 import type { Config } from "~/config.ts"
 import type { Span } from "~/ui/banner.ts"
+import { printHelp } from "~/ui/help.ts"
 
 import { clearSoundOverride, effectiveSoundEnabled, setSoundEnabled } from "./sound-state.ts"
 
 const HELP = `usage: senu sound [status|toggle|on|off|reset]
 
-status prints the effective sound setting. toggle, on and off save a runtime
-choice that applies to every watcher; reset returns to [sound] enabled in
-config.toml. Custom chimes and focused-window sounds are set in [sound].
+Shows or changes whether watchers chime, overriding [sound] enabled.
+
+  status           print the current setting
+  toggle, on, off  save a choice for every watcher
+  reset            go back to [sound] enabled
 `
 
 export async function soundCommand(args: string[], config: Config): Promise<number> {
   const [action, ...extra] = args
   if (action === "-h" || action === "--help" || action === "help") {
-    process.stdout.write(HELP)
+    await printHelp(process.stdout, HELP)
     return 0
   }
   if (extra.length || (action && !["status", "toggle", "on", "off", "reset"].includes(action))) {
-    process.stderr.write(HELP)
+    await printHelp(process.stderr, HELP)
     return 2
   }
   const current = effectiveSoundEnabled(config.sound.enabled)

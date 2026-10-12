@@ -1,23 +1,26 @@
 import type { Config } from "~/config.ts"
+import { printHelp } from "~/ui/help.ts"
 
 import { claimLock, getSnapshot, profileKey, refreshLocked } from "./cache.ts"
 import { formatTokens } from "./format.ts"
 import { claimTodayLock, refreshTodayLocked, scanToday } from "./today.ts"
 
 const HELP = `usage: senu vision [--json]
-       senu vision refresh [profile] [--locked]
+       senu vision refresh [profile]
        senu vision today [profile...] [--json]
 
-Opens the usage popup. --json prints each profile's snapshot instead.
-refresh fetches now and updates the cache; profile is a key like codex-work.
-today scans the transcripts now and prints today's estimated spend and tokens.
+Shows Codex and Claude usage limits and today's cost.
+
+  --json   print each profile's snapshot
+  refresh  fetch limits now, for one profile (e.g. codex-work) or all
+  today    print today's estimated spend and tokens
 `
 
 export async function usageCommand(args: string[], config: Config): Promise<number> {
   const { profiles } = config
 
   if (args.includes("-h") || args.includes("--help")) {
-    process.stdout.write(HELP)
+    await printHelp(process.stdout, HELP)
     return 0
   }
 

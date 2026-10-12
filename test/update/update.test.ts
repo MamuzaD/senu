@@ -196,7 +196,7 @@ describe("updateCommand", () => {
   test("unknown flags print usage", async () => {
     const write = spyOn(process.stderr, "write").mockImplementation(() => true)
     expect(await updateCommand(["--force"], config, { path })).toBe(2)
-    expect(write.mock.calls.flat().join()).toContain("usage: senu update [--check]")
+    expect(write.mock.calls.flat().join()).toContain("usage  senu update [--check]")
     write.mockRestore()
   })
 

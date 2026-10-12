@@ -1,22 +1,20 @@
 import type { Config } from "~/config.ts"
 import { setTmuxSocket } from "~/detect/panes.ts"
+import { printHelp } from "~/ui/help.ts"
 
 import { runDaemon, Watcher } from "./daemon.ts"
 import { play, resolveSound } from "./sounds.ts"
 import type { SoundKind } from "./state.ts"
 
-const HELP = `usage: senu watch [-L socket-name | -S socket-path]
-       senu watch once [-L … | -S …]
+const HELP = `usage: senu watch [-L socket | -S path]
+       senu watch once [-L socket | -S path]
        senu watch test [done|request]
 
-watch runs the daemon: it classifies every agent pane about once a second,
-writes each window's @ai_state (working, blocked, done or idle) and chimes when
-a background agent finishes or needs you. A second start on the same tmux
-server does nothing, so tmux.conf can run it on every reload.
+Sets each window's @ai_state about once a second, and chimes when an agent needs you.
 
-once polls a single time and prints each window's state, changing nothing.
-test plays the done and request sounds (or just the one named).
--L and -S pick the tmux server, as they do for tmux itself.
+  once    poll once and print each window's state
+  test    play the done and request sounds, or the one named
+  -L, -S  the tmux server, as in tmux
 `
 
 const KINDS = new Set<SoundKind>(["done", "request"])
@@ -61,7 +59,7 @@ async function once(): Promise<number> {
 export async function watchCommand(argv: string[], config: Config): Promise<number> {
   const args = [...argv]
   if (args.includes("-h") || args.includes("--help")) {
-    process.stdout.write(HELP)
+    await printHelp(process.stdout, HELP)
     return 0
   }
   for (const flag of ["-L", "-S"]) {
@@ -80,6 +78,6 @@ export async function watchCommand(argv: string[], config: Config): Promise<numb
   if (sub === "test") return testSounds(rest, config)
   if (sub === "once" && !rest.length) return once()
   if (sub === undefined) return runDaemon()
-  process.stderr.write(HELP)
+  await printHelp(process.stderr, HELP)
   return 2
 }

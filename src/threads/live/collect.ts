@@ -51,7 +51,7 @@ export function daemonFrom(heartbeat: string, nowSeconds: number): Daemon {
 /**
  * Trust the window's `@ai_state`? Only if it has one and the daemon isn't
  * known to be dead. With no `@ai_state` (no daemon, or a window it hasn't
- * polled yet) the pane is classified live, as the python picker did.
+ * polled yet) the pane is classified live.
  */
 export const trustsState = (aiState: string, daemon: Daemon) =>
   daemon !== "dead" && attentionOf(aiState) !== null

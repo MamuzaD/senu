@@ -20,7 +20,7 @@ const COMMANDS: Record<string, Command> = {
     run: async (a, c) => (await import("./watch/command.ts")).watchCommand(a, c),
   },
   threads: {
-    about: "list past and running conversations, or resume one",
+    about: "browse past and running conversations, or resume one",
     run: async (a, c) => (await import("./threads/command.ts")).threadsCommand(a, c),
   },
   scout: {
