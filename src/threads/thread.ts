@@ -1,3 +1,5 @@
+import { statSync } from "node:fs"
+
 import type { Profile } from "~/config.ts"
 import type { Agent } from "~/detect/manifest.ts"
 import { profileKey } from "~/usage/cache.ts"
@@ -56,12 +58,13 @@ export function listThreads(profiles: Profile[], only?: Only): Listed {
 }
 
 const PREVIEW_BYTES = 1 << 20
+const PREVIEW_TURNS = 40
 
-export function preview(thread: Thread, count: number): Turn[] {
+export function preview(thread: Thread, count: number, bytes = PREVIEW_BYTES): Turn[] {
   const [read, tools] =
     thread.agent === "codex" ? [codexMessage, codexTools] : [claudeMessage, claudeTools]
   const turns: Turn[] = []
-  for (const r of tailRecords(thread.transcript, PREVIEW_BYTES)) {
+  for (const r of tailRecords(thread.transcript, bytes)) {
     const m = read(r)
     if (m) turns.push(m)
     const kinds = tools(r)
@@ -71,4 +74,16 @@ export function preview(thread: Thread, count: number): Turn[] {
     for (const k of kinds) last.tools[k] = (last.tools[k] ?? 0) + 1
   }
   return turns.slice(-count)
+}
+
+/**
+ * The last turns of a thread, twice as many and from twice as far back at each `depth`, and
+ * whether the transcript holds any older ones.
+ */
+export function previewAt(thread: Thread, depth: number): { turns: Turn[]; more: boolean } {
+  const count = PREVIEW_TURNS << depth
+  const bytes = PREVIEW_BYTES * 2 ** depth
+  const turns = preview(thread, count + 1, bytes)
+  const more = turns.length > count || statSync(thread.transcript).size > bytes
+  return { turns: turns.slice(-count), more }
 }

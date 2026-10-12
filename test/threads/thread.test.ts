@@ -6,7 +6,7 @@ import { join } from "node:path"
 
 import { claudeMessage, claudeSummary, claudeTools } from "~/threads/claude.ts"
 import { CODEX_STATE_DB, codexMessage, codexTools } from "~/threads/codex.ts"
-import { listThreads, preview } from "~/threads/thread.ts"
+import { listThreads, preview, previewAt } from "~/threads/thread.ts"
 import { headRecords, tailRecords } from "~/threads/transcript.ts"
 
 const dir = mkdtempSync(join(tmpdir(), "senu-threads-"))
@@ -241,6 +241,19 @@ describe("listThreads", () => {
       { fromUser: false, text: "done" },
       { tools: { edit: 1 } },
     ])
+  })
+
+  test("previewAt reads twice as far back at each depth, and says when there's more", () => {
+    const path = join(dir, "long.jsonl")
+    writeFileSync(path, jsonl(...Array.from({ length: 100 }, (_, i) => user(`turn ${i}`))))
+    const thread = { ...listThreads(profiles).threads[1]!, transcript: path }
+    const at = (depth: number) => {
+      const { turns, more } = previewAt(thread, depth)
+      return [turns.length, "text" in turns[0]! && turns[0].text, more]
+    }
+    expect(at(0)).toEqual([40, "turn 60", true])
+    expect(at(1)).toEqual([80, "turn 20", true])
+    expect(at(2)).toEqual([100, "turn 0", false])
   })
 
   test("reports a profile it can't read and lists the rest", () => {

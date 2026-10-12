@@ -1,4 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import { createTestRenderer } from "@opentui/core/testing"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
@@ -479,4 +482,60 @@ test("the list's scrollbar scrolls by its thumb, and the selection stays on scre
   await act(() => t.renderOnce())
   expect(t.captureCharFrame()).toContain("thread 11")
   await act(() => t.mockMouse.release(bar, 20))
+})
+
+test("scrolling the preview to the top reads further back, to the start of the thread", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const t = await createTestRenderer({ width: 100, height: 22 })
+  destroy = () => act(() => t.renderer.destroy())
+  const transcript = join(mkdtempSync(join(tmpdir(), "senu-preview-")), "long.jsonl")
+  const turn = (i: number) =>
+    JSON.stringify({ type: "user", cwd: "/", message: { role: "user", content: `turn ${i}` } })
+  writeFileSync(transcript, Array.from({ length: 100 }, (_, i) => turn(i) + "\n").join(""))
+  const thread = {
+    sessionId: "long",
+    agent: "claude",
+    profile: "claude-p",
+    home: "/h",
+    title: "long thread",
+    cwd: "/",
+    updatedMs: Date.now(),
+    transcript,
+  } as const
+  const keymap = createDefaultOpenTuiKeymap(t.renderer)
+  act(() =>
+    createRoot(t.renderer).render(
+      <KeymapProvider keymap={keymap}>
+        <Browser
+          initial={[
+            {
+              thread,
+              agent: "claude",
+              title: thread.title,
+              cwd: "/",
+              updatedMs: thread.updatedMs,
+              live: null,
+            },
+          ]}
+          load={async () => []}
+          watch={async () => ({ merge: (es) => es, scouting: false })}
+          live={false}
+          preview={true}
+          recentMs={RECENT_MS}
+          jump={async () => {}}
+          onOpen={() => {}}
+        />
+      </KeymapProvider>,
+    ),
+  )
+  const press = async (key: string) => {
+    act(() => t.mockInput.pressKey(key))
+    await act(() => t.renderOnce())
+  }
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).toContain("turn 99")
+  await press("l")
+  for (let i = 0; i < 4 && !t.captureCharFrame().includes("turn 0 "); i++) await press("g")
+  expect(t.captureCharFrame()).toMatch(/turn 0\s/)
+  expect(t.captureCharFrame()).toContain("start of thread")
 })

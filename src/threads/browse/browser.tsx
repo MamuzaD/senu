@@ -19,7 +19,7 @@ import { formatDuration } from "~/usage/format.ts"
 
 import { copy } from "../clipboard.ts"
 import { mergeLoaded, type Entry, type Scope } from "../entries.ts"
-import { preview, threadKey, type Thread, type ToolKind, type Turn } from "../thread.ts"
+import { previewAt, threadKey, type Thread, type ToolKind, type Turn } from "../thread.ts"
 
 const REFRESH_MS = 5000
 const WATCH_MS = 1000
@@ -168,7 +168,8 @@ export interface Line {
   mark: string
 }
 
-export function previewLines(turns: Turn[], width: number): Line[] {
+/** `whole` marks a fully read thread, which gets a start line once it outgrows `rows` */
+export function previewLines(turns: Turn[], width: number, whole = false, rows = Infinity): Line[] {
   const lines: Line[] = []
   for (const t of turns) {
     if (lines.length) lines.push({ text: "", fg: colors.dim, mark: "" })
@@ -184,6 +185,11 @@ export function previewLines(turns: Turn[], width: number): Line[] {
         }),
       )
   }
+  if (whole && lines.length > rows)
+    lines.unshift(
+      { text: "start of thread", fg: colors.dim, mark: "" },
+      { text: "", fg: colors.dim, mark: "" },
+    )
   return lines
 }
 
@@ -214,6 +220,8 @@ interface View {
   showPreview: boolean
   focus: Focus
   turns: Turn[] | null
+  /** The preview holds the selected thread from its first turn */
+  whole: boolean
   hiddenBelow: number
   /** The scrollbar the mouse is holding, if any */
   dragging: Focus | null
@@ -341,8 +349,8 @@ function paintPreview(c: Canvas, v: View, x0: number, w: number) {
     c.text(left, top, "reading…", colors.dim)
     return
   }
-  const lines = previewLines(v.turns, width - 3)
   const rows = bottom - top + 1
+  const lines = previewLines(v.turns, width - 3, v.whole, rows)
   const end = lines.length - v.hiddenBelow
   const start = Math.max(0, end - rows)
   lines.slice(start, end).forEach((line, i) => {
@@ -436,20 +444,20 @@ function paint(v: View): Canvas {
   return c
 }
 
-const turnsCache = new Map<string, Turn[]>()
+const turnsCache = new Map<string, { turns: Turn[]; more: boolean }>()
 
-function turnsOf(t: Thread): Turn[] {
-  const key = `${t.sessionId}:${t.updatedMs}`
-  let turns = turnsCache.get(key)
-  if (!turns) {
+function turnsOf(t: Thread, depth: number): { turns: Turn[]; more: boolean } {
+  const key = `${t.transcript}:${t.updatedMs}:${depth}`
+  let read = turnsCache.get(key)
+  if (!read) {
     try {
-      turns = preview(t, 40)
+      read = previewAt(t, depth)
     } catch {
-      turns = []
+      read = { turns: [], more: false }
     }
-    turnsCache.set(key, turns)
+    turnsCache.set(key, read)
   }
-  return turns
+  return read
 }
 
 export type Load = (scope: Scope) => Promise<Entry[]>
@@ -508,6 +516,8 @@ export function Browser({
   }
   const [scroll, setScroll] = useState(0)
   const [offset, setOffset] = useState({ key: "", lines: 0 })
+  // How far back the selected thread's preview reads, as a `previewAt` depth
+  const [reach, setReach] = useState({ key: "", depth: 0 })
   const [confirming, setConfirmingState] = useState<Entry | null>(null)
   const confirmingRef = useRef<Entry | null>(null)
   const setConfirming = (e: Entry | null) => {
@@ -587,11 +597,18 @@ export function Browser({
   if (top !== scroll) setScroll(top)
 
   const selThread = sel?.thread ?? null
-  const turns = selThread ? turnsOf(selThread) : null
+  const depth = reach.key === selKey ? reach.depth : 0
+  const read = selThread ? turnsOf(selThread, depth) : null
+  const turns = read?.turns ?? null
   const { previewTextW } = layout(width, showPreview)
   const previewRows = height - HEAD_ROWS - 1
-  const maxOffset = turns ? Math.max(0, previewLines(turns, previewTextW).length - previewRows) : 0
+  const whole = read ? !read.more : false
+  const previewed = turns ? previewLines(turns, previewTextW, whole, previewRows).length : 0
+  const maxOffset = Math.max(0, previewed - previewRows)
   const lines = offset.key === selKey ? Math.min(offset.lines, maxOffset) : 0
+  // Scrolled to the top of what's read, or it all fits: read further back. The offset counts from
+  // the bottom, so the view holds still as older turns arrive above it.
+  if (read?.more && showPreview && lines >= maxOffset) setReach({ key: selKey, depth: depth + 1 })
   const scrollPreview = (by: number) =>
     setOffset((o) => {
       const key = selKeyRef.current
@@ -819,6 +836,7 @@ export function Browser({
     showPreview,
     focus: showPreview ? focus : "list",
     turns,
+    whole,
     hiddenBelow: lines,
     dragging,
     note,
