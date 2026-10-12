@@ -1,7 +1,7 @@
 import { readdirSync, statSync } from "node:fs"
 import { basename, join } from "node:path"
 
-import type { UsageProfile } from "~/config.ts"
+import type { Profile } from "~/config.ts"
 import { profileKey } from "~/usage/cache.ts"
 
 import type { Message, Only, Thread, ToolKind } from "./thread.ts"
@@ -82,7 +82,7 @@ export function claudeSummary(
   return { title, cwd: firstCwd(head) ?? firstCwd(tail) ?? "" }
 }
 
-export function claudeThreads(p: UsageProfile, only?: Only): Thread[] {
+export function claudeThreads(p: Profile, only?: Only): Thread[] {
   const root = join(p.home, "projects")
   let dirs
   try {

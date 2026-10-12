@@ -9,6 +9,8 @@ import { act } from "react"
 import { Browser } from "~/threads/browse/browser.tsx"
 import type { Entry } from "~/threads/entries.ts"
 
+const RECENT_MS = 3 * 24 * 60 * 60 * 1000
+
 let destroy: (() => void) | null = null
 afterEach(() => {
   destroy?.()
@@ -51,6 +53,8 @@ test.each(["pane changed", "agent exited"])("Enter uses refreshed data when %s",
           load={async () => [updated]}
           watch={async () => ({ merge: (es) => es, scouting: false })}
           live={false}
+          preview={true}
+          recentMs={RECENT_MS}
           jump={async () => {}}
           onOpen={(e) => void opened.push(e)}
         />
@@ -95,6 +99,8 @@ test.each([4, 5, 6])(
             load={async () => initial}
             watch={async () => ({ merge: (es) => es, scouting: false })}
             live={false}
+            preview={true}
+            recentMs={RECENT_MS}
             jump={async () => {}}
             onOpen={(e) => void opened.push(e)}
           />

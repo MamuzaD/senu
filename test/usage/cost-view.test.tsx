@@ -3,11 +3,11 @@ import { afterEach, expect, test } from "bun:test"
 import { testRender } from "@opentui/react/test-utils"
 import { act } from "react"
 
-import type { UsageProfile } from "~/config.ts"
+import type { Profile } from "~/config.ts"
 import { CostView, type Breakdown } from "~/usage/popup.tsx"
 import type { Bucket, RangeDays, RangeTotals, Today } from "~/usage/today.ts"
 
-const profiles: UsageProfile[] = [
+const profiles: Profile[] = [
   { kind: "codex", name: "work", home: "/x" },
   { kind: "claude", name: "personal", home: "/y" },
   { kind: "claude", name: "idle", home: "/z" },

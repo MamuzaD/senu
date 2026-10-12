@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { loadConfig } from "~/config.ts"
 import { planJump, type Client } from "~/threads/live/actions.ts"
 import { appleString, raiseTabScript } from "~/threads/live/ghostty.ts"
 
@@ -50,27 +49,5 @@ describe("the Ghostty script", () => {
     const r = Bun.spawnSync(["osacompile", "-o", out, "-e", raiseTabScript('my "session"')])
     expect(r.stderr.toString()).toBe("")
     expect(r.exitCode).toBe(0)
-  })
-})
-
-describe("[agents] config", () => {
-  const write = (text: string) => {
-    const path = join(mkdtempSync(join(tmpdir(), "senu-")), "config.toml")
-    writeFileSync(path, text)
-    return path
-  }
-  test("raise_ghostty_tab defaults to true", () => {
-    expect(loadConfig(write("")).agents.raiseGhosttyTab).toBe(true)
-    expect(loadConfig("/nonexistent/config.toml").agents.raiseGhosttyTab).toBe(true)
-  })
-  test("and can be turned off", () => {
-    expect(loadConfig(write("[agents]\nraise_ghostty_tab = false\n")).agents.raiseGhosttyTab).toBe(
-      false,
-    )
-  })
-  test("rejects a non-boolean", () => {
-    expect(() => loadConfig(write('[agents]\nraise_ghostty_tab = "yes"\n'))).toThrow(
-      "expected true or false",
-    )
   })
 })

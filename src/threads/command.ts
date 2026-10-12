@@ -1,4 +1,4 @@
-import type { Config, UsageProfile } from "~/config.ts"
+import type { Config, Profile } from "~/config.ts"
 import { setTmuxSocket } from "~/detect/panes.ts"
 import { Collector } from "~/threads/live/collect.ts"
 import { profileKey } from "~/usage/cache.ts"
@@ -50,7 +50,7 @@ function warnFailed(failed: { profile: string; error: string }[]) {
 }
 
 async function resumeCommand(sessionId: string, config: Config): Promise<number> {
-  const { entries, failed } = await listEntries(config.usage.profiles, false)
+  const { entries, failed } = await listEntries(config.profiles, false)
   warnFailed(failed)
   const entry = entries.find((e) => e.thread?.sessionId === sessionId)
   if (!entry) {
@@ -58,7 +58,7 @@ async function resumeCommand(sessionId: string, config: Config): Promise<number>
     return 1
   }
   try {
-    return await openEntry(entry, { raiseGhosttyTab: config.agents.raiseGhosttyTab })
+    return await openEntry(entry, config.threads)
   } catch (e) {
     if (!(e instanceof ResumeError || e instanceof OpenError)) throw e
     console.error(`senu threads: ${e instanceof OpenError ? `${sessionId} is ` : ""}${e.message}`)
@@ -68,15 +68,17 @@ async function resumeCommand(sessionId: string, config: Config): Promise<number>
 
 async function browse(
   config: Config,
-  profiles: UsageProfile[],
+  profiles: Profile[],
   withUnthreaded: boolean,
   limit: number,
   live: boolean,
 ): Promise<number> {
   const collector = new Collector()
   const failures = new Set<string>()
+  const { threads } = config
+  const recentMs = threads.recentDays * 24 * 60 * 60 * 1000
   const load = async (scope: Scope) => {
-    const { entries, failed } = await listEntries(profiles, withUnthreaded, scope)
+    const { entries, failed } = await listEntries(profiles, withUnthreaded, scope, recentMs)
     for (const f of failed) failures.add(`${f.profile}: ${f.error}`)
     return entries
   }
@@ -84,7 +86,6 @@ async function browse(
   // just those while the screen starts and leaves the rest to the browser
   const entries = load(live ? "live" : "recent")
   const { runBrowser } = await import("./browse/browser.tsx")
-  const opts = { raiseGhosttyTab: config.agents.raiseGhosttyTab }
   let jumpFailed: unknown = null
   const picked = await runBrowser(entries, {
     load,
@@ -97,13 +98,15 @@ async function browse(
     },
     live,
     limit,
+    preview: live ? threads.livePreview : threads.preview,
+    recentMs,
     partial: true,
-    jump: (e) => openEntry(e, opts).catch((err: unknown) => (jumpFailed = err)),
+    jump: (e) => openEntry(e, threads).catch((err: unknown) => (jumpFailed = err)),
   })
   for (const f of failures) console.error(`senu threads: ${f}`)
   try {
     if (jumpFailed) throw jumpFailed
-    return picked ? await openEntry(picked, opts) : 0
+    return picked ? await openEntry(picked, threads) : 0
   } catch (e) {
     if (!(e instanceof ResumeError || e instanceof OpenError)) throw e
     console.error(`senu threads: ${e.message}`)
@@ -148,7 +151,7 @@ export async function threadsCommand(args: string[], config: Config): Promise<nu
       return 2
     }
   }
-  const all = config.usage.profiles
+  const all = config.profiles
   const unknown = keys.filter((k) => !all.some((p) => profileKey(p) === k))
   if (unknown.length) {
     console.error(

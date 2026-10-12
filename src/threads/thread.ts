@@ -1,4 +1,4 @@
-import type { UsageProfile } from "~/config.ts"
+import type { Profile } from "~/config.ts"
 import type { Agent } from "~/detect/manifest.ts"
 import { profileKey } from "~/usage/cache.ts"
 
@@ -37,7 +37,7 @@ export interface Listed {
   failed: { profile: string; error: string }[]
 }
 
-export function listThreads(profiles: UsageProfile[], only?: Only): Listed {
+export function listThreads(profiles: Profile[], only?: Only): Listed {
   const threads: Thread[] = []
   const failed: Listed["failed"] = []
   for (const p of profiles) {

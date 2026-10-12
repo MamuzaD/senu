@@ -7,7 +7,9 @@ import { createRoot } from "@opentui/react"
 import { act } from "react"
 
 import { Browser } from "~/threads/browse/browser.tsx"
-import { agentEntry, ARCHIVE_AFTER_MS, type Entry, type Scope } from "~/threads/entries.ts"
+import { agentEntry, type Entry, type Scope } from "~/threads/entries.ts"
+
+const RECENT_MS = 3 * 24 * 60 * 60 * 1000
 
 let destroy: (() => void) | null = null
 afterEach(() => {
@@ -48,6 +50,8 @@ test("live mode moves, waits for kill confirmation, flips with tab, and jumps", 
           load={async () => initial}
           watch={async () => ({ merge: (es) => es, scouting: false })}
           live
+          preview={false}
+          recentMs={RECENT_MS}
           jump={async (e) => void jumped.push(e)}
           onOpen={() => {}}
         />
@@ -124,6 +128,8 @@ test("live limits apply after filtering and still hold after a watch update", as
             return { merge: (es) => [fresh, ...es], scouting: false }
           }}
           live
+          preview={false}
+          recentMs={RECENT_MS}
           limit={1}
           jump={async () => {}}
           onOpen={() => {}}
@@ -185,6 +191,8 @@ test("live limits prioritize blocked agents over newer idle agents", async () =>
           load={async () => initial}
           watch={async () => ({ merge: (es) => es, scouting: false })}
           live
+          preview={false}
+          recentMs={RECENT_MS}
           limit={1}
           jump={async (e) => void jumped.push(e)}
           onOpen={() => {}}
@@ -199,7 +207,7 @@ test("live limits prioritize blocked agents over newer idle agents", async () =>
   expect(jumped).toEqual([initial[1]!])
 })
 
-test("a partial start loads every thread right away, with the archived ones' place held", async () => {
+test("a partial start loads every thread right away, with the older ones' place held", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const t = await createTestRenderer({ width: 100, height: 22 })
   destroy = () => act(() => t.renderer.destroy())
@@ -211,11 +219,11 @@ test("a partial start loads every thread right away, with the archived ones' pla
     updatedMs: Date.now(),
     live: { state: "idle", paneId: "%1", windowId: "@1", windowIndex: 1, session: "s" },
   }
-  const archived: Entry = {
+  const older: Entry = {
     ...running,
     thread: { sessionId: "old", profile: "codex-p" } as Entry["thread"],
-    title: "archived thread",
-    updatedMs: Date.now() - 10 * ARCHIVE_AFTER_MS,
+    title: "older thread",
+    updatedMs: Date.now() - 10 * RECENT_MS,
     live: null,
   }
   const scopes: Scope[] = []
@@ -232,6 +240,8 @@ test("a partial start loads every thread right away, with the archived ones' pla
           }}
           watch={async () => ({ merge: (es) => es, scouting: false })}
           live={false}
+          preview={true}
+          recentMs={RECENT_MS}
           partial
           jump={async () => {}}
           onOpen={() => {}}
@@ -242,11 +252,11 @@ test("a partial start loads every thread right away, with the archived ones' pla
   await act(() => t.renderOnce())
   expect(scopes).toEqual(["all"])
   expect(t.captureCharFrame()).toContain("running thread")
-  expect(t.captureCharFrame()).toContain("archived …")
+  expect(t.captureCharFrame()).toContain("older …")
   expect(t.captureCharFrame()).toContain("threads  …")
-  await act(async () => loaded.resolve([running, archived]))
+  await act(async () => loaded.resolve([running, older]))
   await act(() => t.renderOnce())
   expect(t.captureCharFrame()).toContain("running thread")
-  expect(t.captureCharFrame()).toContain("archived 1")
+  expect(t.captureCharFrame()).toContain("older 1")
   expect(t.captureCharFrame()).toContain("threads  2")
 })

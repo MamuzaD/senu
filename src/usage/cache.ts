@@ -10,14 +10,14 @@ import {
 } from "node:fs"
 import { dirname, join } from "node:path"
 
-import type { UsageProfile } from "~/config.ts"
+import type { Profile } from "~/config.ts"
 import { cacheDir, selfCommand } from "~/paths.ts"
 
 import { fetchClaude } from "./claude.ts"
 import { fetchCodex } from "./codex.ts"
 import { nowSeconds, type Snapshot } from "./types.ts"
 
-const FRESH_TTL_SECONDS: Record<UsageProfile["kind"], number> = { codex: 60, claude: 300 }
+const FRESH_TTL_SECONDS: Record<Profile["kind"], number> = { codex: 60, claude: 300 }
 const STALE_MAX_AGE_SECONDS = 15 * 60
 const LOCK_TTL_SECONDS = 15
 
@@ -28,11 +28,11 @@ interface CacheEntry {
   snapshot: Snapshot
 }
 
-export const profileKey = (p: UsageProfile) => `${p.kind}-${p.name.replace(/[^\w.-]/g, "_")}`
-const cachePath = (p: UsageProfile) => join(usageDir, `${profileKey(p)}.json`)
-const lockPath = (p: UsageProfile) => join(usageDir, `${profileKey(p)}.lock`)
+export const profileKey = (p: Profile) => `${p.kind}-${p.name.replace(/[^\w.-]/g, "_")}`
+const cachePath = (p: Profile) => join(usageDir, `${profileKey(p)}.json`)
+const lockPath = (p: Profile) => join(usageDir, `${profileKey(p)}.lock`)
 
-export function readCache(p: UsageProfile): CacheEntry | null {
+export function readCache(p: Profile): CacheEntry | null {
   try {
     return JSON.parse(readFileSync(cachePath(p), "utf8"))
   } catch {
@@ -40,7 +40,7 @@ export function readCache(p: UsageProfile): CacheEntry | null {
   }
 }
 
-function writeCache(p: UsageProfile, snapshot: Snapshot) {
+function writeCache(p: Profile, snapshot: Snapshot) {
   if (!snapshot.ok && readCache(p)?.snapshot.ok) return
   mkdirSync(usageDir, { recursive: true })
   const entry: CacheEntry = { cachedAt: nowSeconds(), snapshot }
@@ -72,20 +72,20 @@ export function releaseLockFile(path: string) {
   } catch {}
 }
 
-export const claimLock = (p: UsageProfile) => claimLockFile(lockPath(p))
-export const releaseLock = (p: UsageProfile) => releaseLockFile(lockPath(p))
+export const claimLock = (p: Profile) => claimLockFile(lockPath(p))
+export const releaseLock = (p: Profile) => releaseLockFile(lockPath(p))
 
-function fetchProfile(p: UsageProfile): Promise<Snapshot> {
+function fetchProfile(p: Profile): Promise<Snapshot> {
   return p.kind === "codex" ? fetchCodex(p.home) : fetchClaude(p.home)
 }
 
-function orLastGood(p: UsageProfile, snapshot: Snapshot): Snapshot {
+function orLastGood(p: Profile, snapshot: Snapshot): Snapshot {
   const good = readCache(p)?.snapshot
   return !snapshot.ok && good?.ok ? { ...good, refreshError: snapshot.error } : snapshot
 }
 
 /** Fetches and caches a snapshot. The caller must already hold the lock; it's released here. */
-export async function refreshLocked(p: UsageProfile): Promise<Snapshot> {
+export async function refreshLocked(p: Profile): Promise<Snapshot> {
   const release = () => releaseLock(p)
   process.once("exit", release)
   try {
@@ -98,7 +98,7 @@ export async function refreshLocked(p: UsageProfile): Promise<Snapshot> {
   }
 }
 
-function spawnBackgroundRefresh(p: UsageProfile) {
+function spawnBackgroundRefresh(p: Profile) {
   if (!claimLock(p)) return
   try {
     const child = Bun.spawn([...selfCommand(), "vision", "refresh", profileKey(p), "--locked"], {
@@ -112,7 +112,7 @@ function spawnBackgroundRefresh(p: UsageProfile) {
 }
 
 /** Returns fresh cached data, serves stale data while refreshing, or awaits a fetch when expired. */
-export async function getSnapshot(p: UsageProfile): Promise<Snapshot> {
+export async function getSnapshot(p: Profile): Promise<Snapshot> {
   const cached = readCache(p)
   const age = cached ? nowSeconds() - cached.cachedAt : Infinity
 

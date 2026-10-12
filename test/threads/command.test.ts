@@ -232,16 +232,16 @@ test("mergeLoaded keeps the threads a narrower load skipped, stopped if they wer
     entry("a", "renamed later", 4, true),
     entry("b", "stopped since", 3, true),
     entry(null, "agent with no thread", 2, true),
-    entry("c", "archived", 1),
+    entry("c", "older", 1),
   ]
   const got = mergeLoaded(last, [entry("a", "renamed", 5, true)])
   expect(got.map((e) => [e.title, !!e.live])).toEqual([
     ["renamed", true],
     ["stopped since", false],
-    ["archived", false],
+    ["older", false],
   ])
   // Past the cutoff the load read everything, so a thread it missed was archived or deleted
-  expect(mergeLoaded(last, [], 2).map((e) => e.title)).toEqual(["archived"])
+  expect(mergeLoaded(last, [], 2).map((e) => e.title)).toEqual(["older"])
 })
 
 describe("senu threads", () => {
@@ -261,7 +261,7 @@ describe("senu threads", () => {
   mkdirSync(join(dir, "config", "senu"), { recursive: true })
   writeFileSync(
     join(dir, "config", "senu", "config.toml"),
-    `[[usage.profiles]]\nkind = "claude"\nname = "test"\nhome = "${claude}"\n`,
+    `[[profiles]]\nkind = "claude"\nname = "test"\nhome = "${claude}"\n`,
   )
 
   const cli = join(import.meta.dir, "..", "..", "src", "cli.ts")

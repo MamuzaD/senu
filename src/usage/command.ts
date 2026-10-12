@@ -14,7 +14,7 @@ today scans the transcripts now and prints today's estimated spend and tokens.
 `
 
 export async function usageCommand(args: string[], config: Config): Promise<number> {
-  const { profiles } = config.usage
+  const { profiles } = config
 
   if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(HELP)

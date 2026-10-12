@@ -18,7 +18,7 @@ import {
 } from "node:fs"
 import { join } from "node:path"
 
-import type { UsageProfile } from "~/config.ts"
+import type { Profile } from "~/config.ts"
 import { cacheDir, selfCommand } from "~/paths.ts"
 
 import { claimLockFile, profileKey, releaseLockFile } from "./cache.ts"
@@ -93,9 +93,9 @@ const SCAN_RETENTION_MS = (MAX_DAYS + 1) * 24 * 60 * 60 * 1000
 const SCAN_CACHE_VERSION = 3
 
 const todayDir = join(cacheDir, "today")
-const totalsPath = (p: UsageProfile) => join(todayDir, `${profileKey(p)}.json`)
-const scanPath = (p: UsageProfile) => join(todayDir, `${profileKey(p)}.scan.json`)
-const lockPath = (p: UsageProfile) => join(todayDir, `${profileKey(p)}.lock`)
+const totalsPath = (p: Profile) => join(todayDir, `${profileKey(p)}.json`)
+const scanPath = (p: Profile) => join(todayDir, `${profileKey(p)}.scan.json`)
+const lockPath = (p: Profile) => join(todayDir, `${profileKey(p)}.lock`)
 const ratesPath = join(cacheDir, "litellm-prices.json")
 
 function writeAtomic(path: string, data: string) {
@@ -395,7 +395,7 @@ const CODEX_NEEDLES = ['"token_count"', '"turn_context"', '"session_meta"'].map(
 // Leave an unterminated final line for the next scan: the CLI may still be writing it.
 function readFile(
   path: string,
-  kind: UsageProfile["kind"],
+  kind: Profile["kind"],
   sinceMs: number,
   resume: FileEntry | undefined,
 ): { records: UsageRecord[]; entry: Omit<FileEntry, "s" | "m" | "r">; resumed: boolean } | null {
@@ -481,7 +481,7 @@ function dedupe(records: UsageRecord[]): UsageRecord[] {
   })
 }
 
-function scanProfileFiles(p: UsageProfile, startMs: number): UsageRecord[][] {
+function scanProfileFiles(p: Profile, startMs: number): UsageRecord[][] {
   const loaded = readJson(scanPath(p)) as ScanCache | null
   const cache: ScanCache =
     loaded?.version === SCAN_CACHE_VERSION ? loaded : { version: SCAN_CACHE_VERSION, files: {} }
@@ -519,7 +519,7 @@ function scanProfileFiles(p: UsageProfile, startMs: number): UsageRecord[][] {
 
 type FileRecord = [record: UsageRecord, fileIndex: number]
 
-function uniqueRecords(perFile: UsageRecord[][], kind: UsageProfile["kind"]): FileRecord[] {
+function uniqueRecords(perFile: UsageRecord[][], kind: Profile["kind"]): FileRecord[] {
   const seen = new Set<string>()
   const unique: FileRecord[] = []
   perFile.forEach((records, file) => {
@@ -611,7 +611,7 @@ function summarize(
 }
 
 /** Scans a profile's transcripts for the last 30 days without updating its totals cache. */
-export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today> {
+export async function scanToday(p: Profile, at = new Date()): Promise<Today> {
   const ratesPromise = loadRates()
   const records = uniqueRecords(scanProfileFiles(p, dayStart(at, MAX_DAYS - 1).getTime()), p.kind)
   const rates = await ratesPromise
@@ -630,7 +630,7 @@ export async function scanToday(p: UsageProfile, at = new Date()): Promise<Today
 }
 
 /** Reads cached totals for the current local day; returns null without scanning when absent or stale by date. */
-export function readToday(p: UsageProfile, at = new Date()): Today | null {
+export function readToday(p: Profile, at = new Date()): Today | null {
   const today = readJson(totalsPath(p)) as Today | null
   return today && today.day === localDay(at).day ? today : null
 }
@@ -638,10 +638,10 @@ export function readToday(p: UsageProfile, at = new Date()): Today | null {
 export const todayIsFresh = (t: Today | null) =>
   t?.ranges != null && nowSeconds() - t.updatedAt <= FRESH_TTL_SECONDS
 
-export const claimTodayLock = (p: UsageProfile) => claimLockFile(lockPath(p), LOCK_TTL_SECONDS)
+export const claimTodayLock = (p: Profile) => claimLockFile(lockPath(p), LOCK_TTL_SECONDS)
 
 /** Scans and caches. The caller must already hold the profile's lock; it's released here. */
-export async function refreshTodayLocked(p: UsageProfile): Promise<Today> {
+export async function refreshTodayLocked(p: Profile): Promise<Today> {
   const release = () => releaseLockFile(lockPath(p))
   process.once("exit", release)
   try {
@@ -655,7 +655,7 @@ export async function refreshTodayLocked(p: UsageProfile): Promise<Today> {
 }
 
 /** Starts detached refreshes for profiles with free locks; returns those now refreshing. */
-export function spawnTodayRefresh(profiles: UsageProfile[]): UsageProfile[] {
+export function spawnTodayRefresh(profiles: Profile[]): Profile[] {
   const claimed = profiles.filter(claimTodayLock)
   if (!claimed.length) return []
   try {

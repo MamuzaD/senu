@@ -17,7 +17,7 @@ import { brand, colors, hex, icons, mix, noColor, states } from "~/ui/theme.ts"
 import { formatDuration } from "~/usage/format.ts"
 
 import { copy } from "../clipboard.ts"
-import { ARCHIVE_AFTER_MS, mergeLoaded, type Entry, type Scope } from "../entries.ts"
+import { mergeLoaded, type Entry, type Scope } from "../entries.ts"
 import { preview, type Thread, type ToolKind, type Turn } from "../thread.ts"
 
 const REFRESH_MS = 5000
@@ -97,12 +97,16 @@ export function matches(e: Entry, query: string): boolean {
 const byAttention = (a: Entry, b: Entry) =>
   PRIORITY[b.live?.state ?? "idle"] - PRIORITY[a.live?.state ?? "idle"]
 
-export function sections(entries: Entry[], at = Date.now()): { label: string; entries: Entry[] }[] {
-  const old = (e: Entry) => at - e.updatedMs > ARCHIVE_AFTER_MS
+export function sections(
+  entries: Entry[],
+  recentMs: number,
+  at = Date.now(),
+): { label: string; entries: Entry[] }[] {
+  const old = (e: Entry) => at - e.updatedMs > recentMs
   return [
     { label: "running", entries: entries.filter((e) => e.live).toSorted(byAttention) },
     { label: "recent", entries: entries.filter((e) => !e.live && !old(e)) },
-    { label: "archived", entries: entries.filter((e) => !e.live && old(e)) },
+    { label: "older", entries: entries.filter((e) => !e.live && old(e)) },
   ].filter((s) => s.entries.length)
 }
 
@@ -413,6 +417,8 @@ export function Browser({
   watch,
   live: startLive,
   limit = Infinity,
+  preview: startPreview,
+  recentMs,
   partial = false,
   jump,
   onOpen,
@@ -422,6 +428,10 @@ export function Browser({
   watch: Watch
   live: boolean
   limit?: number
+  /** Whether the preview starts open, when the terminal is wide enough */
+  preview: boolean
+  /** Threads untouched longer than this fold into "older" */
+  recentMs: number
   /** `initial` holds only some saved threads, so the rest load right away. */
   partial?: boolean
   jump: (e: Entry) => Promise<unknown>
@@ -437,7 +447,7 @@ export function Browser({
   const [query, setQuery] = useState("")
   const [searching, setSearching] = useState(false)
   const searchingRef = useRef(false)
-  const [showPreview, setShowPreview] = useState(() => !startLive && width >= PREVIEW_MIN_WIDTH)
+  const [showPreview, setShowPreview] = useState(() => startPreview && width >= PREVIEW_MIN_WIDTH)
   const [selKey, setSelKey] = useState(() => keyOf(initial.find((e) => e.live) ?? initial[0]))
   // Keys can arrive before React re-renders; actions read the selection from here, not from render.
   const selKeyRef = useRef(selKey)
@@ -469,11 +479,11 @@ export function Browser({
   }
   const [complete, setComplete] = useState(!partial)
   const loadAll = useRef(partial)
-  // Reloads read only what the view shows; the archived threads come back on start and on `r`
+  // Reloads read only what the view shows; the older threads come back on start and on `r`
   const refresh = usePoll(async () => {
     const scope = loadAll.current ? "all" : live ? "live" : "recent"
     const loaded = await load(scope)
-    const since = scope === "recent" ? Date.now() - ARCHIVE_AFTER_MS : Infinity
+    const since = scope === "recent" ? Date.now() - recentMs : Infinity
     if (scope !== "all") return setEntries((es) => mergeLoaded(es, loaded, since))
     loadAll.current = false
     setEntries(loaded)
@@ -497,8 +507,8 @@ export function Browser({
     const pool = (live ? entries.filter((e) => e.live).toSorted(byAttention) : entries)
       .slice(0, limit)
       .filter((e) => matches(e, query))
-    return live ? [{ label: "running", entries: pool }] : sections(pool)
-  }, [entries, query, live, limit])
+    return live ? [{ label: "running", entries: pool }] : sections(pool, recentMs)
+  }, [entries, query, live, limit, recentMs])
   const flat = useMemo(() => shown.flatMap((s) => s.entries), [shown])
   const selIndex = Math.max(
     0,
@@ -508,11 +518,11 @@ export function Browser({
   const rows: Row[] = []
   for (const s of shown) {
     if (!live) rows.push({ kind: "header", label: s.label, count: s.entries.length })
-    const open = s.label !== "archived" || !!query || (sel !== null && s.entries.includes(sel))
+    const open = s.label !== "older" || !!query || (sel !== null && s.entries.includes(sel))
     for (const entry of s.entries) if (open) rows.push({ kind: "entry", entry })
   }
-  // Holds the archived threads' place until they load
-  if (!live && !complete) rows.push({ kind: "header", label: "archived", count: null })
+  // Holds the older threads' place until they load
+  if (!live && !complete) rows.push({ kind: "header", label: "older", count: null })
   const selRow = rows.findIndex((r) => r.kind === "entry" && r.entry === sel)
 
   const fits = (from: number, to: number) => {
@@ -760,6 +770,8 @@ export async function runBrowser(
     watch: Watch
     live: boolean
     limit?: number
+    preview: boolean
+    recentMs: number
     partial?: boolean
     jump: (e: Entry) => Promise<unknown>
   },

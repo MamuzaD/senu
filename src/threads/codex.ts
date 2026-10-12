@@ -2,7 +2,7 @@ import { constants, Database } from "bun:sqlite"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 
-import type { UsageProfile } from "~/config.ts"
+import type { Profile } from "~/config.ts"
 import { profileKey } from "~/usage/cache.ts"
 
 import type { Message, Only, Thread, ToolKind } from "./thread.ts"
@@ -36,7 +36,7 @@ interface Row {
 const ONLY = `
   AND (id IN (SELECT value FROM json_each(?)) OR coalesce(updated_at_ms, updated_at * 1000) >= ?)`
 
-export function codexThreads(p: UsageProfile, only?: Only): Thread[] {
+export function codexThreads(p: Profile, only?: Only): Thread[] {
   const path = join(p.home, CODEX_STATE_DB)
   if (!existsSync(path)) return []
   // The db is in WAL mode, and a read-only open needs its -shm, which codex deletes when it closes

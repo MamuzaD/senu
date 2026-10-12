@@ -1,45 +1,52 @@
 # ~/.config/senu/config.toml
+# Every key is optional. The values below are the defaults, apart from the example profiles.
 
-# The usage popup's scene: "night" (the default), "dawn", "day", "dusk", or
-# "auto" to follow local time when the popup opens (dawn 05:30–07:00, day
-# 07:00–17:30, dusk 17:30–19:30, night otherwise). SENU_SCENE overrides it.
-[usage]
-scene = "night"
-
-# Usage popup profiles, shown in this order. `home` is CODEX_HOME for Codex
-# and the Claude config dir for Claude. Without any profiles senu shows
-# Codex at $CODEX_HOME (or ~/.codex) and Claude at ~/.claude.
-
-[[usage.profiles]]
+# Codex and Claude accounts, read by the usage popup and threads, in this order. Without any, senu
+# reads Codex at $CODEX_HOME (or ~/.codex) and Claude at ~/.claude.
+[[profiles]]
+# "codex" or "claude"
 kind = "codex"
+# Shown in the popup and threads, and picked with `--profile codex-personal`
 name = "personal"
+# CODEX_HOME for Codex, the Claude config dir for Claude
 home = "~/.codex"
 
-[[usage.profiles]]
+[[profiles]]
 kind = "codex"
 name = "work"
 home = "~/.codex-work"
 
-[[usage.profiles]]
+[[profiles]]
 kind = "claude"
 name = "work"
 home = "~/.claude"
 
-# The agent picker (senu agents). On macOS, when the agent you jump to is in
-# a session already showing in another Ghostty tab, senu raises that tab
-# (through Ghostty's AppleScript dictionary; macOS asks once for Automation
-# permission) instead of pulling the session into the tab you're in. Set it
-# to false to always switch the current tab's client. It does nothing outside
-# Ghostty on macOS.
-[agents]
+[usage]
+# The usage popup's scene: "night", "dawn", "day", "dusk", or "auto" to follow local time (dawn
+# 05:30–07:00, day 07:00–17:30, dusk 17:30–19:30, else night). SENU_SCENE overrides it.
+scene = "night"
+
+[threads]
+# Open the preview pane in the full list, when the terminal is wide enough. `p` toggles it.
+preview = true
+# The same for `senu threads --live`
+live_preview = false
+# Threads untouched for longer than this many days fold into "older"
+recent_days = 3
+# Where a stopped thread reopens: "auto" uses this pane, or a new tmux window when run from a popup;
+# "window" opens a new tmux window whenever in tmux. Outside tmux it always runs here.
+resume = "auto"
+# macOS + Ghostty: jumping to an agent whose session already shows in another tab raises that tab
+# instead of pulling the session into this one. macOS asks once for Automation permission.
 raise_ghostty_tab = true
 
-# Senu's chimes. `enabled` is the default; `senu sound toggle` stores a runtime
-# override in Senu's state directory. `always` also chimes for the focused
-# window. Empty or missing paths use macOS system sounds on macOS and generated
-# WAV chimes elsewhere.
 [sound]
+# Chime when an agent finishes or asks for something. `senu sound toggle` overrides this until it's
+# toggled back.
 enabled = true
-always = true
-# done = "~/path/to/done.wav"
-# request = "~/path/to/request.wav"
+# Also chime for the window you're looking at
+always = false
+# Sound file for a finished agent; empty uses a macOS system sound, or a generated chime elsewhere
+done = ""
+# Sound file for an agent asking for something, as above
+request = ""

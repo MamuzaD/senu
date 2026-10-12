@@ -1,4 +1,4 @@
-import type { UsageProfile } from "~/config.ts"
+import type { Profile, ThreadsConfig } from "~/config.ts"
 import type { Agent } from "~/detect/manifest.ts"
 import { listPanes, tmux, type Pane } from "~/detect/panes.ts"
 import { jump } from "~/threads/live/actions.ts"
@@ -119,15 +119,14 @@ export function mergeLoaded(last: Entry[], loaded: Entry[], since = Infinity): E
   return [...loaded, ...kept].toSorted((a, b) => b.updatedMs - a.updatedMs)
 }
 
-export const ARCHIVE_AFTER_MS = 3 * 24 * 60 * 60 * 1000
-
-/** Which saved threads to read: all, the running ones, or those plus any not yet archived */
+/** Which saved threads to read: all, the running ones, or those plus any touched within `recentMs` */
 export type Scope = "all" | "live" | "recent"
 
 export async function listEntries(
-  profiles: UsageProfile[],
+  profiles: Profile[],
   withUnthreaded: boolean,
   scope: Scope = "all",
+  recentMs = Infinity,
 ) {
   let seen: TmuxState = { panes: [], rows: [], paneBySession: new Map() }
   if ((await tmux("info")).ok) {
@@ -142,7 +141,7 @@ export async function listEntries(
   const only: Record<Scope, Only | undefined> = {
     all: undefined,
     live: { ids },
-    recent: { ids, since: Date.now() - ARCHIVE_AFTER_MS },
+    recent: { ids, since: Date.now() - recentMs },
   }
   const { threads, failed } = listThreads(profiles, only[scope])
   return { entries: joinEntries(threads, seen, withUnthreaded), failed }
@@ -150,7 +149,10 @@ export async function listEntries(
 
 export class OpenError extends Error {}
 
-export async function openEntry(e: Entry, opts: { raiseGhosttyTab: boolean }): Promise<number> {
+export async function openEntry(
+  e: Entry,
+  opts: Pick<ThreadsConfig, "raiseGhosttyTab" | "resume">,
+): Promise<number> {
   if (e.live) {
     if (!process.env.TMUX) throw new OpenError(`running in tmux session ${e.live.session}`)
     await jump(e.live, opts)
@@ -158,5 +160,5 @@ export async function openEntry(e: Entry, opts: { raiseGhosttyTab: boolean }): P
     return 0
   }
   if (!e.thread) throw new OpenError("no saved thread to resume")
-  return resume(e.thread)
+  return resume(e.thread, opts.resume)
 }

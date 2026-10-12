@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
-import type { UsageProfile } from "~/config.ts"
+import type { Profile } from "~/config.ts"
 import { agentFromProcess, processArgv, run, type Pane } from "~/detect/panes.ts"
 
 // Claude writes sessions/<pid>.json naming its session and leaves it behind if it crashes, so a
@@ -98,7 +98,7 @@ export function panesFor(
 }
 
 export async function runningThreads(
-  profiles: UsageProfile[],
+  profiles: Profile[],
   panes: Pane[],
 ): Promise<Map<string, string>> {
   const claude: SessionsByPid = new Map()

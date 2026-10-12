@@ -3,14 +3,14 @@ import { afterEach, expect, test } from "bun:test"
 import { testRender } from "@opentui/react/test-utils"
 import { act } from "react"
 
-import type { UsageProfile } from "~/config.ts"
+import type { Profile } from "~/config.ts"
 import { emptiesIn } from "~/usage/format.ts"
 import { ProfileSection, type Section } from "~/usage/popup.tsx"
 import type { RangeDays, RangeTotals, Today } from "~/usage/today.ts"
 import { nowSeconds, type Limit, type Snapshot, type Spend } from "~/usage/types.ts"
 
 const HOUR = 3600
-const profile: UsageProfile = { kind: "claude", name: "personal", home: "/y" }
+const profile: Profile = { kind: "claude", name: "personal", home: "/y" }
 
 const range = (days: RangeDays): RangeTotals => ({
   days,

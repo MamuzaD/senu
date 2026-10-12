@@ -3,7 +3,7 @@ import { useBindings } from "@opentui/keymap/react"
 import { useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react"
 
-import type { UsageProfile, UsageScene } from "~/config.ts"
+import type { Profile, UsageScene } from "~/config.ts"
 import { runApp } from "~/ui/app.tsx"
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
 import { SCENE_COLS, SCENE_ROWS, sceneCols, type SceneTime } from "~/ui/desert.ts"
@@ -278,7 +278,7 @@ export function ProfileSection({
   days,
   scanning,
 }: {
-  profile: UsageProfile
+  profile: Profile
   section: Section
   dots: string
   fillFrom: number | null
@@ -430,8 +430,8 @@ function percent(part: number, whole: number): string {
   return share === 0 && part > 0 ? "<1%" : `${share}%`
 }
 const modelName = (m: string) => m.replace(/-\d{8}$/, "")
-const kindColor = (kind: UsageProfile["kind"]) => (kind === "codex" ? colors.codex : colors.claude)
-const kindTitle = (kind: UsageProfile["kind"]) =>
+const kindColor = (kind: Profile["kind"]) => (kind === "codex" ? colors.codex : colors.claude)
+const kindTitle = (kind: Profile["kind"]) =>
   kind === "codex" ? `${icons.codex} Codex` : `${icons.claude} Claude`
 const PROFILE_KIND_WIDTH = Math.max(
   Bun.stringWidth(kindTitle("codex")),
@@ -448,7 +448,7 @@ export function CostView({
   right,
   rows,
 }: {
-  profiles: UsageProfile[]
+  profiles: Profile[]
   todays: (Today | null)[]
   watching: boolean[]
   days: RangeDays
@@ -481,7 +481,7 @@ export function CostView({
   const models = new Map<
     string,
     {
-      kind: UsageProfile["kind"]
+      kind: Profile["kind"]
       name: string
       cost: number | null
       tokens: number
@@ -753,7 +753,7 @@ export function UsagePopup({
   time,
   release = null,
 }: {
-  profiles: UsageProfile[]
+  profiles: Profile[]
   time: SceneTime
   /** A newer release to mention once senu settles. */
   release?: string | null
@@ -1060,7 +1060,7 @@ export function UsagePopup({
   )
 }
 
-export async function runUsagePopup(profiles: UsageProfile[], scene: UsageScene): Promise<number> {
+export async function runUsagePopup(profiles: Profile[], scene: UsageScene): Promise<number> {
   await runApp(
     <UsagePopup profiles={profiles} time={sceneTime(scene)} release={newerRelease()} />,
     { useMouse: false },

@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
 
 import { sections, toolSummary } from "~/threads/browse/browser.tsx"
-import { ARCHIVE_AFTER_MS } from "~/threads/entries.ts"
+
+const RECENT_MS = 3 * 24 * 60 * 60 * 1000
 
 test("tool summaries read by kind, in a fixed order, singular when one", () => {
   expect(toolSummary({ run: 4, read: 1, other: 2 })).toBe(
@@ -12,8 +13,8 @@ test("tool summaries read by kind, in a fixed order, singular when one", () => {
   )
 })
 
-test("sections: running, then the last 3 days, then archived; running never archives", () => {
-  const now = 10 * ARCHIVE_AFTER_MS
+test("sections: running, then the last 3 days, then older; running never ages", () => {
+  const now = 10 * RECENT_MS
   const entry = (title: string, ageMs: number, live = false) => ({
     thread: null,
     agent: "claude" as const,
@@ -26,15 +27,16 @@ test("sections: running, then the last 3 days, then archived; running never arch
   })
   const got = sections(
     [
-      entry("old but running", 2 * ARCHIVE_AFTER_MS, true),
+      entry("old but running", 2 * RECENT_MS, true),
       entry("today", 1000),
-      entry("last week", 2 * ARCHIVE_AFTER_MS),
+      entry("last week", 2 * RECENT_MS),
     ],
+    RECENT_MS,
     now,
   ).map((s) => [s.label, s.entries.map((e) => e.title)])
   expect(got).toEqual([
     ["running", ["old but running"]],
     ["recent", ["today"]],
-    ["archived", ["last week"]],
+    ["older", ["last week"]],
   ])
 })

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 
+import type { ThreadsConfig } from "~/config.ts"
 import { tmux } from "~/detect/panes.ts"
 import { home } from "~/paths.ts"
 
@@ -40,10 +41,11 @@ function runHere(launch: Launch): Promise<number> {
   }).exited
 }
 
-export async function resume(t: Thread): Promise<number> {
+export async function resume(t: Thread, mode: ThreadsConfig["resume"]): Promise<number> {
   const launch = launchFor(t)
   if (!existsSync(launch.cwd)) throw new ResumeError(`${launch.cwd} no longer exists`)
-  // A popup is a throwaway, so the thread gets its own window; tmux gives a popup TMUX but no TMUX_PANE
-  const popup = process.env.TMUX && !process.env.TMUX_PANE
-  return popup ? openWindow(launch) : runHere(launch)
+  // A popup is a throwaway, so the thread gets its own window, as it does when resume = "window";
+  // tmux gives a popup TMUX but no TMUX_PANE
+  const window = process.env.TMUX && (mode === "window" || !process.env.TMUX_PANE)
+  return window ? openWindow(launch) : runHere(launch)
 }
