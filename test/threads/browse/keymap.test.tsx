@@ -356,3 +356,72 @@ test("Esc clears a filter before it quits, and a gone folder is said instead of 
   expect(destroyed).toHaveBeenCalled()
   destroyed.mockRestore()
 })
+
+test("a click or h/l picks the pane j/k move in, Esc goes back, and K/J move the other", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const t = await createTestRenderer({ width: 100, height: 22 })
+  destroy = () => act(() => t.renderer.destroy())
+  const entry = (title: string, updatedMs: number): Entry => ({
+    thread: { sessionId: title, profile: "claude-p", transcript: "/missing" } as Entry["thread"],
+    agent: "claude",
+    title,
+    cwd: "/",
+    updatedMs,
+    live: null,
+  })
+  const keymap = createDefaultOpenTuiKeymap(t.renderer)
+  act(() =>
+    createRoot(t.renderer).render(
+      <KeymapProvider keymap={keymap}>
+        <Browser
+          initial={[entry("first", Date.now()), entry("second", Date.now() - 1000)]}
+          load={async () => []}
+          watch={async () => ({ merge: (es) => es, scouting: false })}
+          live={false}
+          preview={true}
+          recentMs={RECENT_MS}
+          jump={async () => {}}
+          onOpen={() => {}}
+        />
+      </KeymapProvider>,
+    ),
+  )
+  const press = async (key: string, shift = false) => {
+    act(() => t.mockInput.pressKey(key, { shift }))
+    await act(() => t.renderOnce())
+  }
+  const click = async (x: number) => {
+    await act(() => t.mockMouse.click(x, 10))
+    await act(() => t.renderOnce())
+  }
+  await act(() => t.renderOnce())
+
+  await click(70)
+  await press("j")
+  expect(t.captureCharFrame()).toMatch(/▌.*first/)
+  await act(async () => {
+    t.mockInput.pressEscape()
+    await Bun.sleep(50)
+  })
+  await press("j")
+  expect(t.captureCharFrame()).toMatch(/▌.*second/)
+
+  await click(70)
+  await press("k")
+  expect(t.captureCharFrame()).toMatch(/▌.*second/)
+  await click(10)
+  await press("k")
+  expect(t.captureCharFrame()).toMatch(/▌.*first/)
+
+  // l and h do the same from the keyboard, and K/J move the other pane
+  await press("l")
+  await press("j")
+  expect(t.captureCharFrame()).toMatch(/▌.*first/)
+  await press("j", true)
+  expect(t.captureCharFrame()).toMatch(/▌.*second/)
+  await press("h")
+  await press("k", true)
+  expect(t.captureCharFrame()).toMatch(/▌.*second/)
+  await press("k")
+  expect(t.captureCharFrame()).toMatch(/▌.*first/)
+})

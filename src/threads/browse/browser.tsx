@@ -31,7 +31,7 @@ const LIST_MIN_WIDTH = 36
 const MESSAGE_LINES = 6
 const WHEEL_LINES = 3
 
-const keysFor = (live: boolean): HintBinding[] => [
+const keysFor = (live: boolean, panes: boolean): HintBinding[] => [
   { key: "j", cmd: "move-down", desc: "j/k move" },
   { key: "k", cmd: "move-up" },
   { key: "down", cmd: "move-down" },
@@ -48,8 +48,13 @@ const keysFor = (live: boolean): HintBinding[] => [
   { key: "return", cmd: "open", desc: live ? "⏎ jump" : "⏎ open" },
   { key: "/", cmd: "search", desc: "/ search" },
   { key: "p", cmd: "preview", desc: "p preview" },
-  { key: "shift+k", cmd: "preview-older", desc: "K/J scroll" },
-  { key: "shift+j", cmd: "preview-newer" },
+  { key: "l", cmd: "focus-preview", ...(panes && { desc: "h/l pane" }) },
+  { key: "right", cmd: "focus-preview" },
+  { key: "h", cmd: "focus-list" },
+  { key: "left", cmd: "focus-list" },
+  // The other pane's j/k
+  { key: "shift+k", cmd: "other-up", ...(panes && { desc: "K/J other" }) },
+  { key: "shift+j", cmd: "other-down" },
   { key: "ctrl+y", cmd: "preview-older" },
   { key: "ctrl+e", cmd: "preview-newer" },
   { key: "y", cmd: "copy-id", desc: "y copy" },
@@ -191,6 +196,9 @@ export function layout(width: number, showPreview: boolean) {
 
 type Row = { kind: "header"; label: string; count: number | null } | { kind: "entry"; entry: Entry }
 
+/** The pane j/k and friends move in; a click picks it */
+type Focus = "list" | "preview"
+
 interface View {
   rows: Row[]
   sel: Entry | null
@@ -201,6 +209,7 @@ interface View {
   searching: boolean
   total: number | null
   showPreview: boolean
+  focus: Focus
   turns: Turn[] | null
   hiddenBelow: number
   note: string
@@ -246,7 +255,7 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
     sx = c.text(sx, y, v.query, brand.papyrus, { max: right })
     if (v.searching) c.put(sx, y, "▏", brand.gold)
   }
-  for (let i = x0 + 1; i <= right; i++) c.put(i, RULE_ROW, "─", colors.rule)
+  paintRule(c, x0 + 1, right + 1, v.showPreview && v.focus === "list")
 
   y = HEAD_ROWS
   const bottom = v.height - 1
@@ -298,6 +307,11 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
   }
 }
 
+/** A pane's header rule, gold on the focused pane */
+function paintRule(c: Canvas, from: number, to: number, focused: boolean) {
+  for (let i = from; i < to; i++) c.put(i, RULE_ROW, "─", focused ? brand.gold : colors.rule)
+}
+
 function paintPreview(c: Canvas, v: View, x0: number, w: number) {
   for (let y = 0; y < v.height - 1; y++) c.put(x0, y, "│", colors.rule)
   const left = x0 + 2
@@ -309,7 +323,7 @@ function paintPreview(c: Canvas, v: View, x0: number, w: number) {
     .filter(Boolean)
     .join(" · ")
   c.text(left, 2, meta, colors.dim, { max: left + width })
-  for (let i = left; i < left + width; i++) c.put(i, RULE_ROW, "─", colors.rule)
+  paintRule(c, left, left + width, v.focus === "preview")
 
   const top = HEAD_ROWS
   const bottom = v.height - 2
@@ -459,6 +473,9 @@ export function Browser({
   const [searching, setSearching] = useState(false)
   const searchingRef = useRef(false)
   const [showPreview, setShowPreview] = useState(() => startPreview && width >= PREVIEW_MIN_WIDTH)
+  const [focus, setFocusState] = useState<Focus>("list")
+  const focusRef = useRef<Focus>("list")
+  const setFocus = (f: Focus) => setFocusState((focusRef.current = f))
   const [selKey, setSelKey] = useState(() => keyOf(initial.find((e) => e.live) ?? initial[0]))
   // Keys can arrive before React re-renders; actions read the selection from here, not from render.
   const selKeyRef = useRef(selKey)
@@ -557,6 +574,9 @@ export function Browser({
       const from = o.key === key ? Math.min(o.lines, maxOffset) : 0
       return { key, lines: Math.max(0, Math.min(from + by, maxOffset)) }
     })
+  const inPreview = () => focusRef.current === "preview" && showPreview
+  // Moves down by `by` lines in the preview when it has focus, or runs `inList`
+  const move = (by: number, inList: () => void) => (inPreview() ? scrollPreview(-by) : inList())
   const [note, flash] = useFlash()
   const copyOut = (text: string | undefined, what: string) => {
     if (!text) return flash("no saved thread yet")
@@ -633,16 +653,39 @@ export function Browser({
   useBindings(
     () => ({
       enabled: () => !searchingRef.current && !confirmingRef.current && !divingRef.current,
-      bindings: keysFor(live),
+      bindings: keysFor(live, showPreview),
       commands: [
         { name: "quit", run: (n: number) => (n ? undefined : close()) },
-        { name: "back", run: (n: number) => (n ? undefined : query ? setQuery("") : close()) },
-        { name: "move-down", run: (n: number) => select(current().i + (n || 1)) },
-        { name: "move-up", run: (n: number) => select(current().i - (n || 1)) },
-        { name: "first", run: () => select(0) },
-        { name: "last", run: (n: number) => select(n ? n - 1 : flat.length - 1) },
+        {
+          name: "back",
+          run: (n: number) => {
+            if (n) return
+            if (inPreview()) setFocus("list")
+            else if (query) setQuery("")
+            else close()
+          },
+        },
+        {
+          name: "move-down",
+          run: (n: number) => move(n || 1, () => select(current().i + (n || 1))),
+        },
+        {
+          name: "move-up",
+          run: (n: number) => move(-(n || 1), () => select(current().i - (n || 1))),
+        },
+        { name: "first", run: () => move(-maxOffset, () => select(0)) },
+        {
+          name: "last",
+          run: (n: number) => move(maxOffset, () => select(n ? n - 1 : flat.length - 1)),
+        },
         { name: "search", run: () => setSearching((searchingRef.current = true)) },
-        { name: "preview", run: () => setShowPreview((s) => !s) },
+        {
+          name: "preview",
+          run: () => {
+            if (showPreview) setFocus("list")
+            setShowPreview((s) => !s)
+          },
+        },
         {
           name: "refresh",
           run: () =>
@@ -654,6 +697,18 @@ export function Browser({
         { name: "live", run: () => setLive((l) => !l) },
         { name: "preview-older", run: (n: number) => scrollPreview(n || 1) },
         { name: "preview-newer", run: (n: number) => scrollPreview(-(n || 1)) },
+        { name: "focus-preview", run: () => showPreview && setFocus("preview") },
+        { name: "focus-list", run: () => setFocus("list") },
+        {
+          name: "other-up",
+          run: (n: number) =>
+            inPreview() ? select(current().i - (n || 1)) : scrollPreview(n || 1),
+        },
+        {
+          name: "other-down",
+          run: (n: number) =>
+            inPreview() ? select(current().i + (n || 1)) : scrollPreview(-(n || 1)),
+        },
         { name: "copy-id", run: () => copyOut(current().e?.thread?.sessionId, "session id") },
         {
           name: "copy-path",
@@ -681,14 +736,32 @@ export function Browser({
         },
         {
           name: "half-down",
-          run: (n: number) => select(current().i + (n || 1) * Math.ceil(page / 2)),
+          run: (n: number) => {
+            const by = (n || 1) * Math.ceil((inPreview() ? previewRows : page) / 2)
+            move(by, () => select(current().i + by))
+          },
         },
         {
           name: "half-up",
-          run: (n: number) => select(current().i - (n || 1) * Math.ceil(page / 2)),
+          run: (n: number) => {
+            const by = (n || 1) * Math.ceil((inPreview() ? previewRows : page) / 2)
+            move(-by, () => select(current().i - by))
+          },
         },
-        { name: "page-down", run: (n: number) => select(current().i + (n || 1) * page) },
-        { name: "page-up", run: (n: number) => select(current().i - (n || 1) * page) },
+        {
+          name: "page-down",
+          run: (n: number) => {
+            const by = (n || 1) * (inPreview() ? previewRows : page)
+            move(by, () => select(current().i + by))
+          },
+        },
+        {
+          name: "page-up",
+          run: (n: number) => {
+            const by = (n || 1) * (inPreview() ? previewRows : page)
+            move(-by, () => select(current().i - by))
+          },
+        },
         {
           name: "screen-top",
           run: (n: number) => selectEntry(screen[Math.min(n || 1, screen.length) - 1]),
@@ -707,7 +780,7 @@ export function Browser({
           Array.from({ length: 10 }, (_, d) => ({ name: `count-${d}`, run: () => addDigit(d) })),
         ),
     }),
-    [flat, top, page, maxOffset, live, width, showPreview],
+    [flat, top, page, maxOffset, live, width, showPreview, query, focus],
   )
 
   const canvas = paint({
@@ -720,6 +793,7 @@ export function Browser({
     searching,
     total: complete ? entries.length : null,
     showPreview,
+    focus: showPreview ? focus : "list",
     turns,
     hiddenBelow: lines,
     note,
@@ -745,7 +819,13 @@ export function Browser({
     <box width={width} height={height} flexDirection="column" onMouseScroll={onWheel}>
       <box flexDirection="row" height={bodyH}>
         {listCols > 0 && (
-          <box width={listCols} onMouseDown={() => setSelecting("list")}>
+          <box
+            width={listCols}
+            onMouseDown={() => {
+              setSelecting("list")
+              setFocus("list")
+            }}
+          >
             <CanvasView
               canvas={canvas.region(0, 0, listCols, bodyH)}
               selectable={selecting !== "preview"}
@@ -758,7 +838,13 @@ export function Browser({
           </box>
         )}
         {showPreview && (
-          <box width={width - previewFrom - 2} onMouseDown={() => setSelecting("preview")}>
+          <box
+            width={width - previewFrom - 2}
+            onMouseDown={() => {
+              setSelecting("preview")
+              setFocus("preview")
+            }}
+          >
             <CanvasView
               canvas={canvas.region(previewFrom, 0, width - previewFrom - 2, bodyH)}
               selectable={selecting !== "list"}
