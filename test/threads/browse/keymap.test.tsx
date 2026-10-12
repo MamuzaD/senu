@@ -253,7 +253,7 @@ test("a partial start loads every thread right away, with the older ones' place 
   expect(scopes).toEqual(["all"])
   expect(t.captureCharFrame()).toContain("running thread")
   expect(t.captureCharFrame()).toContain("older …")
-  expect(t.captureCharFrame()).toContain("threads  …")
+  expect(t.captureCharFrame()).toContain("threads  1")
   await act(async () => loaded.resolve([running, older]))
   await act(() => t.renderOnce())
   expect(t.captureCharFrame()).toContain("running thread")

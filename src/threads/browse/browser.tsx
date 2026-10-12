@@ -194,7 +194,10 @@ export function layout(width: number, showPreview: boolean) {
   return { split, listW, previewX, previewTextW: width - previewX - 6 }
 }
 
-type Row = { kind: "header"; label: string; count: number | null } | { kind: "entry"; entry: Entry }
+type Row =
+  /** `folded` is set only on a section that folds: true while its threads are hidden */
+  | { kind: "header"; label: string; count: number | null; folded?: boolean }
+  | { kind: "entry"; entry: Entry }
 
 /** The pane j/k and friends move in; a click picks it */
 type Focus = "list" | "preview"
@@ -207,7 +210,7 @@ interface View {
   height: number
   query: string
   searching: boolean
-  total: number | null
+  total: number
   showPreview: boolean
   focus: Focus
   turns: Turn[] | null
@@ -244,7 +247,7 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
       }
   } else {
     let x = c.text(x0 + 1, y, "threads", brand.sand, { attrs: BOLD })
-    x = c.text(x + 2, y, v.total === null ? "…" : String(v.total), colors.muted)
+    x = c.text(x + 2, y, String(v.total), colors.muted)
     const running = v.rows.filter((r) => r.kind === "entry" && r.entry.live).length
     if (running) c.text(x + 2, y, `${states.working.glyph} ${running}`, states.working.fg)
   }
@@ -265,7 +268,8 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
     if (y + rowHeight(r) - 1 > bottom) break
     if (r.kind === "header") {
       const hx = c.text(x0 + 1, y, r.label, colors.muted, { attrs: BOLD })
-      c.text(hx + 1, y, r.count === null ? "…" : String(r.count), colors.dim)
+      const cx = c.text(hx + 1, y, r.count === null ? "…" : String(r.count), colors.dim)
+      if (r.folded !== undefined) c.text(cx + 1, y, r.folded ? "▸" : "▾", colors.dim)
       y += rowHeight(r)
       continue
     }
@@ -545,12 +549,14 @@ export function Browser({
   const sel = flat[selIndex] ?? null
   const rows: Row[] = []
   for (const s of shown) {
-    if (!live) rows.push({ kind: "header", label: s.label, count: s.entries.length })
-    const open = s.label !== "older" || !!query || (sel !== null && s.entries.includes(sel))
+    const folds = s.label === "older"
+    const open = !folds || !!query || (sel !== null && s.entries.includes(sel))
+    const header = { kind: "header" as const, label: s.label, count: s.entries.length }
+    if (!live) rows.push(folds ? { ...header, folded: !open } : header)
     for (const entry of s.entries) if (open) rows.push({ kind: "entry", entry })
   }
   // Holds the older threads' place until they load
-  if (!live && !complete) rows.push({ kind: "header", label: "older", count: null })
+  if (!live && !complete) rows.push({ kind: "header", label: "older", count: null, folded: true })
   const selRow = rows.findIndex((r) => r.kind === "entry" && r.entry === sel)
 
   const fits = (from: number, to: number) => {
@@ -791,7 +797,7 @@ export function Browser({
     height,
     query,
     searching,
-    total: complete ? entries.length : null,
+    total: entries.length,
     showPreview,
     focus: showPreview ? focus : "list",
     turns,
