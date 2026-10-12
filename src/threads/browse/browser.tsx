@@ -215,6 +215,8 @@ interface View {
   focus: Focus
   turns: Turn[] | null
   hiddenBelow: number
+  /** The scrollbar the mouse is holding, if any */
+  dragging: Focus | null
   note: string
   count: string
   confirming: Entry | null
@@ -350,13 +352,26 @@ function paintPreview(c: Canvas, v: View, x0: number, w: number) {
   })
   if (lines.length > rows) {
     const bar = left + width - 1
-    const thumb = Math.max(1, Math.round((rows * rows) / lines.length))
-    const at = Math.round((start / (lines.length - rows)) * (rows - thumb))
+    const { size, at } = thumbOf(rows, lines.length, start)
     for (let i = 0; i < rows; i++) {
-      const on = i >= at && i < at + thumb
-      c.put(bar, top + i, on ? "┃" : "│", on ? brand.sand : colors.rule)
+      const on = i >= at && i < at + size
+      const thumbFg = v.dragging === "preview" ? brand.gold : colors.dim
+      c.put(bar, top + i, on ? "┃" : "│", on ? thumbFg : colors.rule)
     }
   }
+}
+
+/** A scrollbar's thumb on a `track`-row bar, for `total` lines with `above` of them scrolled past */
+function thumbOf(track: number, total: number, above: number) {
+  const size = Math.max(1, Math.round((track * track) / total))
+  const at = Math.round((Math.min(above, total - track) / (total - track)) * (track - size))
+  return { size, at }
+}
+
+/** The lines scrolled past when the thumb sits at `at`; the inverse of `thumbOf` */
+function aboveAt(track: number, total: number, size: number, at: number) {
+  const room = track - size
+  return room > 0 ? Math.round((Math.max(0, Math.min(at, room)) / room) * (total - track)) : 0
 }
 
 function paintListBar(c: Canvas, v: View, x: number) {
@@ -365,11 +380,11 @@ function paintListBar(c: Canvas, v: View, x: number) {
   const total = heights.reduce((a, b) => a + b, 0)
   if (total <= rows) return
   const above = heights.slice(0, v.top).reduce((a, b) => a + b, 0)
-  const thumb = Math.max(1, Math.round((rows * rows) / total))
-  const at = Math.round((Math.min(above, total - rows) / (total - rows)) * (rows - thumb))
+  const { size, at } = thumbOf(rows, total, above)
   for (let i = 0; i < rows; i++) {
-    const on = i >= at && i < at + thumb
-    c.put(x, HEAD_ROWS + i, on ? "┃" : "│", on ? colors.dim : colors.rule)
+    const on = i >= at && i < at + size
+    const thumbFg = v.dragging === "list" ? brand.gold : colors.dim
+    c.put(x, HEAD_ROWS + i, on ? "┃" : "│", on ? thumbFg : colors.rule)
   }
 }
 
@@ -480,6 +495,9 @@ export function Browser({
   const [focus, setFocusState] = useState<Focus>("list")
   const focusRef = useRef<Focus>("list")
   const setFocus = (f: Focus) => setFocusState((focusRef.current = f))
+  const [dragging, setDragging] = useState<Focus | null>(null)
+  // Where on the thumb the mouse took hold, in rows from its top
+  const grabbed = useRef(0)
   const [selKey, setSelKey] = useState(() => keyOf(initial.find((e) => e.live) ?? initial[0]))
   // Keys can arrive before React re-renders; actions read the selection from here, not from render.
   const selKeyRef = useRef(selKey)
@@ -802,6 +820,7 @@ export function Browser({
     focus: showPreview ? focus : "list",
     turns,
     hiddenBelow: lines,
+    dragging,
     note,
     confirming,
     count: pendingCount,
@@ -816,13 +835,64 @@ export function Browser({
     if (showPreview && (!split || event.x >= listW)) scrollPreview(up ? WHEEL_LINES : -WHEEL_LINES)
     else select(current().i + (up ? -1 : 1))
   }
+  // Pressing the thumb grabs it where it was held; pressing the track brings the thumb's middle there
+  const track = height - HEAD_ROWS - 1
+  const grab = (y: number, thumb: { size: number; at: number }, pressed: boolean) => {
+    const t = y - HEAD_ROWS
+    if (pressed)
+      grabbed.current = t >= thumb.at && t < thumb.at + thumb.size ? t - thumb.at : thumb.size >> 1
+    return t - grabbed.current
+  }
+  const heights = rows.map(rowHeight)
+  const listTotal = heights.reduce((a, b) => a + b, 0)
+  // The list scrolls under the thumb; the selection moves only to stay on screen
+  const onListBar = (event: MouseEvent, pressed: boolean) => {
+    if (listTotal <= track) return
+    setDragging("list")
+    setFocus("list")
+    const thumb = thumbOf(
+      track,
+      listTotal,
+      heights.slice(0, top).reduce((a, b) => a + b, 0),
+    )
+    const above = aboveAt(track, listTotal, thumb.size, grab(event.y, thumb, pressed))
+    // The first row that starts that far down, short of where the last rows fill the screen
+    let deepest = rows.length - 1
+    while (deepest > 0 && fits(deepest - 1, rows.length - 1)) deepest--
+    let first = 0
+    for (let h = 0; first < deepest && h < above; h += heights[first++]!);
+    let last = first
+    while (last + 1 < rows.length && fits(first, last + 1)) last++
+    const inView = (from: number) =>
+      rows.slice(from, last + 1).flatMap((r) => (r.kind === "entry" ? [r.entry] : []))
+    // The list keeps the row above the selection in view, so the top row itself isn't picked
+    if (selRow <= first) selectEntry(inView(first + 1)[0] ?? inView(first)[0])
+    else if (selRow > last) selectEntry(inView(first).at(-1))
+    setScroll(first)
+  }
+  const onPreviewBar = (event: MouseEvent, pressed: boolean) => {
+    if (!maxOffset) return
+    setDragging("preview")
+    setFocus("preview")
+    const total = maxOffset + track
+    const thumb = thumbOf(track, total, maxOffset - lines)
+    const above = aboveAt(track, total, thumb.size, grab(event.y, thumb, pressed))
+    setOffset({ key: selKeyRef.current, lines: maxOffset - above })
+  }
   // Each pane is its own selectable view; a drag that starts in one turns the other off, since
   // OpenTUI widens a selection past the view it started in but only ever picks up selectable text.
   const bodyH = height - 1
   const listCols = showPreview ? (split ? listW : 0) : width - 1
   const previewFrom = split ? listW + 1 : 0
   return (
-    <box width={width} height={height} flexDirection="column" onMouseScroll={onWheel}>
+    <box
+      width={width}
+      height={height}
+      flexDirection="column"
+      onMouseScroll={onWheel}
+      onMouseUp={() => setDragging(null)}
+      onMouseDragEnd={() => setDragging(null)}
+    >
       <box flexDirection="row" height={bodyH}>
         {listCols > 0 && (
           <box
@@ -839,7 +909,13 @@ export function Browser({
           </box>
         )}
         {listCols > 0 && (
-          <box width={1}>
+          <box
+            width={1}
+            onMouseDown={(e) => onListBar(e, true)}
+            onMouseDrag={(e) => onListBar(e, false)}
+            onMouseUp={() => setDragging(null)}
+            onMouseDragEnd={() => setDragging(null)}
+          >
             <CanvasView canvas={canvas.region(listCols, 0, 1, bodyH)} />
           </box>
         )}
@@ -858,7 +934,13 @@ export function Browser({
           </box>
         )}
         {showPreview && (
-          <box width={2}>
+          <box
+            width={2}
+            onMouseDown={(e) => onPreviewBar(e, true)}
+            onMouseDrag={(e) => onPreviewBar(e, false)}
+            onMouseUp={() => setDragging(null)}
+            onMouseDragEnd={() => setDragging(null)}
+          >
             <CanvasView canvas={canvas.region(width - 2, 0, 2, bodyH)} />
           </box>
         )}

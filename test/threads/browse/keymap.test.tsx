@@ -425,3 +425,58 @@ test("a click or h/l picks the pane j/k move in, Esc goes back, and K/J move the
   await press("k")
   expect(t.captureCharFrame()).toMatch(/▌.*first/)
 })
+
+test("the list's scrollbar scrolls by its thumb, and the selection stays on screen", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const t = await createTestRenderer({ width: 100, height: 22 })
+  destroy = () => act(() => t.renderer.destroy())
+  const entry = (i: number): Entry => ({
+    thread: { sessionId: `t${i}`, profile: "claude-p", transcript: "/missing" } as Entry["thread"],
+    agent: "claude",
+    title: `thread ${i}`,
+    cwd: "/",
+    updatedMs: Date.now() - i * 1000,
+    live: null,
+  })
+  const keymap = createDefaultOpenTuiKeymap(t.renderer)
+  act(() =>
+    createRoot(t.renderer).render(
+      <KeymapProvider keymap={keymap}>
+        <Browser
+          initial={Array.from({ length: 12 }, (_, i) => entry(i))}
+          load={async () => []}
+          watch={async () => ({ merge: (es) => es, scouting: false })}
+          live={false}
+          preview={true}
+          recentMs={RECENT_MS}
+          jump={async () => {}}
+          onOpen={() => {}}
+        />
+      </KeymapProvider>,
+    ),
+  )
+  await act(() => t.renderOnce())
+  // The list's scrollbar shares the divider's column, where the preview starts
+  const bar = t.captureCharFrame().split("\n")[1]!.indexOf("│")
+  const click = async (y: number) => {
+    await act(() => t.mockMouse.click(bar, y))
+    await act(() => t.renderOnce())
+  }
+  // A click on the track brings the thumb there: the bottom shows the last threads
+  await click(20)
+  expect(t.captureCharFrame()).toContain("thread 11")
+  expect(t.captureCharFrame()).not.toContain("thread 0 ")
+  expect(t.captureCharFrame()).toMatch(/▌.*thread \d+/)
+  await click(4)
+  expect(t.captureCharFrame()).toContain("thread 0")
+  const atTop = t.captureCharFrame()
+
+  // Pressing the thumb holds it where it is; dragging scrolls the list by as much
+  await act(() => t.mockMouse.pressDown(bar, 5))
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).toBe(atTop)
+  await act(() => t.mockMouse.moveTo(bar, 20))
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).toContain("thread 11")
+  await act(() => t.mockMouse.release(bar, 20))
+})
