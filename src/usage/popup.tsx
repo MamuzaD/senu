@@ -181,8 +181,13 @@ function SpendRow({ spend, fill, cols }: { spend: Spend; fill: number; cols: num
   )
 }
 
-function BankedRow({ banked, right }: { banked: Banked; right: number }) {
+function BankedRow({ banked: cached, right }: { banked: Banked; right: number }) {
   const label = INDENT + "Banked".padEnd(LABEL_WIDTH)
+  const credits = cached.credits.filter((c) => c.expiresAt == null || c.expiresAt > nowSeconds())
+  const banked = {
+    available: cached.available - (cached.credits.length - credits.length),
+    credits,
+  }
   if (banked.available === 0) {
     return (
       <Line>

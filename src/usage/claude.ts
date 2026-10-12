@@ -3,9 +3,10 @@ import { join } from "node:path"
 
 import { home } from "~/paths.ts"
 
-import { errorSnapshot, nowSeconds, type Limit, type Snapshot } from "./types.ts"
+import { errorSnapshot, nowSeconds, type Banked, type Limit, type Snapshot } from "./types.ts"
 
-const API_URL = "https://api.anthropic.com/api/oauth/usage"
+// cedar_ember=1 adds the banked-reset grants; skip_spend=1 drops the spend block senu doesn't read.
+const API_URL = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1"
 const TIMEOUT_MS = 5000
 const HOUR_MS = 3_600_000
 
@@ -75,16 +76,58 @@ function modelWeeks(data: any): Limit[] {
   return present.filter((l) => kept.has(l))
 }
 
+/** The server's label is a long campaign name, so name the grant by what it clears. */
+function grantTitle(grant: any): string | null {
+  const clears: string[] = Array.isArray(grant?.clears) ? grant.clears : []
+  const parts = [
+    ...(clears.includes("seven_day") ? ["Weekly"] : []),
+    ...(clears.includes("five_hour") ? ["5 hr"] : []),
+  ]
+  if (parts.length === 2) return "Full reset (Weekly + 5 hr)"
+  if (parts.length === 1) return `${parts[0]} reset`
+  return grant?.label || null
+}
+
+function toBanked(status: any): Banked | null {
+  if (!status?.eligible) return null
+  const now = Date.now()
+  const grants = (Array.isArray(status.grants) ? (status.grants as any[]) : []).filter(
+    (g) => !g?.paused && !(Date.parse(g?.starts_at) > now) && !(Date.parse(g?.ends_at) <= now),
+  )
+  const credits = grants.flatMap((g) => {
+    const expiresAt = g?.ends_at ? Date.parse(g.ends_at) : NaN
+    const credit = {
+      title: grantTitle(g),
+      expiresAt: Number.isNaN(expiresAt) ? null : Math.floor(expiresAt / 1000),
+    }
+    return Array.from({ length: g?.resets_left ?? 0 }, () => credit)
+  })
+  return { available: credits.length, credits }
+}
+
+/** The server only reports grants to Claude Code, and checks its version. */
+function userAgent(): string | null {
+  try {
+    const proc = Bun.spawnSync(["claude", "--version"])
+    const version = proc.stdout.toString().split(" ")[0]
+    return proc.exitCode === 0 && version ? `claude-cli/${version} (external, cli)` : null
+  } catch {
+    return null
+  }
+}
+
 export async function fetchClaude(configDir: string): Promise<Snapshot> {
   const auth = loadToken(configDir)
   if ("error" in auth) return errorSnapshot(auth.error)
 
+  const ua = userAgent()
   try {
     const res = await fetch(API_URL, {
       headers: {
         Authorization: `Bearer ${auth.token}`,
         "anthropic-beta": "oauth-2025-04-20",
         "Content-Type": "application/json",
+        ...(ua ? { "User-Agent": ua } : {}),
       },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
@@ -101,7 +144,7 @@ export async function fetchClaude(configDir: string): Promise<Snapshot> {
         ...modelWeeks(data),
       ],
       spend: null,
-      banked: null,
+      banked: toBanked(data.cedar_ember),
     }
   } catch (err) {
     return errorSnapshot(err instanceof Error ? err.message : "API request failed")
