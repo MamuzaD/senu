@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 
 import { createTestRenderer } from "@opentui/core/testing"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
@@ -259,4 +259,100 @@ test("a partial start loads every thread right away, with the older ones' place 
   expect(t.captureCharFrame()).toContain("running thread")
   expect(t.captureCharFrame()).toContain("older 1")
   expect(t.captureCharFrame()).toContain("threads  2")
+})
+
+test("the same session in two profiles is two rows the cursor can reach", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const t = await createTestRenderer({ width: 100, height: 22 })
+  destroy = () => act(() => t.renderer.destroy())
+  const copy = (profile: string, updatedMs: number): Entry => ({
+    thread: { sessionId: "same", profile } as Entry["thread"],
+    agent: "claude",
+    title: profile,
+    cwd: "/",
+    updatedMs,
+    live: null,
+  })
+  const opened: Entry[] = []
+  const keymap = createDefaultOpenTuiKeymap(t.renderer)
+  act(() =>
+    createRoot(t.renderer).render(
+      <KeymapProvider keymap={keymap}>
+        <Browser
+          initial={[copy("claude-work", Date.now()), copy("claude-personal", Date.now() - 1000)]}
+          load={async () => []}
+          watch={async () => ({ merge: (es) => es, scouting: false })}
+          live={false}
+          preview={false}
+          recentMs={RECENT_MS}
+          jump={async () => {}}
+          onOpen={(e) => opened.push(e)}
+        />
+      </KeymapProvider>,
+    ),
+  )
+  await act(() => t.renderOnce())
+  act(() => t.mockInput.pressKey("j"))
+  act(() => t.mockInput.pressEnter())
+  expect(opened.map((e) => e.title)).toEqual(["claude-personal"])
+})
+
+test("Esc clears a filter before it quits, and a gone folder is said instead of opened", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const t = await createTestRenderer({ width: 100, height: 22 })
+  destroy = () => act(() => t.renderer.destroy())
+  const entry = (title: string, cwd: string): Entry => ({
+    thread: { sessionId: title, profile: "claude-p" } as Entry["thread"],
+    agent: "claude",
+    title,
+    cwd,
+    updatedMs: Date.now(),
+    live: null,
+  })
+  const opened: Entry[] = []
+  const keymap = createDefaultOpenTuiKeymap(t.renderer)
+  act(() =>
+    createRoot(t.renderer).render(
+      <KeymapProvider keymap={keymap}>
+        <Browser
+          initial={[entry("kept", "/"), entry("moved", "/gone/away")]}
+          load={async () => []}
+          watch={async () => ({ merge: (es) => es, scouting: false })}
+          live={false}
+          preview={false}
+          recentMs={RECENT_MS}
+          jump={async () => {}}
+          onOpen={(e) => opened.push(e)}
+        />
+      </KeymapProvider>,
+    ),
+  )
+  const destroyed = spyOn(t.renderer, "destroy")
+  await act(() => t.renderOnce())
+  for (const key of ["/", "m", "o", "v", "e", "d"]) act(() => t.mockInput.pressKey(key))
+  act(() => t.mockInput.pressEnter())
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).not.toContain("kept")
+
+  act(() => t.mockInput.pressEnter())
+  await act(() => t.renderOnce())
+  expect(opened).toEqual([])
+  expect(t.captureCharFrame()).toContain("/gone/away no longer exists")
+
+  const escape = () =>
+    act(async () => {
+      t.mockInput.pressEscape()
+      await Bun.sleep(50)
+    })
+  await escape()
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).toContain("kept")
+  expect(destroyed).not.toHaveBeenCalled()
+  // Esc after a count only drops the count
+  act(() => t.mockInput.pressKey("5"))
+  await escape()
+  expect(destroyed).not.toHaveBeenCalled()
+  await escape()
+  expect(destroyed).toHaveBeenCalled()
+  destroyed.mockRestore()
 })

@@ -17,6 +17,11 @@ export interface Thread {
   transcript: string
 }
 
+/** A session id can show up in two profiles, e.g. a copied ~/.claude, so a thread is both. */
+export function threadKey(profile: string, sessionId: string): string {
+  return `${profile}:${sessionId}`
+}
+
 export interface Message {
   fromUser: boolean
   text: string
@@ -26,7 +31,7 @@ export type ToolKind = "read" | "edit" | "run" | "search" | "web" | "agent" | "o
 
 export type Turn = Message | { tools: Partial<Record<ToolKind, number>> }
 
-/** Narrows a listing to these sessions and any thread updated since `since`. */
+/** Narrows a listing to these threads (by `threadKey`) and any updated since `since`. */
 export interface Only {
   ids: Set<string>
   since?: number

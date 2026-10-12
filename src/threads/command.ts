@@ -52,7 +52,9 @@ function warnFailed(failed: { profile: string; error: string }[]) {
 async function resumeCommand(sessionId: string, config: Config): Promise<number> {
   const { entries, failed } = await listEntries(config.profiles, false)
   warnFailed(failed)
-  const entry = entries.find((e) => e.thread?.sessionId === sessionId)
+  // A session copied into another profile shows up twice; the running copy is the one to jump to
+  const matched = entries.filter((e) => e.thread?.sessionId === sessionId)
+  const entry = matched.find((e) => e.live) ?? matched[0]
   if (!entry) {
     console.error(`senu threads: no thread ${sessionId}`)
     return 1

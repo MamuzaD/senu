@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 
-import { sections, toolSummary } from "~/threads/browse/browser.tsx"
+import { matches, sections, toolSummary } from "~/threads/browse/browser.tsx"
+import type { Thread } from "~/threads/thread.ts"
 
 const RECENT_MS = 3 * 24 * 60 * 60 * 1000
 
@@ -39,4 +40,19 @@ test("sections: running, then the last 3 days, then older; running never ages", 
     ["recent", ["today"]],
     ["older", ["last week"]],
   ])
+})
+
+test("search matches the tmux session and the session id too", () => {
+  const e = {
+    thread: { sessionId: "019a-abc", profile: "codex-work" } as Thread,
+    agent: "codex" as const,
+    title: "fix the build",
+    cwd: "/p/senu",
+    updatedMs: 0,
+    live: { state: "idle" as const, paneId: "%1", windowId: "@1", windowIndex: 1, session: "api" },
+  }
+  expect(matches(e, "api")).toBe(true)
+  expect(matches(e, "019a")).toBe(true)
+  expect(matches(e, "build senu")).toBe(true)
+  expect(matches(e, "web")).toBe(false)
 })

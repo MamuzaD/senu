@@ -4,7 +4,7 @@ import { basename, join } from "node:path"
 import type { Profile } from "~/config.ts"
 import { profileKey } from "~/usage/cache.ts"
 
-import type { Message, Only, Thread, ToolKind } from "./thread.ts"
+import { threadKey, type Message, type Only, type Thread, type ToolKind } from "./thread.ts"
 import { firstLine, headRecords, tailRecords } from "./transcript.ts"
 
 /**
@@ -99,7 +99,8 @@ export function claudeThreads(p: Profile, only?: Only): Thread[] {
       const sessionId = basename(name, ".jsonl")
       // Reading a transcript costs far more than its mtime, so skipped ones are never opened
       const updatedMs = statSync(path).mtimeMs
-      if (only && !only.ids.has(sessionId) && updatedMs < (only.since ?? Infinity)) continue
+      const asked = only?.ids.has(threadKey(profileKey(p), sessionId))
+      if (only && !asked && updatedMs < (only.since ?? Infinity)) continue
       const summary = claudeSummary(headRecords(path, HEAD_BYTES), tailRecords(path, TAIL_BYTES))
       if (!summary) continue
       threads.push({

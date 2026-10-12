@@ -19,10 +19,10 @@ describe("launchFor", () => {
     })
   })
 
-  test("sets CLAUDE_CONFIG_DIR only away from ~/.claude", () => {
+  test("sets CLAUDE_CONFIG_DIR away from ~/.claude, and unsets an exported one at it", () => {
     const at = (home: string) => launchFor({ agent: "claude", sessionId: "s", cwd: "/p", home })
     expect(at(join(homedir(), ".claude"))).toEqual({
-      argv: ["claude", "--resume", "s"],
+      argv: ["env", "-u", "CLAUDE_CONFIG_DIR", "claude", "--resume", "s"],
       cwd: "/p",
       env: {},
     })
@@ -86,11 +86,11 @@ describe("joinEntries", () => {
   const tmux = {
     panes,
     rows: [row("@1", "%1", "working", 50), row("@2", "%2", "idle", 40)],
-    paneBySession: new Map([
-      ["linked", "%1"],
-      ["no-row", "%3"],
-      ["unlisted", "%2"],
-      ["pane-gone", "%9"],
+    paneByThread: new Map([
+      ["claude-p:linked", "%1"],
+      ["claude-p:no-row", "%3"],
+      ["claude-p:unlisted", "%2"],
+      ["claude-p:pane-gone", "%9"],
     ]),
   }
   const threads = [
@@ -116,6 +116,15 @@ describe("joinEntries", () => {
     ])
   })
 
+  test("a session id in two profiles runs only in the profile that holds it", () => {
+    const copy = { ...thread("linked", 12), profile: "claude-w" }
+    const got = joinEntries([thread("linked", 10), copy], tmux, false)
+    expect(got.map((e) => [e.thread?.profile, e.live?.paneId ?? null])).toEqual([
+      ["claude-w", null],
+      ["claude-p", "%1"],
+    ])
+  })
+
   test("leaves agents with no thread out when asked", () => {
     expect(summary(false).map(([id]) => id)).toEqual(["no-row", "past", "linked", "pane-gone"])
   })
@@ -130,7 +139,7 @@ describe("joinEntries", () => {
     const split = {
       panes: [...panes, { id: "%9", windowId: "@1", windowIndex: 1, session: "s", cwd: "/one" }],
       rows: [blocked, row("@1", "%1", "idle", 50)],
-      paneBySession: new Map([["linked", "%1"]]),
+      paneByThread: new Map([["claude-p:linked", "%1"]]),
     }
     expect(
       joinEntries([thread("linked", 10)], split, true).map((e) => [e.title, e.live?.state]),

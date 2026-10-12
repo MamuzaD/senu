@@ -1,21 +1,25 @@
-import { readdirSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { readdirSync, readFileSync, realpathSync } from "node:fs"
+import { basename, dirname, join } from "node:path"
 
 import type { Profile } from "~/config.ts"
 import { agentFromProcess, processArgv, run, type Pane } from "~/detect/panes.ts"
+import { profileKey } from "~/usage/cache.ts"
+
+import { threadKey } from "./thread.ts"
 
 // Claude writes sessions/<pid>.json naming its session and leaves it behind if it crashes, so a
 // reused pid can claim it. Codex holds thread-writer-locks/<id>.lock open while a thread runs; a
 // crash can leave the file behind, never the open descriptor.
 
+/** The threads each process holds, by `threadKey` */
 type SessionsByPid = Map<number, string[]>
 
-function hold(holders: SessionsByPid, pid: number, sessionId: string) {
-  holders.set(pid, [...(holders.get(pid) ?? []), sessionId])
+function hold(holders: SessionsByPid, pid: number, key: string) {
+  holders.set(pid, [...(holders.get(pid) ?? []), key])
 }
 
-function claudeSessionsByPid(home: string, holders: SessionsByPid) {
-  const dir = join(home, "sessions")
+function claudeSessionsByPid(p: Profile, holders: SessionsByPid) {
+  const dir = join(p.home, "sessions")
   let names
   try {
     names = readdirSync(dir)
@@ -26,25 +30,35 @@ function claudeSessionsByPid(home: string, holders: SessionsByPid) {
     if (!name.endsWith(".json")) continue
     try {
       const { pid, sessionId } = JSON.parse(readFileSync(join(dir, name), "utf8"))
-      if (Number.isInteger(pid) && typeof sessionId === "string") hold(holders, pid, sessionId)
+      if (Number.isInteger(pid) && typeof sessionId === "string")
+        hold(holders, pid, threadKey(profileKey(p), sessionId))
     } catch {}
   }
 }
 
-// lsof -F prints a `p<pid>` line, then an `n<path>` line per open file
-export function parseLsof(out: string, holders: SessionsByPid = new Map()): SessionsByPid {
+// lsof -F prints a `p<pid>` line, then an `n<path>` line per open file. `profileOf` names the
+// profile whose lock directory a lock is in.
+export function parseLsof(
+  out: string,
+  profileOf: (lockDir: string) => string | undefined,
+  holders: SessionsByPid = new Map(),
+): SessionsByPid {
   let pid = 0
   for (const line of out.split("\n")) {
     if (line.startsWith("p")) pid = Number(line.slice(1))
     else if (line.startsWith("n") && line.endsWith(".lock") && pid) {
-      hold(holders, pid, line.slice(line.lastIndexOf("/") + 1, -".lock".length))
+      const lock = line.slice(1)
+      const profile = profileOf(dirname(lock))
+      if (profile) hold(holders, pid, threadKey(profile, basename(lock, ".lock")))
     }
   }
   return holders
 }
 
+const lockDir = (home: string) => join(home, "thread-writer-locks")
+
 function codexLocks(home: string): string[] {
-  const dir = join(home, "thread-writer-locks")
+  const dir = lockDir(home)
   try {
     return readdirSync(dir)
       .filter((n) => n.endsWith(".lock") && !n.startsWith("."))
@@ -102,15 +116,26 @@ export async function runningThreads(
   panes: Pane[],
 ): Promise<Map<string, string>> {
   const claude: SessionsByPid = new Map()
-  for (const p of profiles) if (p.kind === "claude") claudeSessionsByPid(p.home, claude)
-  const locks = profiles.filter((p) => p.kind === "codex").flatMap((p) => codexLocks(p.home))
+  for (const p of profiles) if (p.kind === "claude") claudeSessionsByPid(p, claude)
+  const codex = profiles.filter((p) => p.kind === "codex")
+  const locks = codex.flatMap((p) => codexLocks(p.home))
+  // lsof names files by their real path
+  const real = (dir: string) => {
+    try {
+      return realpathSync(dir)
+    } catch {
+      return dir
+    }
+  }
+  const profileByDir = new Map(codex.map((p) => [real(lockDir(p.home)), profileKey(p)]))
   const procs = parseProcs((await run(["ps", "-axo", "pid=,ppid=,comm="])).out)
   // lsof checks every process's files unless given pids, which takes it ~400 ms
   const pids = locks.length ? codexPids(procs) : []
   const lsof = pids.length
     ? await run(["lsof", "-nP", "-a", "-p", pids.join(","), "-Fpn", "--", ...locks])
     : { out: "" }
-  return panesFor(parseLsof(lsof.out, stillClaude(claude, procs)), procs, panes)
+  const holders = parseLsof(lsof.out, (dir) => profileByDir.get(dir), stillClaude(claude, procs))
+  return panesFor(holders, procs, panes)
 }
 
 export function codexPids(

@@ -13,15 +13,15 @@ export interface Launch {
   env: Record<string, string>
 }
 
-// Always set CODEX_HOME so an exported one can't win; CLAUDE_CONFIG_DIR, even ~/.claude, switches Claude's login
+// Always set CODEX_HOME so an exported one can't win. Setting CLAUDE_CONFIG_DIR, even to ~/.claude,
+// switches Claude's login, so ~/.claude threads unset an exported one instead.
 export function launchFor(t: Pick<Thread, "agent" | "sessionId" | "cwd" | "home">): Launch {
   if (t.agent === "codex")
     return { argv: ["codex", "resume", t.sessionId], cwd: t.cwd, env: { CODEX_HOME: t.home } }
-  return {
-    argv: ["claude", "--resume", t.sessionId],
-    cwd: t.cwd,
-    env: t.home === join(home, ".claude") ? {} : { CLAUDE_CONFIG_DIR: t.home },
-  }
+  const claude = ["claude", "--resume", t.sessionId]
+  return t.home === join(home, ".claude")
+    ? { argv: ["env", "-u", "CLAUDE_CONFIG_DIR", ...claude], cwd: t.cwd, env: {} }
+    : { argv: claude, cwd: t.cwd, env: { CLAUDE_CONFIG_DIR: t.home } }
 }
 
 export class ResumeError extends Error {}

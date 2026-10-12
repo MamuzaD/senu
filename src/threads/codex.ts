@@ -5,7 +5,7 @@ import { join } from "node:path"
 import type { Profile } from "~/config.ts"
 import { profileKey } from "~/usage/cache.ts"
 
-import type { Message, Only, Thread, ToolKind } from "./thread.ts"
+import { threadKey, type Message, type Only, type Thread, type ToolKind } from "./thread.ts"
 import { firstLine } from "./transcript.ts"
 
 /**
@@ -47,10 +47,14 @@ export function codexThreads(p: Profile, only?: Only): Thread[] {
     shm ? path : `file:${encodeURI(path)}?immutable=1`,
     constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI,
   )
+  const prefix = threadKey(profileKey(p), "")
+  const ids = [...(only?.ids ?? [])].flatMap((k) =>
+    k.startsWith(prefix) ? [k.slice(prefix.length)] : [],
+  )
   try {
     return db
       .query<Row, (string | number)[]>(only ? QUERY + ONLY : QUERY)
-      .all(...(only ? [JSON.stringify([...only.ids]), only.since ?? Number.MAX_SAFE_INTEGER] : []))
+      .all(...(only ? [JSON.stringify(ids), only.since ?? Number.MAX_SAFE_INTEGER] : []))
       .map((r) => ({
         sessionId: r.id,
         agent: "codex" as const,

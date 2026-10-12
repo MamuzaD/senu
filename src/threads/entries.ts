@@ -13,7 +13,7 @@ import {
 
 import { resume } from "./resume.ts"
 import { runningThreads } from "./running.ts"
-import { listThreads, type Only, type Thread } from "./thread.ts"
+import { listThreads, threadKey, type Only, type Thread } from "./thread.ts"
 
 export interface Live {
   state: Attention
@@ -59,7 +59,8 @@ export const agentEntry = (r: AgentRow, cwd: string): Entry => ({
 export interface TmuxState {
   panes: Pick<Pane, "id" | "windowId" | "windowIndex" | "session" | "cwd">[]
   rows: PaneRow[]
-  paneBySession: Map<string, string>
+  /** Running threads' panes, by `threadKey` */
+  paneByThread: Map<string, string>
 }
 
 const unthreaded = (rows: PaneRow[], threaded: Set<string>, cwdOf: (paneId: string) => string) =>
@@ -70,18 +71,18 @@ const unthreaded = (rows: PaneRow[], threaded: Set<string>, cwdOf: (paneId: stri
 export function joinEntries(threads: Thread[], seen: TmuxState, withUnthreaded: boolean): Entry[] {
   const paneById = new Map(seen.panes.map((p) => [p.id, p]))
   const rowByPane = new Map(seen.rows.map((r) => [r.paneId, r]))
-  const listed = new Set(threads.map((t) => t.sessionId))
+  const listed = new Set(threads.map((t) => threadKey(t.profile, t.sessionId)))
   const live = new Map<string, Live>()
-  for (const [sessionId, paneId] of seen.paneBySession) {
+  for (const [key, paneId] of seen.paneByThread) {
     const pane = paneById.get(paneId)
-    if (!pane || !listed.has(sessionId)) continue
+    if (!pane || !listed.has(key)) continue
     const state = rowByPane.get(paneId)?.state ?? "idle"
     const { windowId, windowIndex, session } = pane
-    live.set(sessionId, { state, paneId, windowId, windowIndex, session })
+    live.set(key, { state, paneId, windowId, windowIndex, session })
   }
   const threaded = new Set([...live.values()].map((l) => l.paneId))
   return [
-    ...threads.map((t) => threadEntry(t, live.get(t.sessionId) ?? null)),
+    ...threads.map((t) => threadEntry(t, live.get(threadKey(t.profile, t.sessionId)) ?? null)),
     ...(withUnthreaded ? unthreaded(seen.rows, threaded, (id) => paneById.get(id)?.cwd ?? "") : []),
   ].toSorted((a, b) => b.updatedMs - a.updatedMs)
 }
@@ -113,8 +114,9 @@ export function refreshLive(
  * it didn't read is gone.
  */
 export function mergeLoaded(last: Entry[], loaded: Entry[], since = Infinity): Entry[] {
-  const read = new Set(loaded.map((e) => e.thread?.sessionId))
-  const skipped = (e: Entry) => !!e.thread && !read.has(e.thread.sessionId) && e.updatedMs < since
+  const keyOf = (t: Thread) => threadKey(t.profile, t.sessionId)
+  const read = new Set(loaded.flatMap((e) => (e.thread ? [keyOf(e.thread)] : [])))
+  const skipped = (e: Entry) => !!e.thread && !read.has(keyOf(e.thread)) && e.updatedMs < since
   const kept = last.flatMap((e) => (skipped(e) ? [e.live ? { ...e, live: null } : e] : []))
   return [...loaded, ...kept].toSorted((a, b) => b.updatedMs - a.updatedMs)
 }
@@ -128,16 +130,16 @@ export async function listEntries(
   scope: Scope = "all",
   recentMs = Infinity,
 ) {
-  let seen: TmuxState = { panes: [], rows: [], paneBySession: new Map() }
+  let seen: TmuxState = { panes: [], rows: [], paneByThread: new Map() }
   if ((await tmux("info")).ok) {
     const panes = listPanes()
-    const [{ rows }, paneBySession] = await Promise.all([
+    const [{ rows }, paneByThread] = await Promise.all([
       new Collector().collect(),
       panes.then((ps) => runningThreads(profiles, ps)),
     ])
-    seen = { panes: await panes, rows, paneBySession }
+    seen = { panes: await panes, rows, paneByThread }
   }
-  const ids = new Set(seen.paneBySession.keys())
+  const ids = new Set(seen.paneByThread.keys())
   const only: Record<Scope, Only | undefined> = {
     all: undefined,
     live: { ids },

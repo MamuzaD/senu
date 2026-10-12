@@ -15,19 +15,24 @@ describe("parseLsof", () => {
       "n/h/.codex-work/thread-writer-locks/c.lock",
       "",
     ].join("\n")
-    expect(parseLsof(out)).toEqual(
+    const profileOf = (dir: string) =>
+      ({
+        "/h/.codex/thread-writer-locks": "codex-p",
+        "/h/.codex-work/thread-writer-locks": "codex-w",
+      })[dir]
+    expect(parseLsof(out, profileOf)).toEqual(
       new Map([
-        [35958, ["a", "b"]],
-        [71140, ["c"]],
+        [35958, ["codex-p:a", "codex-p:b"]],
+        [71140, ["codex-w:c"]],
       ]),
     )
   })
 
   test("adds to holders it's given", () => {
-    expect(parseLsof("p2\nn/x/b.lock\n", new Map([[1, ["a"]]]))).toEqual(
+    expect(parseLsof("p2\nn/x/b.lock\n", () => "codex-p", new Map([[1, ["a"]]]))).toEqual(
       new Map([
         [1, ["a"]],
-        [2, ["b"]],
+        [2, ["codex-p:b"]],
       ]),
     )
   })

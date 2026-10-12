@@ -200,10 +200,19 @@ describe("listThreads", () => {
   test("reads only the sessions asked for, plus any updated since a time", () => {
     const ids = (only: Parameters<typeof listThreads>[1]) =>
       listThreads(profiles, only).threads.map((t) => t.sessionId)
-    expect(ids({ ids: new Set(["c-old", "s1"]) })).toEqual(["s1", "c-old"])
-    expect(ids({ ids: new Set(["c-old"]), since: 2500 })).toEqual(["c-user", "s1", "c-old"])
+    expect(ids({ ids: new Set(["codex-work:c-old", "claude-personal:s1"]) })).toEqual([
+      "s1",
+      "c-old",
+    ])
+    expect(ids({ ids: new Set(["codex-work:c-old"]), since: 2500 })).toEqual([
+      "c-user",
+      "s1",
+      "c-old",
+    ])
+    // A session id asked for in one profile doesn't bring it in from another
+    expect(ids({ ids: new Set(["claude-personal:c-old"]) })).toEqual([])
     // Asking for a session doesn't bring back threads the listing leaves out
-    expect(ids({ ids: new Set(["c-sub", "c-archived"]) })).toEqual([])
+    expect(ids({ ids: new Set(["codex-work:c-sub", "codex-work:c-archived"]) })).toEqual([])
   })
 
   test("previews the last messages, oldest first", () => {

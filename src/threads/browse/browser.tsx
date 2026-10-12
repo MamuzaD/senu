@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { basename } from "node:path"
 
 import { TextAttributes, type MouseEvent, type RGBA } from "@opentui/core"
@@ -18,7 +19,7 @@ import { formatDuration } from "~/usage/format.ts"
 
 import { copy } from "../clipboard.ts"
 import { mergeLoaded, type Entry, type Scope } from "../entries.ts"
-import { preview, type Thread, type ToolKind, type Turn } from "../thread.ts"
+import { preview, threadKey, type Thread, type ToolKind, type Turn } from "../thread.ts"
 
 const REFRESH_MS = 5000
 const WATCH_MS = 1000
@@ -57,7 +58,7 @@ const keysFor = (live: boolean): HintBinding[] => [
   { key: "r", cmd: "refresh", desc: "r refresh" },
   { key: "tab", cmd: "live", desc: live ? "tab all" : "tab live" },
   { key: "q", cmd: "quit", desc: "q quit" },
-  { key: "escape", cmd: "quit" },
+  { key: "escape", cmd: "back" },
   ...Array.from({ length: 10 }, (_, d) => ({ key: String(d), cmd: `count-${d}` })),
 ]
 
@@ -73,7 +74,8 @@ const STARS: [number, number, string][] = [
   [0.83, 1, "⋆"],
 ]
 
-const keyOf = (e: Entry | undefined) => e?.thread?.sessionId ?? e?.live?.paneId ?? ""
+const keyOf = (e: Entry | undefined) =>
+  e?.thread ? threadKey(e.thread.profile, e.thread.sessionId) : (e?.live?.paneId ?? "")
 const project = (e: Entry) => (e.cwd ? basename(e.cwd) : "")
 const profileName = (e: Entry) => {
   const name = e.thread?.profile.slice(e.agent.length + 1)
@@ -86,7 +88,16 @@ function age(ms: number) {
 }
 
 export function matches(e: Entry, query: string): boolean {
-  const hay = [e.title, project(e), e.thread?.profile ?? "", e.agent].join(" ").toLowerCase()
+  const hay = [
+    e.title,
+    project(e),
+    e.thread?.profile ?? "",
+    e.thread?.sessionId ?? "",
+    e.live?.session ?? "",
+    e.agent,
+  ]
+    .join(" ")
+    .toLowerCase()
   return query
     .toLowerCase()
     .split(/\s+/)
@@ -605,7 +616,7 @@ export function Browser({
     const pending = confirmingRef.current
     if (pending) {
       setConfirming(null)
-      if ((key.name === "y" || key.name === "x") && pending.live)
+      if (key.name === "y" && pending.live)
         void kill(pending.live).then(() => Promise.all([watchNow(), refresh()]))
       return
     }
@@ -625,6 +636,7 @@ export function Browser({
       bindings: keysFor(live),
       commands: [
         { name: "quit", run: (n: number) => (n ? undefined : close()) },
+        { name: "back", run: (n: number) => (n ? undefined : query ? setQuery("") : close()) },
         { name: "move-down", run: (n: number) => select(current().i + (n || 1)) },
         { name: "move-up", run: (n: number) => select(current().i - (n || 1)) },
         { name: "first", run: () => select(0) },
@@ -661,6 +673,8 @@ export function Browser({
             const { e } = current()
             if (!e) return
             if (live && e.live) return go(e)
+            // Said here, so a gone folder doesn't close the browser to report it
+            if (!e.live && e.thread && !existsSync(e.cwd)) return flash(`${e.cwd} no longer exists`)
             onOpen(e)
             close()
           },
