@@ -11,6 +11,7 @@ export const colors = {
   fg: plain,
   claude: indexed(208),
   codex: indexed(39),
+  opencode: indexed(141),
   good: indexed(76),
   warn: indexed(214),
   bad: indexed(160),
@@ -39,6 +40,7 @@ export const states = {
 export const icons = {
   codex: "\u{EC81}", // Nerd Font cod-openai
   claude: "\u{EC82}", // Nerd Font cod-claude
+  opencode: "\u{F121}", // Nerd Font fa-code
 }
 
 const clamp01 = (k: number) => Math.max(0, Math.min(1, k))

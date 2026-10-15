@@ -19,7 +19,7 @@ const HELP = `usage: senu scout [pane] [agent]
 
 Lists agent panes and their states, or one pane's state, e.g. %8.
 
-  agent     claude or codex; found from the pane if omitted
+  agent     claude, codex or opencode; found from the pane if omitted
   explain   print every rule's verdict and the regions it read
   manifest  pull herdr's detection manifests
 `
@@ -47,7 +47,7 @@ async function readPane(
   if (agentArg) {
     agent = parseAgent(agentArg)
     if (!agent) {
-      console.error(`senu ${name}: unknown agent "${agentArg}" (have claude, codex)`)
+      console.error(`senu ${name}: unknown agent "${agentArg}" (have claude, codex, opencode)`)
       return 2
     }
   }

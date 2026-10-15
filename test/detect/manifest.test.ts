@@ -3,7 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { ManifestError, parseManifest, resolveManifest } from "~/detect/manifest.ts"
+import { ManifestError, parseAgent, parseManifest, resolveManifest } from "~/detect/manifest.ts"
+
+test("OpenCode labels and bundled aliases resolve to the same agent", () => {
+  for (const label of ["OpenCode", "open-code", "herdr:opencode", "/opt/bin/opencode.exe"])
+    expect(parseAgent(label)).toBe("opencode")
+})
 
 const rule = (body: string) => `id = "codex"\n[[rules]]\nid = "r"\n${body}`
 

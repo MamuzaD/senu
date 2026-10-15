@@ -25,6 +25,7 @@ import {
 } from "./manifest.ts"
 import claudeToml from "./manifests/claude.toml" with { type: "text" }
 import codexToml from "./manifests/codex.toml" with { type: "text" }
+import opencodeToml from "./manifests/opencode.toml" with { type: "text" }
 
 /**
  * `senu scout manifest refresh`: pulls herdr's published detection manifests into
@@ -46,7 +47,11 @@ export const MIRROR =
 const MAX_BYTES = 256 * 1024
 const DAY_SECONDS = 24 * 60 * 60
 
-const BUNDLED: Record<Agent, string> = { claude: claudeToml as string, codex: codexToml as string }
+const BUNDLED: Record<Agent, string> = {
+  claude: claudeToml as string,
+  codex: codexToml as string,
+  opencode: opencodeToml as string,
+}
 
 export const stampPath = join(stateDir, "last-sync")
 

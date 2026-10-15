@@ -120,6 +120,9 @@ describe("agentFromArgv", () => {
     ["claude --resume", "claude"],
     ["claude-code", "claude"],
     ["codex --config x=1", "codex"],
+    ["opencode --session ses_123", "opencode"],
+    ["node /opt/bin/opencode.js", "opencode"],
+    ["bun /opt/bin/open-code", "opencode"],
     [
       "node /Users/me/.local/state/fnm_multishells/1_2/bin/codex --config cli_auth_credentials_store=file",
       "codex",

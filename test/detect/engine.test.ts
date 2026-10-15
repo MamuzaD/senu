@@ -214,7 +214,11 @@ const cases: {
 ]
 
 describe("pane fixtures", () => {
-  const manifests = { claude: bundledManifest("claude"), codex: bundledManifest("codex") }
+  const manifests = {
+    claude: bundledManifest("claude"),
+    codex: bundledManifest("codex"),
+    opencode: bundledManifest("opencode"),
+  }
   for (const c of cases) {
     test(`${c.name}: ${c.state}${c.python ? ` (python said ${c.python})` : ""}`, () => {
       const screen = readFileSync(join(FIXTURES, `${c.name}.screen`), "utf8")

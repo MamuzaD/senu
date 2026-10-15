@@ -7,6 +7,7 @@ import type { Config } from "~/config.ts"
 import { bundledManifest } from "~/detect/manifest.ts"
 import claudeToml from "~/detect/manifests/claude.toml" with { type: "text" }
 import codexToml from "~/detect/manifests/codex.toml" with { type: "text" }
+import opencodeToml from "~/detect/manifests/opencode.toml" with { type: "text" }
 import {
   manifestsCommand,
   MIRROR,
@@ -156,6 +157,7 @@ describe("manifestsCommand", () => {
   const upstream = {
     [`${PRIMARY}/claude.toml`]: bundled.claude,
     [`${PRIMARY}/codex.toml`]: codexAt("2999.1.1.1"),
+    [`${PRIMARY}/opencode.toml`]: opencodeToml as string,
   }
   const run = (args: string[], files: Record<string, string> = upstream, now = 1_800_000_000_000) =>
     manifestsCommand(["refresh", ...args], config, {

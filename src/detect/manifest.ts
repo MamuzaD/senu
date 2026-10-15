@@ -7,6 +7,7 @@ import { configDir } from "~/paths.ts"
 
 import claudeToml from "./manifests/claude.toml" with { type: "text" }
 import codexToml from "./manifests/codex.toml" with { type: "text" }
+import opencodeToml from "./manifests/opencode.toml" with { type: "text" }
 import { compileRustRegex } from "./regex.ts"
 import { isValidRegion } from "./regions.ts"
 
@@ -17,15 +18,19 @@ import { isValidRegion } from "./regions.ts"
  * Validation follows herdr's, so a manifest herdr would reject is rejected here.
  */
 
-export type Agent = "claude" | "codex"
+export type Agent = "claude" | "codex" | "opencode"
 export type AgentState = "idle" | "working" | "blocked" | "unknown"
 
-export const AGENTS: Agent[] = ["claude", "codex"]
+export const AGENTS: Agent[] = ["claude", "codex", "opencode"]
 
 /** The herdr engine revision this port implements (herdr's MANIFEST_ENGINE_VERSION). */
 export const ENGINE_VERSION = 3
 
-const BUNDLED: Record<Agent, string> = { claude: claudeToml as string, codex: codexToml as string }
+const BUNDLED: Record<Agent, string> = {
+  claude: claudeToml as string,
+  codex: codexToml as string,
+  opencode: opencodeToml as string,
+}
 
 export const overrideDir = join(configDir, "detection")
 export const overridePath = (agent: Agent) => join(overrideDir, `${agent}.toml`)
@@ -374,5 +379,6 @@ export function parseAgent(name: string): Agent | null {
   const n = base.toLowerCase().replace(/\.(exe|cmd|bat|ps1|js)$/, "")
   if (n === "claude" || n === "claude-code") return "claude"
   if (n === "codex") return "codex"
+  if (n === "opencode" || n === "open-code" || n === "herdr:opencode") return "opencode"
   return null
 }

@@ -303,8 +303,8 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
       c.put(whenX - 2, y, "…", titleFg)
     c.text(whenX, y, when, lit(colors.dim, whenX))
 
-    const agentFg = noColor ? colors.fg : e.agent === "codex" ? colors.codex : colors.claude
-    let mx = c.text(x0 + 5, y + 1, e.agent === "codex" ? icons.codex : icons.claude, agentFg)
+    const agentFg = noColor ? colors.fg : colors[e.agent]
+    let mx = c.text(x0 + 5, y + 1, icons[e.agent], agentFg)
     const profile = profileName(e)
     if (profile) mx = c.text(mx + 1, y + 1, profile, colors.dim, { max: right })
     const proj = project(e)
