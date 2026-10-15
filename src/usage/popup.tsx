@@ -3,7 +3,7 @@ import { useBindings } from "@opentui/keymap/react"
 import { useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react"
 
-import type { Profile, UsageScene } from "~/config.ts"
+import type { UsageProfile as Profile, UsageScene } from "~/config.ts"
 import { runApp } from "~/ui/app.tsx"
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
 import { SCENE_COLS, SCENE_ROWS, sceneCols, type SceneTime } from "~/ui/desert.ts"

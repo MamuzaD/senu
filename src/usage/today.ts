@@ -18,7 +18,7 @@ import {
 } from "node:fs"
 import { join } from "node:path"
 
-import type { Profile } from "~/config.ts"
+import type { UsageProfile as Profile } from "~/config.ts"
 import { cacheDir, selfCommand } from "~/paths.ts"
 
 import { claimLockFile, profileKey, releaseLockFile } from "./cache.ts"

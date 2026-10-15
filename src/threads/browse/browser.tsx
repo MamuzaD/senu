@@ -447,7 +447,8 @@ function paint(v: View): Canvas {
 const turnsCache = new Map<string, { turns: Turn[]; more: boolean }>()
 
 function turnsOf(t: Thread, depth: number): { turns: Turn[]; more: boolean } {
-  const key = `${t.transcript}:${t.updatedMs}:${depth}`
+  // OpenCode's sessions share one database, so the transcript alone doesn't name a thread
+  const key = `${t.transcript}:${t.sessionId}:${t.updatedMs}:${depth}`
   let read = turnsCache.get(key)
   if (!read) {
     try {

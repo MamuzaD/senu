@@ -6,6 +6,7 @@ import { profileKey } from "~/usage/cache.ts"
 
 import { claudeMessage, claudeThreads, claudeTools } from "./claude.ts"
 import { codexMessage, codexThreads, codexTools } from "./codex.ts"
+import { opencodeMessage, opencodeRecords, opencodeThreads, opencodeTools } from "./opencode.ts"
 import { tailRecords } from "./transcript.ts"
 
 export interface Thread {
@@ -49,7 +50,8 @@ export function listThreads(profiles: Profile[], only?: Only): Listed {
   const failed: Listed["failed"] = []
   for (const p of profiles) {
     try {
-      threads.push(...(p.kind === "codex" ? codexThreads(p, only) : claudeThreads(p, only)))
+      const list = { codex: codexThreads, claude: claudeThreads, opencode: opencodeThreads }[p.kind]
+      threads.push(...list(p, only))
     } catch (e) {
       failed.push({ profile: profileKey(p), error: e instanceof Error ? e.message : String(e) })
     }
@@ -60,11 +62,13 @@ export function listThreads(profiles: Profile[], only?: Only): Listed {
 const PREVIEW_BYTES = 1 << 20
 const PREVIEW_TURNS = 40
 
-export function preview(thread: Thread, count: number, bytes = PREVIEW_BYTES): Turn[] {
-  const [read, tools] =
-    thread.agent === "codex" ? [codexMessage, codexTools] : [claudeMessage, claudeTools]
+function turnsOf<R>(
+  records: R[],
+  read: (r: R) => Message | null,
+  tools: (r: R) => ToolKind[],
+): Turn[] {
   const turns: Turn[] = []
-  for (const r of tailRecords(thread.transcript, bytes)) {
+  for (const r of records) {
     const m = read(r)
     if (m) turns.push(m)
     const kinds = tools(r)
@@ -73,7 +77,25 @@ export function preview(thread: Thread, count: number, bytes = PREVIEW_BYTES): T
     if (!last || !("tools" in last)) turns.push((last = { tools: {} }))
     for (const k of kinds) last.tools[k] = (last.tools[k] ?? 0) + 1
   }
-  return turns.slice(-count)
+  return turns
+}
+
+/** A thread's turns from its last `bytes`, and whether it holds older ones. */
+function readTurns(thread: Thread, bytes: number): { turns: Turn[]; more: boolean } {
+  if (thread.agent === "opencode") {
+    const { records, more } = opencodeRecords(thread, bytes)
+    return { turns: turnsOf(records, opencodeMessage, opencodeTools), more }
+  }
+  const [read, tools] =
+    thread.agent === "codex" ? [codexMessage, codexTools] : [claudeMessage, claudeTools]
+  return {
+    turns: turnsOf(tailRecords(thread.transcript, bytes), read, tools),
+    more: statSync(thread.transcript).size > bytes,
+  }
+}
+
+export function preview(thread: Thread, count: number, bytes = PREVIEW_BYTES): Turn[] {
+  return readTurns(thread, bytes).turns.slice(-count)
 }
 
 /**
@@ -82,8 +104,6 @@ export function preview(thread: Thread, count: number, bytes = PREVIEW_BYTES): T
  */
 export function previewAt(thread: Thread, depth: number): { turns: Turn[]; more: boolean } {
   const count = PREVIEW_TURNS << depth
-  const bytes = PREVIEW_BYTES * 2 ** depth
-  const turns = preview(thread, count + 1, bytes)
-  const more = turns.length > count || statSync(thread.transcript).size > bytes
-  return { turns: turns.slice(-count), more }
+  const { turns, more } = readTurns(thread, PREVIEW_BYTES * 2 ** depth)
+  return { turns: turns.slice(-count), more: more || turns.length > count }
 }

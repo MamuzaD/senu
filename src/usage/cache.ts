@@ -10,7 +10,7 @@ import {
 } from "node:fs"
 import { dirname, join } from "node:path"
 
-import type { Profile } from "~/config.ts"
+import type { Profile as AnyProfile, UsageProfile as Profile } from "~/config.ts"
 import { cacheDir, selfCommand } from "~/paths.ts"
 
 import { fetchClaude } from "./claude.ts"
@@ -28,7 +28,7 @@ interface CacheEntry {
   snapshot: Snapshot
 }
 
-export const profileKey = (p: Profile) => `${p.kind}-${p.name.replace(/[^\w.-]/g, "_")}`
+export const profileKey = (p: AnyProfile) => `${p.kind}-${p.name.replace(/[^\w.-]/g, "_")}`
 const cachePath = (p: Profile) => join(usageDir, `${profileKey(p)}.json`)
 const lockPath = (p: Profile) => join(usageDir, `${profileKey(p)}.lock`)
 

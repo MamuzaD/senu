@@ -1,16 +1,22 @@
 import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { basename, join, resolve } from "node:path"
 
 import { configPath, expandHome, home } from "./paths.ts"
 
-export type ProfileKind = "codex" | "claude"
+export type ProfileKind = "codex" | "claude" | "opencode"
 
 export interface Profile {
   kind: ProfileKind
   name: string
-  /** CODEX_HOME for Codex, the Claude config dir for Claude. */
+  /** CODEX_HOME, the Claude config dir, or OpenCode's data directory ending in /opencode. */
   home: string
 }
+
+export type UsageProfile = Profile & { kind: "codex" | "claude" }
+export const hasUsage = (p: Profile): p is UsageProfile => p.kind !== "opencode"
+
+export const opencodeHome = () =>
+  join(process.env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode")
 
 export type UsageScene = "night" | "dawn" | "day" | "dusk" | "auto"
 
@@ -98,7 +104,7 @@ function parseThreads(raw: unknown): ThreadsConfig {
   }
 }
 
-const KINDS: ProfileKind[] = ["codex", "claude"]
+const KINDS: ProfileKind[] = ["codex", "claude", "opencode"]
 const SCENES: UsageScene[] = ["night", "dawn", "day", "dusk", "auto"]
 
 function parseScene(raw: unknown, where: string): UsageScene {
@@ -120,6 +126,7 @@ function defaultProfiles(): Profile[] {
   return [
     { kind: "codex", name: "default", home: process.env.CODEX_HOME || join(home, ".codex") },
     { kind: "claude", name: "default", home: join(home, ".claude") },
+    { kind: "opencode", name: "default", home: opencodeHome() },
   ]
 }
 
@@ -136,8 +143,16 @@ function parseProfile(raw: unknown, index: number): Profile {
   if (profileHome !== undefined && typeof profileHome !== "string") {
     throw new ConfigError(`${where}.home: expected a string`)
   }
-  const fallback = kind === "codex" ? join(home, ".codex") : join(home, ".claude")
-  return { kind: kind as ProfileKind, name, home: expandHome(profileHome ?? fallback) }
+  const fallback =
+    kind === "opencode" ? opencodeHome() : join(home, kind === "codex" ? ".codex" : ".claude")
+  const resolved = expandHome(profileHome ?? fallback)
+  if (kind === "opencode" && basename(resolved) !== "opencode")
+    throw new ConfigError(`${where}.home: OpenCode's data directory must end in /opencode`)
+  return {
+    kind: kind as ProfileKind,
+    name,
+    home: kind === "opencode" ? resolve(resolved) : resolved,
+  }
 }
 
 export function loadConfig(path = configPath): Config {

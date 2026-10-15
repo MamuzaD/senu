@@ -1,5 +1,6 @@
+import { Database } from "bun:sqlite"
 import { afterEach, expect, spyOn, test } from "bun:test"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -11,6 +12,95 @@ import { act } from "react"
 
 import { Browser } from "~/threads/browse/browser.tsx"
 import { agentEntry, type Entry, type Scope } from "~/threads/entries.ts"
+import { listThreads } from "~/threads/thread.ts"
+
+test("OpenCode previews stay isolated and refresh streamed parts", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "senu-preview-cache-"))
+  const path = join(dir, "opencode.db")
+  const db = new Database(path)
+  db.run("PRAGMA journal_mode=WAL")
+  db.run(`CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT,
+    title TEXT, time_updated INTEGER, time_archived INTEGER, revert TEXT)`)
+  db.run(
+    "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)",
+  )
+  db.run(
+    "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+  )
+  const updatedMs = Date.now()
+  for (const name of ["alpha", "beta"]) {
+    db.run("INSERT INTO session VALUES (?, NULL, ?, ?, ?, NULL, NULL)", [
+      name,
+      dir,
+      `${name} title`,
+      updatedMs,
+    ])
+    db.run("INSERT INTO message VALUES (?, ?, 1, ?)", [
+      name,
+      name,
+      JSON.stringify({ role: "user" }),
+    ])
+    db.run("INSERT INTO part VALUES (?, ?, ?, 1, 1, ?)", [
+      name,
+      name,
+      name,
+      JSON.stringify({ type: "text", text: `${name} unique message` }),
+    ])
+  }
+  const load = (): Entry[] =>
+    listThreads([{ kind: "opencode", name: "default", home: dir }]).threads.map((thread) => ({
+      thread,
+      agent: thread.agent,
+      title: thread.title,
+      cwd: dir,
+      updatedMs: thread.updatedMs,
+      live: null,
+    }))
+  const initial = load()
+  try {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const t = await createTestRenderer({ width: 140, height: 26 })
+    destroy = () => act(() => t.renderer.destroy())
+    const keymap = createDefaultOpenTuiKeymap(t.renderer)
+    act(() =>
+      createRoot(t.renderer).render(
+        <KeymapProvider keymap={keymap}>
+          <Browser
+            initial={initial}
+            load={async () => load()}
+            watch={async () => ({ merge: (es) => es, scouting: false })}
+            live={false}
+            preview
+            recentMs={RECENT_MS}
+            jump={async () => {}}
+            onOpen={() => {}}
+          />
+        </KeymapProvider>,
+      ),
+    )
+    await act(() => t.renderOnce())
+    expect(t.captureCharFrame()).toContain("alpha unique message")
+    db.run("UPDATE part SET data = ?, time_updated = ? WHERE id = 'alpha'", [
+      JSON.stringify({ type: "text", text: "new alpha response" }),
+      updatedMs + 1,
+    ])
+    expect(load()[0]?.updatedMs).toBe(updatedMs + 1)
+    await act(async () => {
+      t.mockInput.pressKey("r")
+      await Bun.sleep(20)
+    })
+    await act(() => t.renderOnce())
+    expect(t.captureCharFrame()).toContain("new alpha response")
+    expect(t.captureCharFrame()).not.toContain("alpha unique message")
+    act(() => t.mockInput.pressKey("j"))
+    await act(() => t.renderOnce())
+    expect(t.captureCharFrame()).toContain("beta unique message")
+    expect(t.captureCharFrame()).not.toContain("alpha unique message")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 const RECENT_MS = 3 * 24 * 60 * 60 * 1000
 

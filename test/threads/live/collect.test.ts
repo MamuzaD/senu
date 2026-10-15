@@ -138,4 +138,9 @@ describe("titleTask", () => {
     expect(titleTask("preparation", "codex", "x")).toBeNull()
     expect(titleTask("Action Required | dotfiles", "codex", "x")).toBeNull()
   })
+
+  test("opencode: the session after `OC | `, and nothing before one starts", () => {
+    expect(titleTask("OC | Greeting", "opencode", "x")).toBe("Greeting")
+    expect(titleTask("OpenCode", "opencode", "x")).toBeNull()
+  })
 })

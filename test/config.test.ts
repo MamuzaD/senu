@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { ConfigError, loadConfig, type ThreadsConfig } from "~/config.ts"
+import { ConfigError, hasUsage, loadConfig, type ThreadsConfig } from "~/config.ts"
 
 const write = (text: string) => {
   const path = join(mkdtempSync(join(tmpdir(), "senu-")), "config.toml")
@@ -21,6 +21,35 @@ describe("[usage] config", () => {
 })
 
 describe("[[profiles]] config", () => {
+  test("OpenCode defaults follow XDG_DATA_HOME and stay out of usage profiles", () => {
+    const prior = process.env.XDG_DATA_HOME
+    process.env.XDG_DATA_HOME = "/custom/data"
+    try {
+      const defaults = loadConfig("/nonexistent/config.toml").profiles
+      expect(defaults.find((p) => p.kind === "opencode")).toEqual({
+        kind: "opencode",
+        name: "default",
+        home: "/custom/data/opencode",
+      })
+      expect(defaults.filter(hasUsage).map((p) => p.kind)).toEqual(["codex", "claude"])
+      const configured = loadConfig(write('[[profiles]]\nkind = "opencode"\nname = "local"\n'))
+      expect(configured.profiles[0]?.home).toBe("/custom/data/opencode")
+    } finally {
+      if (prior === undefined) delete process.env.XDG_DATA_HOME
+      else process.env.XDG_DATA_HOME = prior
+    }
+  })
+
+  test("OpenCode custom data roots must match the CLI's /opencode directory convention", () => {
+    expect(
+      loadConfig(write('[[profiles]]\nkind = "opencode"\nname = "work"\nhome = "/work/opencode"'))
+        .profiles[0]?.home,
+    ).toBe("/work/opencode")
+    expect(() =>
+      loadConfig(write('[[profiles]]\nkind = "opencode"\nname = "work"\nhome = "/work/other"')),
+    ).toThrow("must end in /opencode")
+  })
+
   test("none falls back to the default profiles", () => {
     const defaults = loadConfig("/nonexistent/config.toml").profiles
     expect(loadConfig(write("")).profiles).toEqual(defaults)

@@ -69,6 +69,9 @@ export function titleTask(title: string, agent: Agent, session: string): string 
     const bar = t.lastIndexOf(" | ")
     t = bar >= 0 ? t.slice(0, bar).trim() : ""
     if (/^action required$/i.test(t)) return null
+  } else if (agent === "opencode") {
+    // OpenCode titles itself `OC | <session>`, or `OpenCode` before a session starts
+    t = t.startsWith("OC | ") ? t.slice(5).trim() : t === "OpenCode" ? "" : t
   } else if (t === "Claude Code") return null
   return t && t !== session ? t : null
 }

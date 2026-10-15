@@ -1,10 +1,11 @@
 # ~/.config/senu/config.toml
 # Every key is optional. The values below are the defaults, apart from the example profiles.
 
-# Codex and Claude accounts, read by the usage popup and threads, in this order. Without any, senu
-# reads Codex at $CODEX_HOME (or ~/.codex) and Claude at ~/.claude.
+# Profiles read by threads, in this order. The usage popup reads Codex and Claude profiles.
+# Without any, senu reads Codex at $CODEX_HOME (or ~/.codex), Claude at ~/.claude,
+# and OpenCode at $XDG_DATA_HOME/opencode (or ~/.local/share/opencode).
 [[profiles]]
-# "codex" or "claude"
+# "codex", "claude", or "opencode"
 kind = "codex"
 # Shown in the popup and threads, and picked with `--profile codex-personal`
 name = "personal"
@@ -20,6 +21,13 @@ home = "~/.codex-work"
 kind = "claude"
 name = "work"
 home = "~/.claude"
+
+[[profiles]]
+kind = "opencode"
+name = "personal"
+# OpenCode's data directory, containing opencode.db. Must end in /opencode.
+# Omit home to follow XDG_DATA_HOME.
+home = "~/.local/share/opencode"
 
 [usage]
 # The usage popup's scene: "night", "dawn", "day", "dusk", or "auto" to follow local time (dawn

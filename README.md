@@ -13,10 +13,10 @@
 
 ## Features
 
-- Monitor Claude Code and Codex panes across tmux sessions
+- Monitor Claude Code, Codex, and OpenCode panes across tmux sessions
 - See whether agents are working, blocked, idle, or finished
 - Get an alert when a background agent finishes or needs input
-- Browse past and running Claude Code and Codex threads, then jump to or resume one
+- Browse Claude Code, Codex, and OpenCode threads, then jump to a live pane or resume a saved session
 - Check Claude and Codex usage limits and today's cost
 - Inspect agent detection rules and refresh [herdr](https://github.com/herdrdev/herdr)'s detection manifests
 

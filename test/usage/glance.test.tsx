@@ -3,7 +3,7 @@ import { afterEach, expect, test } from "bun:test"
 import { testRender } from "@opentui/react/test-utils"
 import { act } from "react"
 
-import type { Profile } from "~/config.ts"
+import type { UsageProfile as Profile } from "~/config.ts"
 import { emptiesIn } from "~/usage/format.ts"
 import { ProfileSection, type Section } from "~/usage/popup.tsx"
 import type { RangeDays, RangeTotals, Today } from "~/usage/today.ts"

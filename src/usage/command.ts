@@ -1,4 +1,4 @@
-import type { Config } from "~/config.ts"
+import { hasUsage, type Config } from "~/config.ts"
 import { printHelp } from "~/ui/help.ts"
 
 import { claimLock, getSnapshot, profileKey, refreshLocked } from "./cache.ts"
@@ -17,7 +17,7 @@ Shows Codex and Claude usage limits and today's cost.
 `
 
 export async function usageCommand(args: string[], config: Config): Promise<number> {
-  const { profiles } = config
+  const profiles = config.profiles.filter(hasUsage)
 
   if (args.includes("-h") || args.includes("--help")) {
     await printHelp(process.stdout, HELP)
@@ -81,6 +81,10 @@ export async function usageCommand(args: string[], config: Config): Promise<numb
     return 0
   }
 
+  if (!profiles.length) {
+    console.log("no profiles with usage support (Codex or Claude)")
+    return 0
+  }
   const { runUsagePopup } = await import("./popup.tsx")
   return runUsagePopup(profiles, config.usage.scene)
 }

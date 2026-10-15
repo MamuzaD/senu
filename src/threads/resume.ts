@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
-import type { ThreadsConfig } from "~/config.ts"
+import { opencodeHome, type ThreadsConfig } from "~/config.ts"
 import { tmux } from "~/detect/panes.ts"
 import { home } from "~/paths.ts"
 
@@ -18,6 +18,16 @@ export interface Launch {
 export function launchFor(t: Pick<Thread, "agent" | "sessionId" | "cwd" | "home">): Launch {
   if (t.agent === "codex")
     return { argv: ["codex", "resume", t.sessionId], cwd: t.cwd, env: { CODEX_HOME: t.home } }
+  // OpenCode's shared background service reads its own data directory and ignores the client's
+  // XDG_DATA_HOME, so another profile's session needs a private server.
+  if (t.agent === "opencode") {
+    const standalone = t.home === opencodeHome() ? [] : ["--standalone"]
+    return {
+      argv: ["opencode", ...standalone, "--session", t.sessionId],
+      cwd: t.cwd,
+      env: { XDG_DATA_HOME: dirname(t.home) },
+    }
+  }
   const claude = ["claude", "--resume", t.sessionId]
   return t.home === join(home, ".claude")
     ? { argv: ["env", "-u", "CLAUDE_CONFIG_DIR", ...claude], cwd: t.cwd, env: {} }
