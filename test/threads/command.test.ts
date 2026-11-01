@@ -274,7 +274,7 @@ describe("senu threads", () => {
   )
 
   const cli = join(import.meta.dir, "..", "..", "src", "cli.ts")
-  const { TMUX: _, ...inherited } = process.env
+  const { TMUX: _, REX_SESSION: _rex, ...inherited } = process.env
   const env = { ...inherited, XDG_CONFIG_HOME: join(dir, "config"), TMUX_TMPDIR: dir }
   const senu = (...args: string[]) => {
     const run = Bun.spawnSync([process.execPath, cli, "threads", ...args], { env, cwd: dir })

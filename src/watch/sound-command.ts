@@ -32,15 +32,17 @@ export async function soundCommand(args: string[], config: Config): Promise<numb
     console.log(enabled ? "on" : "off")
     return 0
   }
-  const [{ banner }, { brand, states }] = await Promise.all([
+  const [{ banner }, { brand, states }, { inRex }] = await Promise.all([
     import("~/ui/banner.ts"),
     import("~/ui/theme.ts"),
+    import("~/threads/live/rex.ts"),
   ])
   const message: Span[] = [
     ["sound ", brand.papyrus],
     enabled ? ["on", states.idle.fg] : ["off", brand.shadow],
   ]
   if (action === "reset") message.push([" · from config", brand.shadow])
+  if (inRex()) message.push([" · Rex uses its own sounds", brand.shadow])
   process.stdout.write(banner(message))
   return 0
 }

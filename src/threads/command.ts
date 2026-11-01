@@ -1,6 +1,7 @@
 import type { Config, Profile } from "~/config.ts"
 import { setTmuxSocket } from "~/detect/panes.ts"
 import { Collector } from "~/threads/live/collect.ts"
+import { inRex, RexCollector } from "~/threads/live/rex.ts"
 import { printHelp } from "~/ui/help.ts"
 import { profileKey } from "~/usage/cache.ts"
 import { formatDuration } from "~/usage/format.ts"
@@ -75,7 +76,7 @@ async function browse(
   limit: number,
   live: boolean,
 ): Promise<number> {
-  const collector = new Collector()
+  const collector = inRex() ? new RexCollector() : new Collector()
   const failures = new Set<string>()
   const { threads } = config
   const recentMs = threads.recentDays * 24 * 60 * 60 * 1000

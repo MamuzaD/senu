@@ -4,6 +4,7 @@ import { dirname, join } from "node:path"
 import { opencodeHome, type ThreadsConfig } from "~/config.ts"
 import { tmux } from "~/detect/panes.ts"
 import { home } from "~/paths.ts"
+import { inRex, rexInPopup, rexOpenWindow } from "~/threads/live/rex.ts"
 
 import type { Thread } from "./thread.ts"
 
@@ -54,6 +55,11 @@ function runHere(launch: Launch): Promise<number> {
 export async function resume(t: Thread, mode: ThreadsConfig["resume"]): Promise<number> {
   const launch = launchFor(t)
   if (!existsSync(launch.cwd)) throw new ResumeError(`${launch.cwd} no longer exists`)
+  if (inRex()) {
+    if (mode !== "window" && !(await rexInPopup())) return runHere(launch)
+    if (await rexOpenWindow(launch)) return 0
+    throw new ResumeError("Rex could not open a tab")
+  }
   // A popup is a throwaway, so the thread gets its own window, as it does when resume = "window";
   // tmux gives a popup TMUX but no TMUX_PANE
   const window = process.env.TMUX && (mode === "window" || !process.env.TMUX_PANE)

@@ -113,7 +113,7 @@ export function panesFor(
 
 export async function runningThreads(
   profiles: Profile[],
-  panes: Pane[],
+  panes: Pick<Pane, "id" | "pid">[],
 ): Promise<Map<string, string>> {
   const claude: SessionsByPid = new Map()
   for (const p of profiles) if (p.kind === "claude") claudeSessionsByPid(p, claude)

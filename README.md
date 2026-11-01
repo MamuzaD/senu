@@ -13,7 +13,7 @@
 
 ## Features
 
-- Monitor Claude Code, Codex, and OpenCode panes across tmux sessions
+- Monitor Claude Code, Codex, and OpenCode panes across tmux and Rex sessions
 - See whether agents are working, blocked, idle, or finished
 - Get an alert when a background agent finishes or needs input
 - Browse Claude Code, Codex, and OpenCode threads, then jump to a live pane or resume a saved session
@@ -28,10 +28,15 @@ curl -fsSL https://raw.githubusercontent.com/MamuzaD/senu/main/install.sh | sh
 
 `senu` lands in `~/.local/bin`, so keep that on your `PATH`. Run `senu update` to update; the
 watcher checks for new releases once a day and says when one is out (on 0.1.0, re-run the script
-instead). Requires tmux on macOS or Linux.
+instead). Requires tmux on macOS or Linux, or Rex.
 
 Add the lines from [`tmux.example.conf`](tmux.example.conf) to your tmux.conf, then reload tmux
 (`tmux source-file <your tmux.conf>`); `senu watch once` shows what it sees.
+
+In [Rex](https://www.superlogical.com/rex), add the lines from [`rex.example.lua`](rex.example.lua)
+to your `init.lua` instead. Rex already shows agent status and plays its own sounds, so `senu watch`
+isn't needed; `senu threads` adds a picker across sessions, and `senu vision` works as usual. Jumping
+to another session needs Remote Control on in Rex Settings > Rex Server.
 
 Configuration lives at `~/.config/senu/config.toml`; see [`config.example.toml`](config.example.toml).
 

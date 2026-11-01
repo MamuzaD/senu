@@ -2,7 +2,7 @@
 import { version } from "../package.json"
 import { ConfigError, loadConfig, type Config } from "./config.ts"
 
-const TAGLINE = "watches AI coding agents in tmux"
+const TAGLINE = "watches AI coding agents in tmux and Rex"
 
 type Command = {
   about: string

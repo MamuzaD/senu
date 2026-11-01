@@ -10,6 +10,7 @@ import {
   type Collected,
   type PaneRow,
 } from "~/threads/live/collect.ts"
+import { inRex, rexAgents, rexJump, rexRow } from "~/threads/live/rex.ts"
 
 import { resume } from "./resume.ts"
 import { runningThreads } from "./running.ts"
@@ -131,7 +132,14 @@ export async function listEntries(
   recentMs = Infinity,
 ) {
   let seen: TmuxState = { panes: [], rows: [], paneByThread: new Map() }
-  if ((await tmux("info")).ok) {
+  if (inRex()) {
+    const agents = await rexAgents()
+    seen = {
+      panes: agents,
+      rows: agents.map(rexRow),
+      paneByThread: await runningThreads(profiles, agents),
+    }
+  } else if ((await tmux("info")).ok) {
     const panes = listPanes()
     const [{ rows }, paneByThread] = await Promise.all([
       new Collector().collect(),
@@ -156,6 +164,10 @@ export async function openEntry(
   opts: Pick<ThreadsConfig, "raiseGhosttyTab" | "resume">,
 ): Promise<number> {
   if (e.live) {
+    if (inRex()) {
+      if (await rexJump(e.live.paneId, e.live.windowId)) return 0
+      throw new OpenError("not reachable: is Remote Control on in Rex Settings > Rex Server?")
+    }
     if (!process.env.TMUX) throw new OpenError(`running in tmux session ${e.live.session}`)
     await jump(e.live, opts)
     await tmux("select-pane", "-t", e.live.paneId)

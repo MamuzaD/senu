@@ -2,6 +2,7 @@ import { SEP, tmux } from "~/detect/panes.ts"
 
 import type { AgentRow } from "./collect.ts"
 import { raiseGhosttyTab } from "./ghostty.ts"
+import { inRex, rexKill } from "./rex.ts"
 
 export interface Client {
   name: string
@@ -83,5 +84,6 @@ export async function jump(
 }
 
 export async function kill(row: Pick<AgentRow, "paneId">): Promise<boolean> {
+  if (inRex()) return rexKill(row.paneId)
   return (await tmux("kill-pane", "-t", row.paneId)).ok
 }
