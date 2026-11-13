@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { claudeMessage, claudeSummary, claudeTools } from "~/threads/claude.ts"
 import { CODEX_STATE_DB, codexMessage, codexTools } from "~/threads/codex.ts"
 import { listThreads, preview, previewAt } from "~/threads/thread.ts"
-import { headRecords, tailRecords } from "~/threads/transcript.ts"
+import { headRecords, readTailRecords, tailRecords } from "~/threads/transcript.ts"
 
 const dir = mkdtempSync(join(tmpdir(), "senu-threads-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -35,13 +35,50 @@ const codexTurn = (role: string, text: string) => ({
 })
 
 describe("transcript ends", () => {
-  const path = join(dir, "ends.jsonl")
-  writeFileSync(path, jsonl({ n: 1 }, { n: 2 }, { n: 3 }) + '{"n":4')
+  const endsPath = join(dir, "ends.jsonl")
+  writeFileSync(endsPath, jsonl({ n: 1 }, { n: 2 }, { n: 3 }) + '{"n":4')
 
   test("drop the line the cut lands in, and an unfinished last line", () => {
-    expect(headRecords(path, 1 << 20)).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }])
-    expect(headRecords(path, 12)).toEqual([{ n: 1 }])
-    expect(tailRecords(path, 15)).toEqual([{ n: 3 }])
+    expect(headRecords(endsPath, 1 << 20)).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }])
+    expect(headRecords(endsPath, 12)).toEqual([{ n: 1 }])
+    expect(tailRecords(endsPath, 15)).toEqual([{ n: 3 }])
+  })
+
+  test("compressed and plain byte windows match, including UTF-8 cuts and malformed lines", () => {
+    const plain = join(dir, "unicode.jsonl")
+    const compressed = join(dir, "unicode-compressed.jsonl")
+    const text = jsonl({ text: "hello 🌸" }, { text: "日本語" }) + '\nnot json\n{"n":'
+    writeFileSync(plain, text)
+    writeFileSync(`${compressed}.zst`, Bun.zstdCompressSync(Buffer.from(text)))
+    for (let bytes = 1; bytes <= Buffer.byteLength(text) + 1; bytes++) {
+      expect(headRecords(compressed, bytes)).toEqual(headRecords(plain, bytes))
+      expect(readTailRecords(compressed, bytes)).toEqual(readTailRecords(plain, bytes))
+      expect(tailRecords(`${compressed}.zst`, bytes)).toEqual(tailRecords(plain, bytes))
+    }
+    expect(tailRecords(compressed, 1 << 20)).toEqual([{ text: "hello 🌸" }, { text: "日本語" }])
+  })
+
+  test("prefer the plain sibling for either path spelling", () => {
+    const path = join(dir, "siblings.jsonl")
+    writeFileSync(path, jsonl({ version: "new" }))
+    writeFileSync(`${path}.zst`, Bun.zstdCompressSync(Buffer.from(jsonl({ version: "old" }))))
+    for (const name of [path, `${path}.zst`]) {
+      expect(tailRecords(name, 1024)).toEqual([{ version: "new" }])
+    }
+  })
+
+  test("surface missing and corrupt compressed files", () => {
+    expect(() => readTailRecords(join(dir, "missing.jsonl"), 1024)).toThrow()
+    const path = join(dir, "corrupt.jsonl.zst")
+    writeFileSync(path, "not zstd")
+    expect(() => readTailRecords(path, 1024)).toThrow()
+  })
+
+  test("do not use a compressed sibling when the plain file fails to read", () => {
+    const path = join(dir, "directory.jsonl")
+    mkdirSync(path)
+    writeFileSync(`${path}.zst`, Bun.zstdCompressSync(Buffer.from(jsonl({ n: 1 }))))
+    expect(() => readTailRecords(path, 1024)).toThrow()
   })
 })
 
@@ -222,6 +259,56 @@ describe("listThreads", () => {
       { fromUser: true, text: "hello claude" },
       { fromUser: false, text: "hey" },
     ])
+  })
+
+  test("reads compression and resumption changes after a thread was listed", () => {
+    const path = join(dir, "changing.jsonl")
+    const text = jsonl(
+      codexTurn("user", "hello"),
+      { type: "response_item", payload: { type: "function_call", name: "exec_command" } },
+      codexTurn("assistant", "done"),
+    )
+    const thread = { ...listThreads(profiles).threads[0]!, transcript: path }
+    writeFileSync(path, text)
+    const expected = previewAt(thread, 0)
+    expect(expected).toEqual({
+      turns: [
+        { fromUser: true, text: "hello" },
+        { tools: { run: 1 } },
+        { fromUser: false, text: "done" },
+      ],
+      more: false,
+    })
+    writeFileSync(`${path}.zst`, Bun.zstdCompressSync(Buffer.from(text)))
+    rmSync(path)
+    expect(previewAt(thread, 0)).toEqual(expected)
+    expect(previewAt({ ...thread, transcript: `${path}.zst` }, 0)).toEqual(expected)
+    writeFileSync(path, text + jsonl(codexTurn("user", "again")))
+    expect(preview(thread, 1)).toEqual([{ fromUser: true, text: "again" }])
+  })
+
+  test("compressed preview pagination uses decompressed bytes", () => {
+    const path = join(dir, "compressed-long.jsonl")
+    const text = jsonl(
+      codexTurn("user", "first"),
+      { type: "padding", text: "x".repeat(1 << 20) },
+      codexTurn("assistant", "last"),
+    )
+    const compressed = Bun.zstdCompressSync(Buffer.from(text))
+    expect(compressed.length).toBeLessThan(1 << 20)
+    writeFileSync(`${path}.zst`, compressed)
+    const thread = { ...listThreads(profiles).threads[0]!, transcript: path }
+    expect(previewAt(thread, 0)).toEqual({
+      turns: [{ fromUser: false, text: "last" }],
+      more: true,
+    })
+    expect(previewAt(thread, 1)).toEqual({
+      turns: [
+        { fromUser: true, text: "first" },
+        { fromUser: false, text: "last" },
+      ],
+      more: false,
+    })
   })
 
   test("previews a run of tool calls as one turn, counted by kind", () => {

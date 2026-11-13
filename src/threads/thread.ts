@@ -1,5 +1,3 @@
-import { statSync } from "node:fs"
-
 import type { Profile } from "~/config.ts"
 import type { Agent } from "~/detect/manifest.ts"
 import { profileKey } from "~/usage/cache.ts"
@@ -7,7 +5,7 @@ import { profileKey } from "~/usage/cache.ts"
 import { claudeMessage, claudeThreads, claudeTools } from "./claude.ts"
 import { codexMessage, codexThreads, codexTools } from "./codex.ts"
 import { opencodeMessage, opencodeRecords, opencodeThreads, opencodeTools } from "./opencode.ts"
-import { tailRecords } from "./transcript.ts"
+import { readTailRecords } from "./transcript.ts"
 
 export interface Thread {
   sessionId: string
@@ -88,9 +86,10 @@ function readTurns(thread: Thread, bytes: number): { turns: Turn[]; more: boolea
   }
   const [read, tools] =
     thread.agent === "codex" ? [codexMessage, codexTools] : [claudeMessage, claudeTools]
+  const { records, more } = readTailRecords(thread.transcript, bytes)
   return {
-    turns: turnsOf(tailRecords(thread.transcript, bytes), read, tools),
-    more: statSync(thread.transcript).size > bytes,
+    turns: turnsOf(records, read, tools),
+    more,
   }
 }
 
