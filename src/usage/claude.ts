@@ -3,10 +3,17 @@ import { join } from "node:path"
 
 import { home } from "~/paths.ts"
 
-import { errorSnapshot, nowSeconds, type Banked, type Limit, type Snapshot } from "./types.ts"
+import {
+  errorSnapshot,
+  nowSeconds,
+  type Banked,
+  type Limit,
+  type Snapshot,
+  type Spend,
+} from "./types.ts"
 
-// cedar_ember=1 adds the banked-reset grants; skip_spend=1 drops the spend block senu doesn't read.
-const API_URL = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1"
+// cedar_ember=1 adds the banked-reset grants.
+const API_URL = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1"
 const TIMEOUT_MS = 5000
 const HOUR_MS = 3_600_000
 
@@ -94,6 +101,25 @@ function modelWeeks(data: any): Limit[] {
   return present.filter((l) => kept.has(l))
 }
 
+interface Money {
+  amount_minor: number
+  exponent: number
+}
+
+/** Monthly usage credits: the only limit on an enterprise seat, and the overflow on a plan with extra usage on. */
+function toSpend(spend?: { enabled: boolean; used: Money; limit: Money } | null): Spend | null {
+  if (!spend?.enabled || !spend.limit?.amount_minor) return null
+  const amount = (m: Money) => m.amount_minor / 10 ** m.exponent
+  const [used, limit] = [amount(spend.used), amount(spend.limit)]
+  return {
+    used,
+    limit,
+    left: Math.max(0, 100 - (100 * used) / limit),
+    resetsAt: null,
+    reached: used >= limit,
+  }
+}
+
 /** The server's label is a long campaign name, so name the grant by what it clears. */
 function grantTitle(grant: any): string | null {
   const clears: string[] = Array.isArray(grant?.clears) ? grant.clears : []
@@ -151,17 +177,23 @@ export async function fetchClaude(configDir: string): Promise<Snapshot> {
     })
     if (!res.ok) return errorSnapshot(`HTTP ${res.status}`)
     const data: any = await res.json()
+    const spend = toSpend(data.spend)
     return {
       ok: true,
       error: null,
       updatedAt: nowSeconds(),
       planType: null,
+      // A seat billed by spend alone has no plan windows; show them only once one is reported.
       limits: [
-        toLimit("Session", data.five_hour, 5 * HOUR_MS),
-        toLimit("Week", data.seven_day, 7 * 24 * HOUR_MS),
+        ...(spend && !data.five_hour && !data.seven_day
+          ? []
+          : [
+              toLimit("Session", data.five_hour, 5 * HOUR_MS),
+              toLimit("Week", data.seven_day, 7 * 24 * HOUR_MS),
+            ]),
         ...modelWeeks(data),
       ],
-      spend: null,
+      spend,
       banked: toBanked(data.cedar_ember),
     }
   } catch (err) {

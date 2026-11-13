@@ -9,7 +9,7 @@ export interface Limit {
   windowMs?: number | null
 }
 
-/** Codex's per-user spend cap, in dollars. */
+/** A spend cap in dollars: Codex's per-user limit, or Claude's monthly usage credits. */
 export interface Spend {
   used: number
   limit: number
