@@ -25,6 +25,8 @@ const usageDir = join(cacheDir, "usage")
 
 interface CacheEntry {
   cachedAt: number
+  /** ms time of the last failed fetch that left these limits in place. */
+  failedAt?: number
   snapshot: Snapshot
 }
 
@@ -40,13 +42,22 @@ export function readCache(p: Profile): CacheEntry | null {
   }
 }
 
-function writeCache(p: Profile, snapshot: Snapshot) {
-  if (!snapshot.ok && readCache(p)?.snapshot.ok) return
+/** Stores a snapshot and returns what's now cached: a failed fetch keeps the last good limits, marked with its error. */
+function writeCache(p: Profile, snapshot: Snapshot): Snapshot {
+  const last = readCache(p)
+  const entry: CacheEntry =
+    !snapshot.ok && last?.snapshot.ok
+      ? {
+          cachedAt: last.cachedAt,
+          failedAt: Date.now(),
+          snapshot: { ...last.snapshot, refreshError: snapshot.error },
+        }
+      : { cachedAt: nowSeconds(), snapshot }
   mkdirSync(usageDir, { recursive: true })
-  const entry: CacheEntry = { cachedAt: nowSeconds(), snapshot }
   const tmp = `${cachePath(p)}.${process.pid}.tmp`
   writeFileSync(tmp, JSON.stringify(entry))
   renameSync(tmp, cachePath(p))
+  return entry.snapshot
 }
 
 export function claimLockFile(path: string, ttlSeconds = LOCK_TTL_SECONDS): boolean {
@@ -79,26 +90,20 @@ function fetchProfile(p: Profile): Promise<Snapshot> {
   return p.kind === "codex" ? fetchCodex(p.home) : fetchClaude(p.home)
 }
 
-function orLastGood(p: Profile, snapshot: Snapshot): Snapshot {
-  const good = readCache(p)?.snapshot
-  return !snapshot.ok && good?.ok ? { ...good, refreshError: snapshot.error } : snapshot
-}
-
 /** Fetches and caches a snapshot. The caller must already hold the lock; it's released here. */
 export async function refreshLocked(p: Profile): Promise<Snapshot> {
   const release = () => releaseLock(p)
   process.once("exit", release)
   try {
-    const snapshot = await fetchProfile(p)
-    writeCache(p, snapshot)
-    return orLastGood(p, snapshot)
+    return writeCache(p, await fetchProfile(p))
   } finally {
     process.off("exit", release)
     releaseLock(p)
   }
 }
 
-function spawnBackgroundRefresh(p: Profile) {
+/** Starts a detached refresh unless one already holds the profile's lock. */
+export function spawnBackgroundRefresh(p: Profile) {
   if (!claimLock(p)) return
   try {
     const child = Bun.spawn([...selfCommand(), "vision", "refresh", profileKey(p), "--locked"], {
@@ -123,7 +128,5 @@ export async function getSnapshot(p: Profile): Promise<Snapshot> {
   }
 
   if (claimLock(p)) return refreshLocked(p)
-  const snapshot = await fetchProfile(p)
-  writeCache(p, snapshot)
-  return orLastGood(p, snapshot)
+  return writeCache(p, await fetchProfile(p))
 }

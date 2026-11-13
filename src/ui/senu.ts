@@ -14,7 +14,7 @@ import { clamp, easeInOut, easeOut, phase, pulse, smooth } from "./motion.ts"
 import { brand, hex, mix } from "./theme.ts"
 
 export interface FlightPlan {
-  /** ms since the popup opened. */
+  /** ms on the flight clock, which starts as the popup opens. */
   t: number
   /** Whether any section is loading or refreshing. */
   busy: boolean
@@ -22,11 +22,15 @@ export interface FlightPlan {
   marks: number[]
   /** Departure time in ms since opening; null until a landing is scheduled. */
   leave: number | null
+  /** A later flight: she left the snag at RISE_AT on a clock restarted to suit. */
+  risen?: boolean
   /** Reduced motion: the bird is already on the snag. */
   perched: boolean
   time: SceneTime
   /** Scene width in columns, calculated by `sceneCols`. */
   cols: number
+  /** ms since the popup opened, for the scenery, which keeps time across later flights. */
+  sceneT?: number
   /** The bird has left the snag to look at something outside the scene. */
   away?: boolean
 }
@@ -34,6 +38,9 @@ export interface FlightPlan {
 const FOLD_MS = 330
 const MIN_LEAVE_MS = 600
 const FLARE_MS = 260
+const UNFOLD_MS = 100
+/** ms from leaving the snag until she is exactly on the loop. */
+export const TAKEOFF_MS = 1300
 
 /** True once the bird is still on the snag, so the scene no longer needs animation frames. */
 export const flightDone = (p: FlightPlan) =>
@@ -42,6 +49,18 @@ export const flightDone = (p: FlightPlan) =>
 const LOOP = { cx: 68, cy: 15, rx: 54, ry: 9, lap: 3000, wobble: 1, phase: -8.998, near: 7, far: 3 }
 const omega = (2 * Math.PI) / LOOP.lap
 const loopAngle = (t: number) => LOOP.phase + omega * t
+
+/** The loop's point nearest the snag, where a later flight starts tracing it. */
+const START_ANGLE = 0.1
+const MERGE_MS = TAKEOFF_MS - UNFOLD_MS
+/** Loop time during a take-off: stopped at START_ANGLE to begin, at full speed and in step by the end. */
+const mergeTime = (rise: number, u: number) =>
+  rise + UNFOLD_MS + MERGE_MS * (1 / 3 + u ** 2 - u ** 3 / 3)
+/** When a later flight leaves the snag, timed so the loop's point is beside her as her wings open. */
+export const RISE_AT = (() => {
+  const at = (START_ANGLE - LOOP.phase) / omega - UNFOLD_MS - MERGE_MS / 3
+  return ((at % LOOP.lap) + LOOP.lap) % LOOP.lap
+})()
 
 function loopAt(t: number) {
   const a = loopAngle(t)
@@ -69,6 +88,8 @@ function wingbeat(t: number) {
 }
 
 const PERCH_DOTS = { x: PERCH.x * 2 + 1, y: PERCH.y * 2 }
+/** Where her body sits above her talons, so opening her wings doesn't shift her. */
+const LIFT = { x: -1, y: -5 }
 const FLARE_FROM = { x: PERCH_DOTS.x + 2, y: PERCH_DOTS.y - 4 }
 
 /** The snag's talon spot in quadrant pixels on a scene `cols` wide. */
@@ -249,6 +270,39 @@ interface Bird {
 
 function birdAt(t: number, plan: FlightPlan, perch: { x: number; y: number }): Bird {
   const facing = -1
+  const rise = !plan.perched && plan.risen ? RISE_AT : null
+  if (rise != null && t < rise + UNFOLD_MS) {
+    // Before rising she was still on the snag; the trail and rings sample those moments too.
+    return {
+      x: perch.x,
+      y: perch.y,
+      near: 1,
+      pixels: landingPixels(t < rise ? "perch" : "fold", facing),
+      onLoop: false,
+      flying: false,
+    }
+  }
+  if (rise != null && t < rise + TAKEOFF_MS) {
+    // She traces the loop from the first beat: its point starts beside the snag and
+    // speeds up from rest, while the gap between her and it closes.
+    const u = (t - rise - UNFOLD_MS) / MERGE_MS
+    const p = loopAt(mergeTime(rise, u))
+    const from = loopAt(mergeTime(rise, 0))
+    const gap = 1 - smooth(u)
+    const near = p.near + (1 - p.near) * gap
+    const beat = -Math.sin((2 * Math.PI * (t - rise)) / 360) * 0.9
+    return {
+      x: p.x + (perch.x + LIFT.x - from.x) * gap,
+      y: p.y + (perch.y + LIFT.y - from.y) * gap,
+      near,
+      pixels: flyingPixels(
+        LOOP.far + (LOOP.near - LOOP.far) * near,
+        beat * gap + wingbeat(t) * (1 - gap),
+      ),
+      onLoop: false,
+      flying: true,
+    }
+  }
   const land = plan.leave == null ? Infinity : plan.leave + arcMs(plan.leave)
   if (plan.perched || t >= land) {
     const since = plan.perched ? Infinity : t - land
@@ -434,7 +488,7 @@ function isBacklit(scene: Desert, bird: Bird, time: SceneTime): boolean {
   return time !== "day" && n > 0 && sum / n > (time === "night" ? 0.55 : 0.5)
 }
 
-function paintTrail(plan: FlightPlan, tone: Tone, at: (t: number) => Bird, sx: number): Braille {
+function paintTrail(plan: FlightPlan, tone: Tone, at: (t: number) => Bird): Braille {
   const { t, cols } = plan
   const trail = new Braille(cols, SCENE_ROWS)
   if (!plan.perched) {
@@ -459,11 +513,13 @@ function paintTrail(plan: FlightPlan, tone: Tone, at: (t: number) => Bird, sx: n
     for (const mark of plan.marks) {
       const age = t - mark
       if (age < 0 || age > 900) continue
-      const p = loopAt(mark)
+      const p = at(mark)
+      // Rings spread from where she was in the air; data landing while she's on the snag has none.
+      if (!p.flying) continue
       const r = 2 + age / 60
       for (let a = 0; a < Math.PI * 2; a += 0.12)
         trail.dot(
-          p.x + sx + r * Math.cos(a),
+          p.x + r * Math.cos(a),
           p.y + r * Math.sin(a) * 0.55,
           mix(tone.trail, tone.ringEnd, age / 900),
           20,
@@ -545,7 +601,12 @@ function compositeScene(
 
 /** Paints into a canvas sized plan.cols by SCENE_ROWS terminal cells; plan times are ms since opening. */
 export function paintSky(c: Canvas, plan: FlightPlan) {
-  const scene = desert(c, { t: plan.t, busy: plan.busy, time: plan.time, cols: plan.cols })
+  const scene = desert(c, {
+    t: plan.sceneT ?? plan.t,
+    busy: plan.busy,
+    time: plan.time,
+    cols: plan.cols,
+  })
   const tone = TONES[plan.time]
   const sx = sceneShift(plan.cols) * 2
   const at = (t: number) => {
@@ -556,7 +617,7 @@ export function paintSky(c: Canvas, plan: FlightPlan) {
   compositeScene(
     c,
     scene,
-    paintTrail(plan, tone, at, sx),
+    paintTrail(plan, tone, at),
     paintBird(plan, tone, bird),
     isBacklit(scene, bird, plan.time),
     plan.cols,

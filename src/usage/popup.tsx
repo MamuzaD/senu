@@ -20,12 +20,12 @@ import {
   tween,
   useTicker,
 } from "~/ui/motion.ts"
-import { flightDone, leaveAfter, snagAt, type FlightPlan } from "~/ui/senu.ts"
+import { RISE_AT, TAKEOFF_MS, flightDone, leaveAfter, snagAt, type FlightPlan } from "~/ui/senu.ts"
 import { Sky } from "~/ui/sky.tsx"
 import { brand, colors, icons, mix, noColor } from "~/ui/theme.ts"
 import { newerRelease } from "~/update/release.ts"
 
-import { getSnapshot, readCache } from "./cache.ts"
+import { getSnapshot, readCache, spawnBackgroundRefresh } from "./cache.ts"
 import { axis, stackedBars } from "./chart.ts"
 import {
   BAR_WIDTH,
@@ -237,10 +237,13 @@ function freshness(
   if (!snapshot) return { text: `fetching${dots}`, fg: colors.muted }
   const age = nowSeconds() - snapshot.updatedAt
   const ago = age < 60 ? "just now" : `${formatDuration(age)} ago`
+  // Only data old enough to mislead gets its age called out while it refreshes.
+  if (section.refreshing)
+    return age > STALE_NOTICE_SECONDS
+      ? { text: `${formatDuration(age)} old · refreshing${dots}`, fg: colors.warn }
+      : { text: `refreshing${dots}`, fg: colors.muted }
   if (!snapshot.ok) return { text: `tried ${ago}`, fg: colors.muted }
   if (section.justUpdated) return { text: "✓ now updated", fg: glow(colors.good) }
-  if (section.refreshing)
-    return { text: `${formatDuration(age)} old · refreshing${dots}`, fg: colors.warn }
   if (snapshot.refreshError)
     return { text: `${formatDuration(age)} old · ${snapshot.refreshError}`, fg: colors.warn }
   return {
@@ -709,6 +712,10 @@ const quitKeys = (looking: boolean): HintBinding[] => [
   { key: "shift+q", cmd: "quit" },
   ...(looking ? [] : [{ key: "escape", cmd: "quit" }]),
 ]
+const refreshKeys: HintBinding[] = [
+  { key: "r", cmd: "refresh", desc: "r refresh" },
+  { key: "shift+r", cmd: "refresh" },
+]
 const limitsKeys: HintBinding[] = [
   { key: "up", cmd: "look-previous", desc: "↑/↓ look" },
   { key: "down", cmd: "look-next" },
@@ -721,6 +728,7 @@ const limitsKeys: HintBinding[] = [
   { key: "t", cmd: "show-cost" },
   { key: "shift+t", cmd: "show-cost" },
   { key: "tab", cmd: "toggle-view" },
+  ...refreshKeys,
 ]
 const rangeKeys: HintBinding[] = [
   { key: "left", cmd: "previous-range", desc: "←/→ range" },
@@ -745,6 +753,7 @@ const costKeys: HintBinding[] = [
   { key: "t", cmd: "toggle-view" },
   { key: "shift+t", cmd: "toggle-view" },
   { key: "tab", cmd: "toggle-view" },
+  ...refreshKeys,
 ]
 
 /** The glance's chart takes the range keys while senu looks at a profile. */
@@ -775,9 +784,11 @@ export function UsagePopup({
     })),
   )
   const [tick, setTick] = useState(0)
-  const [startedAt] = useState(() => Date.now())
+  const [startedAt, setStartedAt] = useState(() => Date.now())
   const [openedAt] = useState(now)
   const [leave, setLeave] = useState<number | null>(null)
+  /** The flight clock's zero: the popup's opening, then set back before each later take-off. */
+  const [epoch, setEpoch] = useState<number | null>(null)
 
   const update = (i: number, patch: Partial<Section>) =>
     setSections((prev) => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)))
@@ -805,9 +816,10 @@ export function UsagePopup({
   const [watchingToday, setWatchingToday] = useState(() =>
     profiles.map((_, i) => !todayIsFresh(todays[i] ?? null)),
   )
-  // Watch the initial totals until each refresh lands or times out.
+  const [refreshRun, setRefreshRun] = useState(0)
+  // Watch stale totals, or all of them after a manual refresh, until each lands or times out.
   const watchToday = useEffectEvent(() => {
-    const watching = profiles.map((_, i) => !todayIsFresh(todays[i] ?? null))
+    const watching = profiles.map((_, i) => refreshRun > 0 || !todayIsFresh(todays[i] ?? null))
     if (!watching.some(Boolean)) return
     spawnTodayRefresh(profiles.filter((_, i) => watching[i]))
     const since = todays.map((t) => t?.updatedAt ?? 0)
@@ -825,14 +837,26 @@ export function UsagePopup({
     }, POLL_MS)
     return () => clearInterval(id)
   })
-  useEffect(() => watchToday(), [])
+  useEffect(() => watchToday(), [refreshRun])
+
+  /** Refetches limits and rescans totals now, whatever their age. */
+  const refresh = () => {
+    setStartedAt(Date.now())
+    profiles.forEach(spawnBackgroundRefresh)
+    setSections((prev) =>
+      prev.map((s) => (s.snapshot ? { ...s, refreshing: true, justUpdated: false } : s)),
+    )
+    setWatchingToday(profiles.map(() => true))
+    setRefreshRun((n) => n + 1)
+  }
 
   const refreshing = sections.some((s) => s.refreshing)
   const busy = sections.some((s) => !s.snapshot || s.refreshing)
 
   useEffect(() => {
     if (!refreshing) return
-    const id = setInterval(() => setTick((t) => t + 1), POLL_MS)
+    // Fast enough that the status dots step evenly.
+    const id = setInterval(() => setTick((t) => t + 1), DOTS_MS)
     return () => clearInterval(id)
   }, [refreshing])
   useEffect(() => {
@@ -846,9 +870,12 @@ export function UsagePopup({
     const watchedOut = Date.now() - startedAt >= MAX_POLL_SECONDS * 1000
     sections.forEach((section, i) => {
       if (!section.refreshing || !section.snapshot) return
-      const fresh = readCache(profiles[i]!)?.snapshot
+      const entry = readCache(profiles[i]!)
+      const fresh = entry?.snapshot
       if (fresh && fresh.updatedAt > section.snapshot.updatedAt) {
         update(i, { snapshot: fresh, refreshing: false, justUpdated: true, landedAt: now() })
+      } else if (fresh && (entry.failedAt ?? 0) >= startedAt) {
+        update(i, { snapshot: fresh, refreshing: false })
       } else if (watchedOut) {
         update(i, { refreshing: false })
       }
@@ -886,6 +913,7 @@ export function UsagePopup({
         { name: "look-previous", run: () => look(-1) },
         { name: "look-next", run: () => look(1) },
         { name: "look-none", run: () => setGaze(null) },
+        { name: "refresh", run: refresh },
         {
           name: "toggle-breakdown",
           run: () => setBreakdown((b) => (b === "profile" ? "model" : "profile")),
@@ -897,15 +925,19 @@ export function UsagePopup({
 
   const t = now()
   const cols = sceneCols(width)
-  if (!busy && leave == null) setLeave(leaveAfter(t - openedAt))
+  const flightFrom = epoch ?? openedAt
+  if (!busy && leave == null)
+    setLeave(leaveAfter(Math.max(t - flightFrom, epoch == null ? 0 : RISE_AT + TAKEOFF_MS)))
   const plan: FlightPlan = {
-    t: t - openedAt,
+    t: t - flightFrom,
+    sceneT: t - openedAt,
     busy: busy && !reducedMotion,
     marks: sections
       .map((s) => s.landedAt)
       .filter((at): at is number => at != null)
-      .map((at) => at - openedAt),
+      .map((at) => at - flightFrom),
     leave,
+    risen: epoch != null,
     perched: reducedMotion || noColor,
     time,
     cols,
@@ -957,6 +989,14 @@ export function UsagePopup({
     setTravel({ from: hop ? hopAt(hop, t) : snagAt(cols), to: goal, at: t })
   const away = hop != null && !(travel?.to == null && hopDone(hop, t))
   plan.away = away
+  // A refresh keeps her circling, or sends her back up once she has landed.
+  if (busy && leave != null && !plan.perched) {
+    if (plan.t <= leave) setLeave(null)
+    else if (flightDone(plan) && !away && gaze == null) {
+      setEpoch(t - RISE_AT)
+      setLeave(null)
+    }
+  }
   // The limits give senu a gutter only while she's beside them or flying back.
   const gutterOpen = perches && (gaze != null || away)
   const sectionRight = gutterOpen ? right - GUTTER : right
@@ -978,7 +1018,9 @@ export function UsagePopup({
   const note = skyless
     ? ""
     : busy
-      ? "senu is circling"
+      ? leave != null && flightDone(plan)
+        ? "senu looks again"
+        : "senu is circling"
       : !flightDone(plan)
         ? "senu comes in to land"
         : !settled
