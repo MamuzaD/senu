@@ -68,10 +68,28 @@ function toLimit(label: string, window: any, windowMs: number): Limit {
 const MODEL_WEEKS: Record<string, string> = { seven_day_opus: "Opus", seven_day_sonnet: "Sonnet" }
 const MAX_MODEL_ROWS = 2
 
+/** Newer models (Fable) only appear as `weekly_scoped` entries in `limits`, named by the server. */
+function scopedWeeks(data: any): Limit[] {
+  const limits: any[] = Array.isArray(data?.limits) ? data.limits : []
+  return limits
+    .filter((l) => l?.kind === "weekly_scoped" && typeof l.percent === "number")
+    .filter((l) => typeof l.scope?.model?.display_name === "string")
+    .map((l) =>
+      toLimit(
+        l.scope.model.display_name,
+        { utilization: l.percent, resets_at: l.resets_at },
+        7 * 24 * HOUR_MS,
+      ),
+    )
+}
+
 function modelWeeks(data: any): Limit[] {
-  const present = Object.entries(MODEL_WEEKS)
-    .filter(([key]) => typeof data?.[key]?.utilization === "number")
+  const scoped = scopedWeeks(data)
+  const named = new Set(scoped.map((l) => l.label))
+  const legacy = Object.entries(MODEL_WEEKS)
+    .filter(([key, label]) => typeof data?.[key]?.utilization === "number" && !named.has(label))
     .map(([key, label]) => toLimit(label, data[key], 7 * 24 * HOUR_MS))
+  const present = [...scoped, ...legacy]
   const kept = new Set(present.toSorted((a, b) => a.left! - b.left!).slice(0, MAX_MODEL_ROWS))
   return present.filter((l) => kept.has(l))
 }
