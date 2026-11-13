@@ -674,7 +674,7 @@ test("scrolling the preview to the top reads further back, to the start of the t
   expect(t.captureCharFrame()).toContain("start of thread")
 })
 
-test("search lists message-only matches below title matches, previews the citation, and cancels stale queries", async () => {
+test("search sorts message-only matches in by recency, previews the citation, and cancels stale queries", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const t = await createTestRenderer({ width: 140, height: 26 })
   destroy = () => act(() => t.renderer.destroy())
@@ -692,6 +692,13 @@ test("search lists message-only matches below title matches, previews the citati
     updatedMs: Date.now(),
     live: null,
   }))
+  // An old title match, which a recent message-only match should outrank
+  initial.push({
+    ...initial[0]!,
+    thread: { ...initial[0]!.thread!, sessionId: "gamma" },
+    title: "old needle notes",
+    updatedMs: Date.now() - 2 * RECENT_MS,
+  })
   const calls: {
     query: string
     signal: AbortSignal
@@ -735,8 +742,9 @@ test("search lists message-only matches below title matches, previews the citati
     calls[0]!.result.resolve(new Map([["claude-work:beta", "/fixture.jsonl:7\nneedle evidence"]]))
   })
   await act(() => t.renderOnce())
-  expect(t.captureCharFrame()).toContain("in messages")
-  expect(t.captureCharFrame()).toContain("beta conversation")
+  const frame = t.captureCharFrame()
+  expect(frame).toContain("\u{EA6B}")
+  expect(frame.indexOf("beta conversation")).toBeLessThan(frame.indexOf("old needle notes"))
   expect(t.captureCharFrame()).not.toContain("alpha conversation")
   expect(t.captureCharFrame()).toContain("/fixture.jsonl:7")
   expect(t.captureCharFrame()).toContain("needle evidence")

@@ -276,6 +276,8 @@ interface View {
   showPreview: boolean
   focus: Focus
   turns: Turn[] | null
+  /** Threads listed for a match in their messages, not their titles */
+  inMessages: Set<Entry>
   /** What to highlight in the preview: the query, when it previews a message hit */
   mark: string
   /** The preview holds the selected thread from its first turn */
@@ -371,6 +373,7 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
       mx = c.text(mx + 2, y + 1, e.live.session, colors.muted, { max: right })
       c.text(mx, y + 1, `:${e.live.windowIndex}`, colors.dim, { max: right })
     }
+    if (v.inMessages.has(e)) c.text(right, y + 1, icons.message, lit(brand.gold, right))
     y += rowHeight(r)
   }
   if (!v.rows.length) {
@@ -639,28 +642,29 @@ export function Browser({
     const ordered = live
       ? entries.filter((e) => e.live).toSorted(byAttention)
       : entries.toSorted((a, b) => pinRank(a) - pinRank(b))
-    const loaded = ordered.slice(0, limit)
-    const pool = loaded.filter((e) => matches(e, query))
-    // Threads that only match in their messages come after every title match, so hits arriving
-    // late never move what's already on screen
     const hits = messageHits?.query === messageQuery(query) ? messageHits.hits : null
-    const inMessages = hits ? loaded.filter((e) => !matches(e, query) && hits.has(keyOf(e))) : []
+    // Threads that only match in their messages sort in by recency with the rest; the selection
+    // follows its thread, so hits arriving late don't move it
+    const inMessages = new Set<Entry>()
+    const pool = ordered.slice(0, limit).filter((e) => {
+      if (matches(e, query)) return true
+      if (!hits?.has(keyOf(e))) return false
+      inMessages.add(e)
+      return true
+    })
     return {
-      titles: live ? [{ label: "running", entries: pool }] : sections(pool, recentMs, pins),
-      messages: inMessages.length ? { label: "in messages", entries: inMessages } : null,
+      sections: live ? [{ label: "running", entries: pool }] : sections(pool, recentMs, pins),
+      inMessages,
     }
   }, [entries, query, live, limit, recentMs, pins, messageHits])
-  const flat = useMemo(
-    () => [...shown.titles, ...(shown.messages ? [shown.messages] : [])].flatMap((s) => s.entries),
-    [shown],
-  )
+  const flat = useMemo(() => shown.sections.flatMap((s) => s.entries), [shown])
   const selIndex = Math.max(
     0,
     flat.findIndex((e) => keyOf(e) === selKey),
   )
   const sel = flat[selIndex] ?? null
   const rows: Row[] = []
-  for (const s of shown.titles) {
+  for (const s of shown.sections) {
     const folds = s.label === "older"
     const open = !folds || !!query || (sel !== null && s.entries.includes(sel))
     const header = { kind: "header" as const, label: s.label, count: s.entries.length }
@@ -669,11 +673,6 @@ export function Browser({
   }
   // Holds the older threads' place until they load
   if (!live && !complete) rows.push({ kind: "header", label: "older", count: null, folded: true })
-  if (shown.messages) {
-    const { label, entries: found } = shown.messages
-    rows.push({ kind: "header", label, count: found.length })
-    for (const entry of found) rows.push({ kind: "entry", entry })
-  }
   const selRow = rows.findIndex((r) => r.kind === "entry" && r.entry === sel)
 
   const fits = (from: number, to: number) => {
@@ -688,8 +687,7 @@ export function Browser({
   const selThread = sel?.thread ?? null
   const depth = reach.key === selKey ? reach.depth : 0
   // A title match previews its conversation, even when its messages match too
-  const hit =
-    sel && shown.messages?.entries.includes(sel) ? messageHits?.hits.get(keyOf(sel)) : undefined
+  const hit = sel && shown.inMessages.has(sel) ? messageHits?.hits.get(keyOf(sel)) : undefined
   const read = selThread && !hit ? turnsOf(selThread, depth) : null
   const turns = hit ? [{ fromUser: false, text: hit }] : (read?.turns ?? null)
   const { previewTextW } = layout(width, showPreview)
@@ -970,6 +968,7 @@ export function Browser({
     showPreview,
     focus: showPreview ? focus : "list",
     turns,
+    inMessages: shown.inMessages,
     mark: hit ? messageQuery(query) : "",
     whole,
     hiddenBelow: lines,

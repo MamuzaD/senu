@@ -41,6 +41,7 @@ export const icons = {
   codex: "\u{EC81}", // Nerd Font cod-openai
   claude: "\u{EC82}", // Nerd Font cod-claude
   opencode: "\u{F121}", // Nerd Font fa-code
+  message: "\u{EA6B}", // Nerd Font cod-comment
 }
 
 const clamp01 = (k: number) => Math.max(0, Math.min(1, k))
