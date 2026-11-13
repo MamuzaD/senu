@@ -107,7 +107,11 @@ main() {
     *) warn "$install_dir is not on your PATH; add it to your shell profile" ;;
   esac
 
-  command -v tmux >/dev/null 2>&1 || warn "tmux not found; senu needs tmux to watch agents"
+  if [ -n "${REX_SESSION:-}" ]; then
+    say "next: add the lines from https://github.com/$REPO/blob/main/rex.example.lua to your Rex init.lua"
+    return 0
+  fi
+  command -v tmux >/dev/null 2>&1 || warn "tmux not found; senu needs tmux or Rex"
   say "next: add the lines from https://github.com/$REPO/blob/main/tmux.example.conf to your tmux.conf"
 }
 

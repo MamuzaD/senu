@@ -25,13 +25,17 @@ async function call<T>(method: string, args: object = {}): Promise<T | null> {
 }
 
 interface View {
-  session_id: string
-  label: string
-  windows: {
-    window_id: string
-    focused_block_id: string
-    layers: { kind: string; blocks: { block_id: string; flavor: string }[] }[]
-  }[]
+  session_id: string | null
+  label?: string
+  windows?:
+    | {
+        window_id: string | null
+        focused_block_id?: string | null
+        layers:
+          | { kind: string; blocks: { block_id: string | null; flavor?: string }[] | null }[]
+          | null
+      }[]
+    | null
 }
 
 /** Rex's block ids don't say which session they're in, and every call needs both. */
@@ -42,20 +46,26 @@ const parts = (id: string) => {
 }
 
 export function terminalsIn(view: View) {
-  return view.windows.flatMap((w, i) =>
-    w.layers.flatMap((l) =>
-      l.blocks
-        .filter((b) => b.flavor.startsWith("com.superlogical.terminal."))
-        .map((b) => ({
-          sessionId: view.session_id,
-          blockId: b.block_id,
-          id: paneId(view.session_id, b.block_id),
-          session: view.label,
-          windowId: w.window_id,
-          // Rex numbers tabs from 1
-          windowIndex: i + 1,
-          active: w.focused_block_id === b.block_id,
-        })),
+  const sessionId = view.session_id
+  if (!sessionId) return []
+  return (view.windows ?? []).flatMap((w, i) =>
+    (w.layers ?? []).flatMap((l) =>
+      (l.blocks ?? []).flatMap((b) =>
+        b.block_id && w.window_id && b.flavor?.startsWith("com.superlogical.terminal.")
+          ? [
+              {
+                sessionId,
+                blockId: b.block_id,
+                id: paneId(sessionId, b.block_id),
+                session: view.label ?? "",
+                windowId: w.window_id,
+                // Rex numbers tabs from 1
+                windowIndex: i + 1,
+                active: w.focused_block_id === b.block_id,
+              },
+            ]
+          : [],
+      ),
     ),
   )
 }
@@ -90,10 +100,10 @@ async function agentIn(t: ReturnType<typeof terminalsIn>[number]): Promise<RexAg
       args: {},
     })
   const proc = await on<{
-    child: { pid: number }
+    child?: { pid: number } | null
     foreground: { pid: number; name: string; path?: string; cwd?: string } | null
   }>("process")
-  if (!proc?.foreground) return null
+  if (!proc?.foreground || !proc.child) return null
   const { pid, name, path, cwd } = proc.foreground
   const agent = agentFromProcess(path ?? name, () => processArgv(pid))
   if (!agent) return null
@@ -137,7 +147,8 @@ export function rexRow(a: RexAgent): PaneRow {
     paneId: a.id,
     agent: a.agent,
     state: attention(a.record?.state),
-    activity: a.record?.updated_at ? Date.parse(a.record.updated_at) / 1000 : 0,
+    // An agent that hasn't reported yet is at least running now
+    activity: (a.record?.updated_at ? Date.parse(a.record.updated_at) : Date.now()) / 1000,
     label: a.record?.msg || titleTask(a.title, a.agent, a.session) || basename(a.cwd),
     source: "watch",
     active: a.active,
@@ -151,21 +162,25 @@ export class RexCollector {
   }
 }
 
-/** Selecting another session goes through the Rex app, which needs Remote Control on. */
-export async function rexJump(id: string, windowId: string): Promise<boolean> {
+/**
+ * Server focus alone doesn't select the tab in the app, even within the same session. Selecting
+ * goes through a client: REX_CLIENT names it, else Rex uses the only app connected.
+ */
+export async function rexJump(id: string, windowId: string): Promise<"ok" | "gone" | "unselected"> {
   const target = parts(id)
-  if (target.session_id !== process.env.REX_SESSION) {
-    const select = [`session_id=${target.session_id}`, `window_id=${windowId}`]
-    if (!(await run([rex(), "do", "session.select", ...select])).ok) return false
-  }
-  return (await call("session.focus_block", target)) !== null
+  if ((await call("session.focus_block", target)) === null) return "gone"
+  const select = [`session_id=${target.session_id}`, `window_id=${windowId}`]
+  const { ok } = await run([rex(), "--autostart=false", "do", "session.select", ...select])
+  return ok ? "ok" : "unselected"
 }
 
 export const rexKill = async (id: string) => (await call("block.close", parts(id))) !== null
 
 export function floating(view: View, blockId: string): boolean {
-  return view.windows.some((w) =>
-    w.layers.some((l) => l.kind === "floating" && l.blocks.some((b) => b.block_id === blockId)),
+  return (view.windows ?? []).some((w) =>
+    (w.layers ?? []).some(
+      (l) => l.kind === "floating" && (l.blocks ?? []).some((b) => b.block_id === blockId),
+    ),
   )
 }
 
@@ -177,9 +192,18 @@ export async function rexInPopup(): Promise<boolean> {
 export function rexRunArgs(launch: Launch, sessionId: string): string[] {
   const env = Object.entries(launch.env).map(([k, v]) => `${k}=${v}`)
   const argv = env.length ? ["env", ...env, ...launch.argv] : launch.argv
-  return ["run", "-s", sessionId, "-c", launch.cwd, "--", ...argv]
+  // Agents are often only on the interactive shell's PATH, as opencode's installer sets it up
+  return ["run", "--json", "--interactive", "-s", sessionId, "-c", launch.cwd, "--", ...argv]
 }
 
 export async function rexOpenWindow(launch: Launch): Promise<boolean> {
-  return (await run([rex(), ...rexRunArgs(launch, process.env.REX_SESSION ?? "")])).ok
+  const sessionId = process.env.REX_SESSION ?? ""
+  const { ok, out } = await run([rex(), "--autostart=false", ...rexRunArgs(launch, sessionId)])
+  if (!ok) return false
+  // The agent is already running, so a tab the app can't select still counts; failing here
+  // would make a retry start a second copy
+  const created = JSON.parse(out) as { window_id: string; block_ids: string[] }
+  const blockId = created.block_ids[0]
+  if (blockId) await rexJump(paneId(sessionId, blockId), created.window_id)
+  return true
 }

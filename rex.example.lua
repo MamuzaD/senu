@@ -8,14 +8,22 @@ local function popup(name, title, w, h, command)
 		name = name,
 		title = title,
 		category = "Popups",
-		run = function()
+		run = function(ctx)
+			-- A session can be open on several devices. Use the client that opened this popup.
+			local argv = { "env" }
+			if ctx.client_id then
+				table.insert(argv, "REX_CLIENT=" .. ctx.client_id)
+			end
+			for _, arg in ipairs(command) do
+				table.insert(argv, arg)
+			end
 			rex.session.new_layer({
 				bounds = { (1 - w) / 2, (1 - h) / 2, w, h },
 				focus = true,
 				layout = rex.layout.block({
 					flavor = "com.superlogical.terminal.shell",
 					label = title,
-					options = { command = command },
+					options = { command = argv },
 				}),
 			})
 		end,

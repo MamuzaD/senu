@@ -36,7 +36,7 @@ Add the lines from [`tmux.example.conf`](tmux.example.conf) to your tmux.conf, t
 In [Rex](https://www.superlogical.com/rex), add the lines from [`rex.example.lua`](rex.example.lua)
 to your `init.lua` instead. Rex already shows agent status and plays its own sounds, so `senu watch`
 isn't needed; `senu threads` adds a picker across sessions, and `senu vision` works as usual. Jumping
-to another session needs Remote Control on in Rex Settings > Rex Server.
+to a tab needs Remote Control on in Rex Settings > Server > Client Info.
 
 Configuration lives at `~/.config/senu/config.toml`; see [`config.example.toml`](config.example.toml).
 

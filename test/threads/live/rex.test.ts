@@ -47,6 +47,28 @@ const agent = (over: Partial<RexAgent> = {}): RexAgent => ({
 })
 
 describe("terminalsIn", () => {
+  test("accepts empty sessions, windows, and layers from the API", () => {
+    expect(terminalsIn({ session_id: "s", windows: null })).toEqual([])
+    expect(terminalsIn({ session_id: "s" })).toEqual([])
+    const empty = { window_id: "w", layers: null }
+    expect(terminalsIn({ session_id: "s", windows: [empty] })).toEqual([])
+    expect(
+      terminalsIn({
+        session_id: "s",
+        windows: [{ ...empty, layers: [{ kind: "tiled", blocks: null }] }],
+      }),
+    ).toEqual([])
+  })
+
+  test("skips blocks with no flavor instead of failing the whole collection", () => {
+    expect(
+      terminalsIn({
+        session_id: "s",
+        windows: [{ window_id: "w", layers: [{ kind: "tiled", blocks: [{ block_id: "b" }] }] }],
+      }),
+    ).toEqual([])
+  })
+
   test("lists terminals in every layer, numbering tabs from 1", () => {
     const found = terminalsIn(view)
     expect(found.map((t) => t.blockId)).toEqual(["block:1", "block:2", "block:3"])
@@ -57,6 +79,22 @@ describe("terminalsIn", () => {
 })
 
 describe("floating", () => {
+  test("accepts empty sessions and layers", () => {
+    expect(floating({ session_id: "s", windows: null }, "b")).toBe(false)
+    expect(floating({ session_id: "s", windows: [{ window_id: "w", layers: null }] }, "b")).toBe(
+      false,
+    )
+    expect(
+      floating(
+        {
+          session_id: "s",
+          windows: [{ window_id: "w", layers: [{ kind: "floating", blocks: null }] }],
+        },
+        "b",
+      ),
+    ).toBe(false)
+  })
+
   test("is true only for a block in a floating layer", () => {
     expect(floating(view, "block:3")).toBe(true)
     expect(floating(view, "block:2")).toBe(false)
@@ -83,8 +121,11 @@ describe("rexRow", () => {
     expect(rexRow(agent({ record: { state: "error" } })).state).toBe("done")
   })
 
-  test("is idle with no record", () => {
-    expect(rexRow(agent())).toMatchObject({ state: "idle", activity: 0 })
+  test("is idle and active now with no record", () => {
+    const before = Date.now() / 1000
+    const row = rexRow(agent())
+    expect(row.state).toBe("idle")
+    expect(row.activity).toBeGreaterThanOrEqual(before)
   })
 
   test("falls back to the title's task, then the directory", () => {
@@ -98,6 +139,8 @@ describe("rexRunArgs", () => {
     const launch = { argv: ["codex", "resume", "t"], cwd: "/c", env: { CODEX_HOME: "/h" } }
     expect(rexRunArgs(launch, "session:a")).toEqual([
       "run",
+      "--json",
+      "--interactive",
       "-s",
       "session:a",
       "-c",

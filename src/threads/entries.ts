@@ -165,8 +165,14 @@ export async function openEntry(
 ): Promise<number> {
   if (e.live) {
     if (inRex()) {
-      if (await rexJump(e.live.paneId, e.live.windowId)) return 0
-      throw new OpenError("not reachable: is Remote Control on in Rex Settings > Rex Server?")
+      const jumped = await rexJump(e.live.paneId, e.live.windowId)
+      if (jumped === "ok") return 0
+      if (jumped === "gone") throw new OpenError("no longer running")
+      throw new OpenError(
+        process.env.REX_CLIENT
+          ? "not reachable: is Remote Control on in Rex Settings > Server > Client Info?"
+          : "Rex can't tell which device to switch; open senu from its popup",
+      )
     }
     if (!process.env.TMUX) throw new OpenError(`running in tmux session ${e.live.session}`)
     await jump(e.live, opts)
