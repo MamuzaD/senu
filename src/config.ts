@@ -22,6 +22,7 @@ export type UsageScene = "night" | "dawn" | "day" | "dusk" | "auto"
 
 export interface Config {
   profiles: Profile[]
+  privacy?: { restricted: string[] }
   usage: {
     scene: UsageScene
   }
@@ -155,10 +156,21 @@ function parseProfile(raw: unknown, index: number): Profile {
   }
 }
 
+function parsePrivacy(raw: unknown): { restricted: string[] } {
+  if (raw === undefined) return { restricted: [] }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw new ConfigError("privacy: expected a table ([privacy])")
+  const restricted = (raw as Record<string, unknown>).restricted ?? []
+  if (!Array.isArray(restricted) || restricted.some((v) => typeof v !== "string" || !v))
+    throw new ConfigError("privacy.restricted: expected an array of profile names")
+  return { restricted }
+}
+
 export function loadConfig(path = configPath): Config {
   if (!existsSync(path))
     return {
       profiles: defaultProfiles(),
+      privacy: parsePrivacy(undefined),
       usage: { scene: sceneOf(undefined) },
       threads: defaultThreads(),
       sound: defaultSound(),
@@ -190,6 +202,7 @@ export function loadConfig(path = configPath): Config {
 
   return {
     profiles,
+    privacy: parsePrivacy(data.privacy),
     usage: { scene: sceneOf(usage.scene) },
     threads: parseThreads(data.threads),
     sound: parseSound(data.sound),

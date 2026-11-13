@@ -58,3 +58,10 @@ always = false
 done = ""
 # Sound file for an agent asking for something, as above
 request = ""
+
+[privacy]
+# Off unless set: every caller can search every profile.
+# Search: callers under these profile names see only profiles with the same name.
+# Unknown callers see only restricted profiles. Known personal callers and `senu search` typed
+# in your own shell see all profiles.
+# restricted = ["work"]
