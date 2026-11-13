@@ -2,9 +2,8 @@ import { existsSync } from "node:fs"
 import { dirname, join } from "node:path"
 
 import { opencodeHome, type ThreadsConfig } from "~/config.ts"
-import { tmux } from "~/detect/panes.ts"
 import { home } from "~/paths.ts"
-import { inRex, rexInPopup, rexOpenWindow } from "~/threads/live/rex.ts"
+import { mux } from "~/threads/live/mux.ts"
 
 import type { Thread } from "./thread.ts"
 
@@ -37,13 +36,6 @@ export function launchFor(t: Pick<Thread, "agent" | "sessionId" | "cwd" | "home"
 
 export class ResumeError extends Error {}
 
-async function openWindow(launch: Launch): Promise<number> {
-  const env = Object.entries(launch.env).flatMap(([k, v]) => ["-e", `${k}=${v}`])
-  const { ok } = await tmux("new-window", "-c", launch.cwd, ...env, "--", ...launch.argv)
-  if (!ok) throw new ResumeError("tmux could not open a window")
-  return 0
-}
-
 function runHere(launch: Launch): Promise<number> {
   return Bun.spawn(launch.argv, {
     cwd: launch.cwd,
@@ -55,13 +47,9 @@ function runHere(launch: Launch): Promise<number> {
 export async function resume(t: Thread, mode: ThreadsConfig["resume"]): Promise<number> {
   const launch = launchFor(t)
   if (!existsSync(launch.cwd)) throw new ResumeError(`${launch.cwd} no longer exists`)
-  if (inRex()) {
-    if (mode !== "window" && !(await rexInPopup())) return runHere(launch)
-    if (await rexOpenWindow(launch)) return 0
-    throw new ResumeError("Rex could not open a tab")
-  }
-  // A popup is a throwaway, so the thread gets its own window, as it does when resume = "window";
-  // tmux gives a popup TMUX but no TMUX_PANE
-  const window = process.env.TMUX && (mode === "window" || !process.env.TMUX_PANE)
-  return window ? openWindow(launch) : runHere(launch)
+  const host = mux()
+  if (!(await host.resumesInWindow(mode))) return runHere(launch)
+  const failed = await host.openWindow(launch)
+  if (failed) throw new ResumeError(failed)
+  return 0
 }

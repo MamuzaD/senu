@@ -1,19 +1,15 @@
 import type { Profile, ThreadsConfig } from "~/config.ts"
 import type { Agent } from "~/detect/manifest.ts"
-import { listPanes, tmux, type Pane } from "~/detect/panes.ts"
-import { jump } from "~/threads/live/actions.ts"
 import {
-  Collector,
   foldWindows,
   type AgentRow,
   type Attention,
   type Collected,
   type PaneRow,
 } from "~/threads/live/collect.ts"
-import { inRex, rexAgents, rexJump, rexRow } from "~/threads/live/rex.ts"
+import { mux, type Seen } from "~/threads/live/mux.ts"
 
 import { resume } from "./resume.ts"
-import { runningThreads } from "./running.ts"
 import { listThreads, threadKey, type Only, type Thread } from "./thread.ts"
 
 export interface Live {
@@ -57,19 +53,12 @@ export const agentEntry = (r: AgentRow, cwd: string): Entry => ({
   },
 })
 
-export interface TmuxState {
-  panes: Pick<Pane, "id" | "windowId" | "windowIndex" | "session" | "cwd">[]
-  rows: PaneRow[]
-  /** Running threads' panes, by `threadKey` */
-  paneByThread: Map<string, string>
-}
-
 const unthreaded = (rows: PaneRow[], threaded: Set<string>, cwdOf: (paneId: string) => string) =>
   foldWindows(rows.filter((r) => !threaded.has(r.paneId))).map((r) =>
     agentEntry(r, cwdOf(r.paneId)),
   )
 
-export function joinEntries(threads: Thread[], seen: TmuxState, withUnthreaded: boolean): Entry[] {
+export function joinEntries(threads: Thread[], seen: Seen, withUnthreaded: boolean): Entry[] {
   const paneById = new Map(seen.panes.map((p) => [p.id, p]))
   const rowByPane = new Map(seen.rows.map((r) => [r.paneId, r]))
   const listed = new Set(threads.map((t) => threadKey(t.profile, t.sessionId)))
@@ -131,22 +120,7 @@ export async function listEntries(
   scope: Scope = "all",
   recentMs = Infinity,
 ) {
-  let seen: TmuxState = { panes: [], rows: [], paneByThread: new Map() }
-  if (inRex()) {
-    const agents = await rexAgents()
-    seen = {
-      panes: agents,
-      rows: agents.map(rexRow),
-      paneByThread: await runningThreads(profiles, agents),
-    }
-  } else if ((await tmux("info")).ok) {
-    const panes = listPanes()
-    const [{ rows }, paneByThread] = await Promise.all([
-      new Collector().collect(),
-      panes.then((ps) => runningThreads(profiles, ps)),
-    ])
-    seen = { panes: await panes, rows, paneByThread }
-  }
+  const seen = await mux().seen(profiles)
   const ids = new Set(seen.paneByThread.keys())
   const only: Record<Scope, Only | undefined> = {
     all: undefined,
@@ -164,19 +138,8 @@ export async function openEntry(
   opts: Pick<ThreadsConfig, "raiseGhosttyTab" | "resume">,
 ): Promise<number> {
   if (e.live) {
-    if (inRex()) {
-      const jumped = await rexJump(e.live.paneId, e.live.windowId)
-      if (jumped === "ok") return 0
-      if (jumped === "gone") throw new OpenError("no longer running")
-      throw new OpenError(
-        process.env.REX_CLIENT
-          ? "not reachable: is Remote Control on in Rex Settings > Server > Client Info?"
-          : "Rex can't tell which device to switch; open senu from its popup",
-      )
-    }
-    if (!process.env.TMUX) throw new OpenError(`running in tmux session ${e.live.session}`)
-    await jump(e.live, opts)
-    await tmux("select-pane", "-t", e.live.paneId)
+    const failed = await mux().jump(e.live, opts)
+    if (failed) throw new OpenError(failed)
     return 0
   }
   if (!e.thread) throw new OpenError("no saved thread to resume")

@@ -6,8 +6,8 @@ import { useBindings } from "@opentui/keymap/react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 
-import { kill } from "~/threads/live/actions.ts"
 import { PRIORITY, type Attention } from "~/threads/live/collect.ts"
+import { mux } from "~/threads/live/mux.ts"
 import { runApp } from "~/ui/app.tsx"
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
 import { DIVE_MS, paintSenu, rowGlow, type DivePlan } from "~/ui/dive.ts"
@@ -679,7 +679,9 @@ export function Browser({
     if (pending) {
       setConfirming(null)
       if (key.name === "y" && pending.live)
-        void kill(pending.live).then(() => Promise.all([watchNow(), refresh()]))
+        void mux()
+          .kill(pending.live.paneId)
+          .then(() => Promise.all([watchNow(), refresh()]))
       return
     }
     if (!searchingRef.current) return

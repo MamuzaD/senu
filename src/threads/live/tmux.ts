@@ -1,8 +1,9 @@
-import { SEP, tmux } from "~/detect/panes.ts"
+import { listPanes, SEP, tmux } from "~/detect/panes.ts"
 
-import type { AgentRow } from "./collect.ts"
+import { runningThreads } from "../running.ts"
+import { Collector, type AgentRow } from "./collect.ts"
 import { raiseGhosttyTab } from "./ghostty.ts"
-import { inRex, rexKill } from "./rex.ts"
+import type { Mux } from "./mux.ts"
 
 export interface Client {
   name: string
@@ -56,7 +57,7 @@ export function planJump(
 }
 
 /** Waits for the tmux/Ghostty navigation attempts and returns the chosen plan; tmux failures do not reject. */
-export async function jump(
+async function jump(
   row: Pick<AgentRow, "session" | "windowId">,
   opts: { raiseGhosttyTab: boolean },
 ): Promise<JumpPlan> {
@@ -83,7 +84,37 @@ export async function jump(
   return plan
 }
 
-export async function kill(row: Pick<AgentRow, "paneId">): Promise<boolean> {
-  if (inRex()) return rexKill(row.paneId)
-  return (await tmux("kill-pane", "-t", row.paneId)).ok
+/** Also what senu falls back to outside any multiplexer, where it can list a tmux server's agents. */
+export const tmuxMux: Mux = {
+  collector: () => new Collector(),
+
+  async seen(profiles) {
+    if (!(await tmux("info")).ok) return { panes: [], rows: [], paneByThread: new Map() }
+    const panes = listPanes()
+    const [{ rows }, paneByThread] = await Promise.all([
+      new Collector().collect(),
+      panes.then((ps) => runningThreads(profiles, ps)),
+    ])
+    return { panes: await panes, rows, paneByThread }
+  },
+
+  async jump(live, opts) {
+    if (!process.env.TMUX) return `running in tmux session ${live.session}`
+    await jump(live, opts)
+    await tmux("select-pane", "-t", live.paneId)
+    return null
+  },
+
+  kill: async (paneId) => (await tmux("kill-pane", "-t", paneId)).ok,
+
+  // A popup is a throwaway, so the thread gets its own window, as it does when resume = "window";
+  // tmux gives a popup TMUX but no TMUX_PANE
+  resumesInWindow: async (mode) =>
+    !!process.env.TMUX && (mode === "window" || !process.env.TMUX_PANE),
+
+  async openWindow(launch) {
+    const env = Object.entries(launch.env).flatMap(([k, v]) => ["-e", `${k}=${v}`])
+    const { ok } = await tmux("new-window", "-c", launch.cwd, ...env, "--", ...launch.argv)
+    return ok ? null : "tmux could not open a window"
+  },
 }

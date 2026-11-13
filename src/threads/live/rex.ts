@@ -4,7 +4,9 @@ import type { Agent } from "~/detect/manifest.ts"
 import { agentFromProcess, processArgv, run } from "~/detect/panes.ts"
 
 import type { Launch } from "../resume.ts"
-import { attentionOf, titleTask, type Attention, type Collected, type PaneRow } from "./collect.ts"
+import { runningThreads } from "../running.ts"
+import { attentionOf, titleTask, type Attention, type PaneRow } from "./collect.ts"
+import type { Mux } from "./mux.ts"
 
 /** tmux started inside a Rex block inherits REX_SESSION, so tmux wins. */
 export const inRex = () => !process.env.TMUX && !!process.env.REX_SESSION
@@ -155,13 +157,6 @@ export function rexRow(a: RexAgent): PaneRow {
   }
 }
 
-export class RexCollector {
-  async collect(): Promise<Collected> {
-    const agents = await rexAgents()
-    return { rows: agents.map(rexRow), panes: agents, daemon: "unknown" }
-  }
-}
-
 /**
  * Server focus alone doesn't select the tab in the app, even within the same session. Selecting
  * goes through a client: REX_CLIENT names it, else Rex uses the only app connected.
@@ -174,7 +169,7 @@ export async function rexJump(id: string, windowId: string): Promise<"ok" | "gon
   return ok ? "ok" : "unselected"
 }
 
-export const rexKill = async (id: string) => (await call("block.close", parts(id))) !== null
+const rexKill = async (id: string) => (await call("block.close", parts(id))) !== null
 
 export function floating(view: View, blockId: string): boolean {
   return (view.windows ?? []).some((w) =>
@@ -184,7 +179,7 @@ export function floating(view: View, blockId: string): boolean {
   )
 }
 
-export async function rexInPopup(): Promise<boolean> {
+async function rexInPopup(): Promise<boolean> {
   const view = await call<View>("session.view", { session_id: process.env.REX_SESSION })
   return !!view && floating(view, process.env.REX_BLOCK ?? "")
 }
@@ -206,4 +201,38 @@ export async function rexOpenWindow(launch: Launch): Promise<boolean> {
   const blockId = created.block_ids[0]
   if (blockId) await rexJump(paneId(sessionId, blockId), created.window_id)
   return true
+}
+
+export const rexMux: Mux = {
+  // Rex holds each agent's state, so there's nothing to keep between polls
+  collector: () => ({
+    async collect() {
+      const agents = await rexAgents()
+      return { rows: agents.map(rexRow), panes: agents, daemon: "unknown" }
+    },
+  }),
+
+  async seen(profiles) {
+    const agents = await rexAgents()
+    return {
+      panes: agents,
+      rows: agents.map(rexRow),
+      paneByThread: await runningThreads(profiles, agents),
+    }
+  },
+
+  async jump(live) {
+    const jumped = await rexJump(live.paneId, live.windowId)
+    if (jumped === "ok") return null
+    if (jumped === "gone") return "no longer running"
+    return process.env.REX_CLIENT
+      ? "not reachable: is Remote Control on in Rex Settings > Server > Client Info?"
+      : "Rex can't tell which device to switch; open senu from its popup"
+  },
+
+  kill: rexKill,
+
+  resumesInWindow: async (mode) => mode === "window" || (await rexInPopup()),
+
+  openWindow: async (launch) => ((await rexOpenWindow(launch)) ? null : "Rex could not open a tab"),
 }
