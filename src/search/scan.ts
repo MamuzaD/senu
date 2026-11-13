@@ -18,7 +18,8 @@ export interface Found {
   session: string
   cwd: string
   time: string
-  line: number
+  /** Unset for a title */
+  line?: number
   role: string
   excerpt: string
   /** Holds the whole phrase, not just each of its words */
@@ -30,7 +31,7 @@ export interface Found {
 // Characters every transcript writer stores unescaped, so a raw-line match on a run of them is exact.
 const PLAIN = /[\w.,:;@#=+()[\]-]{2,}/g
 
-function excerpt(text: string, at: number): string {
+export function excerpt(text: string, at: number): string {
   const start = Math.max(0, at - 100)
   const end = Math.min(text.length, at + 380)
   const cut = text.slice(start, end).trim()
@@ -53,6 +54,29 @@ function near(lower: string, words: RegExp[]): number {
     if (last.size === words.length && m.at - start <= SPAN) return start
   }
   return -1
+}
+
+/** Matches a word only at the start of one, so `is` skips `this` */
+const wordStarts = (words: string[]) =>
+  words.map(
+    (w) =>
+      new RegExp(
+        (/^[a-z0-9]/.test(w) ? "(?<![a-z0-9])" : "") + w.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&"),
+        "g",
+      ),
+  )
+
+/** Where a thread title matches, and whether it holds the whole phrase or only each of its words.
+ * Most titles are short, so the words may lie anywhere in one. */
+export function titleMatch(title: string, query: string): { exact: boolean; at: number } | null {
+  const needle = query.toLowerCase().trim().replace(/\s+/g, " ")
+  const lower = title.toLowerCase().replace(/\s+/g, " ")
+  const at = lower.indexOf(needle)
+  if (at >= 0) return { exact: true, at }
+  const words = needle.split(" ")
+  if (words.length < 2) return null
+  const found = wordStarts(words).map((w) => lower.search(w))
+  return found.every((i) => i >= 0) ? { exact: false, at: Math.min(...found) } : null
 }
 
 function toolText(kind: Job["kind"], r: any): string {
@@ -88,13 +112,7 @@ export function scanFile({ kind, path }: Job, spec: Spec): Found[] {
     .flatMap((w) => (w.match(PLAIN) ?? []).toSorted((a, b) => b.length - a.length).slice(0, 1))
     .toSorted((a, b) => b.length - a.length)
     .map((run) => new RegExp(run.replace(/[.+()[\]]/g, "\\$&"), "i"))
-  const starts = words.map(
-    (w) =>
-      new RegExp(
-        (/^[a-z0-9]/.test(w) ? "(?<![a-z0-9])" : "") + w.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&"),
-        "g",
-      ),
-  )
+  const starts = wordStarts(words)
   const bytes = readFileSync(path)
   const content = path.endsWith(".zst") ? Bun.zstdDecompressSync(bytes) : bytes
   if (filters.length) {

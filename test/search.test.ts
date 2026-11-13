@@ -178,6 +178,28 @@ describe("transcript search", () => {
     symlinkSync(outside, join(config.profiles[1]!.home, "sessions", "leak.jsonl"))
     expect((await searchThreads(config, { query: "needle" }, env)).hits).toEqual([])
   })
+  test("thread titles match unless --messages, and --threads skips messages", async () => {
+    const { config } = setup()
+    const dir = join(config.profiles[2]!.home, "projects", "project")
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, "titled.jsonl"),
+      [
+        { type: "user", sessionId: "titled", cwd: "/repo", message: { content: "hello picker" } },
+        { type: "ai-title", sessionId: "titled", aiTitle: "Fix the picker search" },
+      ]
+        .map((r) => JSON.stringify(r))
+        .join("\n"),
+    )
+    const search = (query: string, only?: "threads" | "messages") =>
+      searchThreads(config, { query, only }, {}).then((r) => r.hits.map((h) => [h.role, h.excerpt]))
+    expect(await search("picker search")).toEqual([["title", "Fix the picker search"]])
+    expect(await search("search picker")).toEqual([["title", "Fix the picker search"]])
+    expect(await search("picker search", "messages")).toEqual([])
+    // Found in its messages, the thread isn't listed again for its title
+    expect(await search("picker")).toEqual([["user", "hello picker"]])
+    expect(await search("picker", "threads")).toEqual([["title", "Fix the picker search"]])
+  })
   test("Claude text and tools retain line citations, ignore sidechains and malformed records", async () => {
     const { config } = setup()
     const dir = join(config.profiles[2]!.home, "projects", "project")

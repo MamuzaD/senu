@@ -5,9 +5,11 @@ import { join, relative, sep } from "node:path"
 import type { Config, Profile } from "~/config.ts"
 import { compiled } from "~/paths.ts"
 import { allowedProfiles } from "~/privacy.ts"
+import { claudeThreads } from "~/threads/claude.ts"
+import { codexThreads } from "~/threads/codex.ts"
 import { profileKey } from "~/usage/cache.ts"
 
-import type { Spec } from "./scan.ts"
+import { excerpt, titleMatch, type Found, type Spec } from "./scan.ts"
 import type { Scanned, Task } from "./worker.ts"
 
 export interface SearchOptions {
@@ -17,6 +19,8 @@ export interface SearchOptions {
   limit?: number | undefined
   scope?: string | undefined
   excludeSession?: string[]
+  /** Search only thread titles or only messages; both when unset */
+  only?: "threads" | "messages" | undefined
 }
 export interface SearchHit {
   session: string
@@ -24,7 +28,9 @@ export interface SearchHit {
   cwd: string
   time: string
   path: string
-  line: number
+  /** Unset for a title */
+  line?: number
+  /** `title` for a thread title, else who wrote the message */
   role: string
   excerpt: string
 }
@@ -100,6 +106,35 @@ async function scan(spec: Spec, jobs: Task["jobs"]): Promise<Scanned[]> {
   }
 }
 
+/** Threads whose titles match, as hits dated by the thread's last update */
+function titleHits(profiles: Profile[], spec: Spec, failed: { path: string; error: string }[]) {
+  const excluded = new Set(spec.excluded)
+  return profiles.flatMap((p) => {
+    let threads
+    try {
+      threads = p.kind === "claude" ? claudeThreads(p) : codexThreads(p)
+    } catch (e) {
+      if (existsSync(p.home)) failed.push({ path: p.home, error: String(e) })
+      return []
+    }
+    return threads.flatMap((t) => {
+      const match = titleMatch(t.title, spec.query)
+      if (!match || excluded.has(t.sessionId) || (spec.session && spec.session !== t.sessionId))
+        return []
+      const f: Found = {
+        session: t.sessionId,
+        cwd: t.cwd,
+        time: new Date(t.updatedMs).toISOString(),
+        role: "title",
+        excerpt: excerpt(t.title.replace(/\s+/g, " "), match.at),
+        exact: match.exact,
+        key: `${t.sessionId}\0title`,
+      }
+      return [{ f, p, path: t.transcript }]
+    })
+  })
+}
+
 /** Hits come newest first. When no message holds the whole phrase, messages holding
  * every word of it match instead, and `match` says so. */
 export async function searchThreads(
@@ -118,7 +153,7 @@ export async function searchThreads(
   )
   const failed: { path: string; error: string }[] = []
   const transcripts: { p: Profile; path: string; size: number }[] = []
-  for (const p of profiles) {
+  for (const p of options.only === "threads" ? [] : profiles) {
     let paths
     try {
       paths = transcriptFiles(p)
@@ -156,9 +191,20 @@ export async function searchThreads(
     if ("error" in s) failed.push({ path: transcripts[s.i]!.path, error: s.error })
   // A transcript's mtime moves when Codex compresses it, so the messages' own times set the order
   const found = scanned
-    .flatMap((s) => ("found" in s ? s.found.map((f) => ({ f, ...transcripts[s.i]! })) : []))
+    .flatMap((s) => {
+      const { p, path } = transcripts[s.i]!
+      return "found" in s ? s.found.map((f) => ({ f, p, path })) : []
+    })
+    .concat(options.only === "messages" ? [] : titleHits(profiles, spec, failed))
     .toSorted((a, b) => (a.f.time < b.f.time ? 1 : a.f.time > b.f.time ? -1 : 0))
   const exact = found.some(({ f }) => f.exact)
+  // A thread untitled by its agent goes by its first prompt, so its title would repeat a message
+  // hit; a title only adds threads no message matched
+  const inMessages = new Set(
+    found.flatMap(({ f, p }) =>
+      f.role !== "title" && f.exact === exact ? [`${profileKey(p)}\0${f.session}`] : [],
+    ),
+  )
   const hits: SearchHit[] = []
   const seen = new Set<string>()
   const perSession = new Map<string, number>()
@@ -168,7 +214,13 @@ export async function searchThreads(
     const profile = profileKey(p)
     const session = `${profile}\0${hit.session}`
     const count = perSession.get(session) ?? 0
-    if (whole !== exact || seen.has(`${profile}\0${key}`) || count === cap) continue
+    if (
+      whole !== exact ||
+      seen.has(`${profile}\0${key}`) ||
+      count === cap ||
+      (hit.role === "title" && inMessages.has(session))
+    )
+      continue
     seen.add(`${profile}\0${key}`)
     perSession.set(session, count + 1)
     if (hits.length === limit) limit_reached = true

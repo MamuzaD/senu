@@ -104,7 +104,7 @@ async function browse(
     load,
     searchMessages: async (query, signal) => {
       const proc = Bun.spawn(
-        [...selfCommand(), "search", query, "--role", "all", "--limit", "100"],
+        [...selfCommand(), "search", query, "--messages", "--role", "all", "--limit", "100"],
         {
           stdout: "pipe",
           stderr: "pipe",
