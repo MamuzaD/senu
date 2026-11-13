@@ -1,5 +1,7 @@
 import type { Config, Profile } from "~/config.ts"
 import { setTmuxSocket } from "~/detect/panes.ts"
+import { selfCommand } from "~/paths.ts"
+import type { SearchHit } from "~/search/search.ts"
 import { mux } from "~/threads/live/mux.ts"
 import { printHelp } from "~/ui/help.ts"
 import { profileKey } from "~/usage/cache.ts"
@@ -20,6 +22,8 @@ const HELP = `usage: senu threads [--live] [--json] [--profile key]... [--limit 
        senu threads resume <session-id>
 
 Browses agent threads, newest first, or lists them when piped.
+
+  In the picker, / searches titles, then saved messages in allowed profiles.
 
   --live         only running agents
   --json         print JSON
@@ -98,6 +102,37 @@ async function browse(
   let jumpFailed: unknown = null
   const picked = await runBrowser(entries, {
     load,
+    searchMessages: async (query, signal) => {
+      const proc = Bun.spawn(
+        [...selfCommand(), "search", query, "--role", "all", "--limit", "100"],
+        {
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      const stop = () => proc.kill()
+      signal.addEventListener("abort", stop, { once: true })
+      try {
+        const [out, err, code] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ])
+        if (code) throw new Error(err.trim() || "Message search failed")
+        const result = JSON.parse(out) as { hits: SearchHit[]; failed: unknown[] }
+        if (result.failed.length)
+          throw new Error("Some transcripts could not be searched. Run senu search for details.")
+        // Hits come newest first, so a session keeps its newest
+        const hits = new Map<string, string>()
+        for (const h of result.hits) {
+          const key = `${h.profile}:${h.session}`
+          if (!hits.has(key)) hits.set(key, `${h.path}:${h.line}\n${h.role}: ${h.excerpt}`)
+        }
+        return hits
+      } finally {
+        signal.removeEventListener("abort", stop)
+      }
+    },
     watch: async () => {
       const { rows, panes, daemon } = await collector.collect()
       return {

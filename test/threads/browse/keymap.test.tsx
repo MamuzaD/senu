@@ -673,3 +673,89 @@ test("scrolling the preview to the top reads further back, to the start of the t
   expect(t.captureCharFrame()).toMatch(/turn 0\s/)
   expect(t.captureCharFrame()).toContain("start of thread")
 })
+
+test("search lists message-only matches below title matches, previews the citation, and cancels stale queries", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const t = await createTestRenderer({ width: 140, height: 26 })
+  destroy = () => act(() => t.renderer.destroy())
+  const initial: Entry[] = ["alpha", "beta"].map((sessionId) => ({
+    thread: {
+      sessionId,
+      profile: "claude-work",
+      agent: "claude",
+      transcript: "/missing-fixture",
+      updatedMs: 1,
+    } as Thread,
+    agent: "claude",
+    title: `${sessionId} conversation`,
+    cwd: "/p",
+    updatedMs: Date.now(),
+    live: null,
+  }))
+  const calls: {
+    query: string
+    signal: AbortSignal
+    result: ReturnType<typeof Promise.withResolvers<Map<string, string>>>
+  }[] = []
+  const keymap = createDefaultOpenTuiKeymap(t.renderer)
+  act(() =>
+    createRoot(t.renderer).render(
+      <KeymapProvider keymap={keymap}>
+        <Browser
+          initial={initial}
+          load={async () => initial}
+          watch={async () => ({ merge: (es) => es, scouting: false })}
+          live={false}
+          preview
+          recentMs={RECENT_MS}
+          jump={async () => {}}
+          onOpen={() => {}}
+          searchMessages={(query, signal) => {
+            const result = Promise.withResolvers<Map<string, string>>()
+            calls.push({ query, signal, result })
+            return result.promise
+          }}
+        />
+      </KeymapProvider>,
+    ),
+  )
+  await act(() => t.renderOnce())
+  act(() => t.mockInput.pressKey("/"))
+  for (const key of "ne") act(() => t.mockInput.pressKey(key))
+  await act(async () => {
+    await Bun.sleep(350)
+  })
+  expect(calls).toHaveLength(0)
+  for (const key of "edle") act(() => t.mockInput.pressKey(key))
+  await act(async () => {
+    await Bun.sleep(350)
+  })
+  expect(calls[0]?.query).toBe("needle")
+  await act(async () => {
+    calls[0]!.result.resolve(new Map([["claude-work:beta", "/fixture.jsonl:7\nneedle evidence"]]))
+  })
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).toContain("in messages")
+  expect(t.captureCharFrame()).toContain("beta conversation")
+  expect(t.captureCharFrame()).not.toContain("alpha conversation")
+  expect(t.captureCharFrame()).toContain("/fixture.jsonl:7")
+  expect(t.captureCharFrame()).toContain("needle evidence")
+  act(() => t.mockInput.pressKey("x"))
+  expect(calls[0]!.signal.aborted).toBe(true)
+  await act(async () => {
+    t.mockInput.pressEscape()
+    await Bun.sleep(50)
+  })
+  await act(() => t.renderOnce())
+  expect(t.captureCharFrame()).toContain("alpha conversation")
+  expect(t.captureCharFrame()).toContain("beta conversation")
+  // A repeated query reuses its hits instead of scanning again
+  act(() => t.mockInput.pressKey("/"))
+  for (const key of "needle") act(() => t.mockInput.pressKey(key))
+  await act(async () => {
+    await Bun.sleep(350)
+  })
+  await act(() => t.renderOnce())
+  expect(calls).toHaveLength(1)
+  expect(t.captureCharFrame()).toContain("needle evidence")
+})

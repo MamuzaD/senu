@@ -115,6 +115,9 @@ export function matches(e: Entry, query: string): boolean {
 const byAttention = (a: Entry, b: Entry) =>
   PRIORITY[b.live?.state ?? "idle"] - PRIORITY[a.live?.state ?? "idle"]
 
+/** What to search saved messages for: a shorter query would match nearly every transcript */
+const messageQuery = (query: string) => (query.trim().length >= 3 ? query.trim() : "")
+
 /** Pinned threads come first, in pin order, and stay there whether or not they're running. */
 export function sections(
   entries: Entry[],
@@ -472,6 +475,8 @@ function turnsOf(t: Thread, depth: number): { turns: Turn[]; more: boolean } {
   return read
 }
 
+export type SearchMessages = (query: string, signal: AbortSignal) => Promise<Map<string, string>>
+
 export type Load = (scope: Scope) => Promise<Entry[]>
 export type Watch = () => Promise<{ merge: (entries: Entry[]) => Entry[]; scouting: boolean }>
 
@@ -485,6 +490,7 @@ export function Browser({
   recentMs,
   partial = false,
   jump,
+  searchMessages,
   onOpen,
 }: {
   initial: Entry[]
@@ -499,6 +505,7 @@ export function Browser({
   /** `initial` holds only some saved threads, so the rest load right away. */
   partial?: boolean
   jump: (e: Entry) => Promise<unknown>
+  searchMessages?: SearchMessages
   onOpen: (e: Entry) => void
 }) {
   const renderer = useRenderer()
@@ -509,6 +516,12 @@ export function Browser({
   const [diveAt, setDiveAt] = useState<number | null>(null)
   const divingRef = useRef(false)
   const [query, setQuery] = useState("")
+  const [messageHits, setMessageHits] = useState<{
+    query: string
+    hits: Map<string, string>
+  } | null>(null)
+  // Backspacing and retyping repeat queries, and each one scans every transcript
+  const searchCache = useRef(new Map<string, Map<string, string>>())
   const [searching, setSearching] = useState(false)
   const searchingRef = useRef(false)
   const [showPreview, setShowPreview] = useState(() => startPreview && width >= PREVIEW_MIN_WIDTH)
@@ -582,17 +595,28 @@ export function Browser({
     const ordered = live
       ? entries.filter((e) => e.live).toSorted(byAttention)
       : entries.toSorted((a, b) => pinRank(a) - pinRank(b))
-    const pool = ordered.slice(0, limit).filter((e) => matches(e, query))
-    return live ? [{ label: "running", entries: pool }] : sections(pool, recentMs, pins)
-  }, [entries, query, live, limit, recentMs, pins])
-  const flat = useMemo(() => shown.flatMap((s) => s.entries), [shown])
+    const loaded = ordered.slice(0, limit)
+    const pool = loaded.filter((e) => matches(e, query))
+    // Threads that only match in their messages come after every title match, so hits arriving
+    // late never move what's already on screen
+    const hits = messageHits?.query === messageQuery(query) ? messageHits.hits : null
+    const inMessages = hits ? loaded.filter((e) => !matches(e, query) && hits.has(keyOf(e))) : []
+    return {
+      titles: live ? [{ label: "running", entries: pool }] : sections(pool, recentMs, pins),
+      messages: inMessages.length ? { label: "in messages", entries: inMessages } : null,
+    }
+  }, [entries, query, live, limit, recentMs, pins, messageHits])
+  const flat = useMemo(
+    () => [...shown.titles, ...(shown.messages ? [shown.messages] : [])].flatMap((s) => s.entries),
+    [shown],
+  )
   const selIndex = Math.max(
     0,
     flat.findIndex((e) => keyOf(e) === selKey),
   )
   const sel = flat[selIndex] ?? null
   const rows: Row[] = []
-  for (const s of shown) {
+  for (const s of shown.titles) {
     const folds = s.label === "older"
     const open = !folds || !!query || (sel !== null && s.entries.includes(sel))
     const header = { kind: "header" as const, label: s.label, count: s.entries.length }
@@ -601,6 +625,11 @@ export function Browser({
   }
   // Holds the older threads' place until they load
   if (!live && !complete) rows.push({ kind: "header", label: "older", count: null, folded: true })
+  if (shown.messages) {
+    const { label, entries: found } = shown.messages
+    rows.push({ kind: "header", label, count: found.length })
+    for (const entry of found) rows.push({ kind: "entry", entry })
+  }
   const selRow = rows.findIndex((r) => r.kind === "entry" && r.entry === sel)
 
   const fits = (from: number, to: number) => {
@@ -614,8 +643,11 @@ export function Browser({
 
   const selThread = sel?.thread ?? null
   const depth = reach.key === selKey ? reach.depth : 0
-  const read = selThread ? turnsOf(selThread, depth) : null
-  const turns = read?.turns ?? null
+  // A title match previews its conversation, even when its messages match too
+  const hit =
+    sel && shown.messages?.entries.includes(sel) ? messageHits?.hits.get(keyOf(sel)) : undefined
+  const read = selThread && !hit ? turnsOf(selThread, depth) : null
+  const turns = hit ? [{ fromUser: false, text: hit }] : (read?.turns ?? null)
   const { previewTextW } = layout(width, showPreview)
   const previewRows = height - HEAD_ROWS - 1
   const whole = read ? !read.more : false
@@ -635,6 +667,31 @@ export function Browser({
   // Moves down by `by` lines in the preview when it has focus, or runs `inList`
   const move = (by: number, inList: () => void) => (inPreview() ? scrollPreview(-by) : inList())
   const [note, flash] = useFlash()
+  const reportSearchError = useEffectEvent((message: string) => flash(message))
+  useEffect(() => {
+    const phrase = messageQuery(query)
+    if (!phrase || !searchMessages) return
+    const cached = searchCache.current.get(phrase)
+    if (cached) return setMessageHits({ query: phrase, hits: cached })
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      void searchMessages(phrase, controller.signal)
+        .then((hits) => {
+          searchCache.current.set(phrase, hits)
+          if (!controller.signal.aborted) setMessageHits({ query: phrase, hits })
+        })
+        .catch((e: unknown) => {
+          if (!controller.signal.aborted) {
+            setMessageHits({ query: phrase, hits: new Map() })
+            reportSearchError(String(e))
+          }
+        })
+    }, 300)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [query, searchMessages])
   const copyOut = (text: string | undefined, what: string) => {
     if (!text) return flash("no saved thread yet")
     void copy(text).then((ok) => flash(ok ? `copied ${what}` : "couldn't reach the clipboard"))
@@ -872,7 +929,11 @@ export function Browser({
     whole,
     hiddenBelow: lines,
     dragging,
-    note,
+    note:
+      note ||
+      (searchMessages && messageQuery(query) && messageHits?.query !== messageQuery(query)
+        ? "searching messages…"
+        : ""),
     confirming,
     count: pendingCount,
     hints: useHints(),
@@ -1012,6 +1073,7 @@ export async function runBrowser(
     preview: boolean
     recentMs: number
     partial?: boolean
+    searchMessages?: SearchMessages
     jump: (e: Entry) => Promise<unknown>
   },
 ): Promise<Entry | null> {
