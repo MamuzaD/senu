@@ -6,7 +6,7 @@ import { searchThreads, type SearchOptions } from "./search.ts"
 
 export async function searchCommand(args: string[], config: Config): Promise<number> {
   const help =
-    "usage: senu search <literal text> [--session id] [--role user|assistant|tool|all] [--limit 1..100] [--scope name] [--exclude-session id] [--scope-only]"
+    "usage: senu search <text> [--session id] [--role user|assistant|tool|all] [--limit 1..100] [--scope name] [--exclude-session id] [--scope-only]"
   if (args.includes("--help") || args.includes("-h")) {
     console.log(help)
     return 0
@@ -37,7 +37,7 @@ export async function searchCommand(args: string[], config: Config): Promise<num
         }),
       )
     else {
-      const result = searchThreads(config, options, process.env, true)
+      const result = await searchThreads(config, options, process.env, true)
       console.log(JSON.stringify(result, null, 2))
       return result.failed.length ? 1 : 0
     }

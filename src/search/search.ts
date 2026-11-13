@@ -1,11 +1,14 @@
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs"
-import { basename, join, relative, sep } from "node:path"
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs"
+import { availableParallelism } from "node:os"
+import { join, relative, sep } from "node:path"
 
 import type { Config, Profile } from "~/config.ts"
+import { compiled } from "~/paths.ts"
 import { allowedProfiles } from "~/privacy.ts"
-import { claudeMessage } from "~/threads/claude.ts"
-import { codexMessage } from "~/threads/codex.ts"
 import { profileKey } from "~/usage/cache.ts"
+
+import type { Spec } from "./scan.ts"
+import type { Scanned, Task } from "./worker.ts"
 
 export interface SearchOptions {
   query: string
@@ -18,6 +21,8 @@ export interface SearchOptions {
 export interface SearchHit {
   session: string
   profile: string
+  cwd: string
+  time: string
   path: string
   line: number
   role: string
@@ -36,7 +41,15 @@ function files(root: string, base: string): string[] {
   for (const e of entries) {
     if (e.name === "subagents" || e.isSymbolicLink()) continue
     const path = join(base, e.name)
-    const rel = relative(root, realpathSync(path))
+    // Codex deletes a rollout once it has compressed it
+    let real
+    try {
+      real = realpathSync(path)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err
+      continue
+    }
+    const rel = relative(root, real)
     if (rel === ".." || rel.startsWith(`..${sep}`)) continue
     if (e.isDirectory()) out.push(...files(root, path))
     else if (
@@ -54,10 +67,42 @@ export function transcriptFiles(p: Profile): string[] {
   ).flatMap((dir) => files(realpathSync(p.home), join(p.home, dir)))
 }
 
-// Characters every transcript writer stores unescaped, so a raw-line match is exact.
-const PLAIN = /^[\w .,:;@#=+()[\]-]+$/
+/** Scans on every core but one: reading and decoding a few GB of transcripts is the whole cost. */
+async function scan(spec: Spec, jobs: Task["jobs"]): Promise<Scanned[]> {
+  const shares: Task["jobs"][] = Array.from(
+    { length: Math.min(jobs.length, Math.max(1, availableParallelism() - 1)) },
+    () => [],
+  )
+  // Dealing the largest files out first keeps the shares even
+  for (const [n, job] of jobs.toSorted((a, b) => b.size - a.size).entries())
+    shares[n % shares.length]!.push(job)
+  const workers: Worker[] = []
+  try {
+    const done = await Promise.all(
+      shares.map(
+        (share) =>
+          new Promise<Scanned[]>((resolve, reject) => {
+            // A compiled binary holds the worker as a second entrypoint, under its bundle root
+            const worker = new Worker(
+              compiled ? "./search/worker.ts" : new URL("./worker.ts", import.meta.url).href,
+            )
+            workers.push(worker)
+            worker.addEventListener("message", (e: MessageEvent<Scanned[]>) => resolve(e.data))
+            worker.addEventListener("error", (e) => reject(new Error(e.message)))
+            // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a worker, not a window
+            worker.postMessage({ spec, jobs: share } satisfies Task)
+          }),
+      ),
+    )
+    return done.flat().toSorted((a, b) => a.i - b.i)
+  } finally {
+    for (const worker of workers) worker.terminate()
+  }
+}
 
-export function searchThreads(
+/** Hits come newest first. When no message holds the whole phrase, messages holding
+ * every word of it match instead, and `match` says so. */
+export async function searchThreads(
   config: Config,
   options: SearchOptions,
   env = process.env,
@@ -71,107 +116,69 @@ export function searchThreads(
   const profiles = allowedProfiles(config, env, options.scope, terminal).filter(
     (p) => p.kind !== "opencode",
   )
-  const needle = options.query.toLowerCase()
-  const raw = PLAIN.test(needle) ? new RegExp(needle.replace(/[.+()[\]]/g, "\\$&"), "i") : undefined
-  const excluded = new Set(
-    [
+  const failed: { path: string; error: string }[] = []
+  const transcripts: { p: Profile; path: string; size: number }[] = []
+  for (const p of profiles) {
+    let paths
+    try {
+      paths = transcriptFiles(p)
+    } catch (e) {
+      if (existsSync(p.home)) failed.push({ path: p.home, error: String(e) })
+      continue
+    }
+    for (const path of paths) {
+      const size = statSync(path, { throwIfNoEntry: false })?.size
+      if (size !== undefined) transcripts.push({ p, path, size })
+    }
+  }
+  const spec: Spec = {
+    query: options.query,
+    role: options.role ?? "user",
+    session: options.session,
+    excluded: [
       ...(options.excludeSession ?? []),
       env.CODEX_THREAD_ID,
       env.CLAUDE_CODE_SESSION_ID,
       env.CLAUDE_SESSION_ID,
-    ].filter(Boolean),
+    ].filter((id): id is string => !!id),
+  }
+  const cap = options.session ? limit + 1 : 3
+  const scanned = await scan(
+    spec,
+    transcripts.map(({ p, path, size }, i) => ({
+      i,
+      kind: p.kind as "claude" | "codex",
+      path,
+      size,
+    })),
   )
+  for (const s of scanned)
+    if ("error" in s) failed.push({ path: transcripts[s.i]!.path, error: s.error })
+  // A transcript's mtime moves when Codex compresses it, so the messages' own times set the order
+  const found = scanned
+    .flatMap((s) => ("found" in s ? s.found.map((f) => ({ f, ...transcripts[s.i]! })) : []))
+    .toSorted((a, b) => (a.f.time < b.f.time ? 1 : a.f.time > b.f.time ? -1 : 0))
+  const exact = found.some(({ f }) => f.exact)
   const hits: SearchHit[] = []
-  const failed: { path: string; error: string }[] = []
   const seen = new Set<string>()
-  const paths: { p: Profile; path: string }[] = []
-  for (const p of profiles) {
-    try {
-      paths.push(...transcriptFiles(p).map((path) => ({ p, path })))
-    } catch (e) {
-      if (existsSync(p.home)) failed.push({ path: p.home, error: String(e) })
-    }
+  const perSession = new Map<string, number>()
+  let limit_reached = false
+  for (const { f, p, path } of found) {
+    const { exact: whole, key, ...hit } = f
+    const profile = profileKey(p)
+    const session = `${profile}\0${hit.session}`
+    const count = perSession.get(session) ?? 0
+    if (whole !== exact || seen.has(`${profile}\0${key}`) || count === cap) continue
+    seen.add(`${profile}\0${key}`)
+    perSession.set(session, count + 1)
+    if (hits.length === limit) limit_reached = true
+    else hits.push({ ...hit, profile, path })
   }
-  paths.sort(
-    (a, b) =>
-      Number(a.path.endsWith(".zst")) - Number(b.path.endsWith(".zst")) ||
-      a.path.localeCompare(b.path),
-  )
-  for (const { p, path } of paths) {
-    try {
-      const bytes = readFileSync(path)
-      const content = path.endsWith(".zst") ? Bun.zstdDecompressSync(bytes) : bytes
-      // Decoding and parsing dominate the cost, so skip files and lines that cannot hold the
-      // phrase. latin1 skips UTF-8 decoding and cannot change an ASCII match.
-      if (raw && !raw.test(content.toString("latin1"))) continue
-      const lines = content.toString("utf8").split("\n")
-      let session = basename(path).replace(/\.jsonl(?:\.zst)?$/, "")
-      let skip = false
-      for (const [index, line] of lines.entries()) {
-        if (raw && !line.includes('"session_meta"') && !raw.test(line)) continue
-        let r
-        try {
-          r = JSON.parse(line)
-        } catch {
-          continue
-        }
-        if (!r || typeof r !== "object") continue
-        if (r.type === "session_meta") {
-          session = r.payload?.id ?? r.payload?.session_id ?? session
-          skip =
-            !!r.payload?.agent_role ||
-            ![undefined, "cli", "vscode", "exec", "app", "desktop"].includes(r.payload?.source)
-        }
-        session = r.sessionId ?? session
-        if (
-          skip ||
-          r.isSidechain ||
-          excluded.has(session) ||
-          (options.session && options.session !== session)
-        )
-          continue
-        const m = p.kind === "claude" ? claudeMessage(r) : codexMessage(r)
-        const payload = r.payload
-        const role = m ? (m.fromUser ? "user" : "assistant") : "tool"
-        let text = m?.text ?? ""
-        if (
-          !m &&
-          p.kind === "codex" &&
-          r.type === "response_item" &&
-          ["function_call_output", "custom_tool_call_output"].includes(payload?.type)
-        )
-          text = typeof payload.output === "string" ? payload.output : ""
-        if (!m && p.kind === "claude" && r.type === "user" && Array.isArray(r.message?.content))
-          text = r.message.content
-            .filter((b: { type: string }) => b.type === "tool_result")
-            .map((b: { content: unknown }) =>
-              typeof b.content === "string"
-                ? b.content
-                : Array.isArray(b.content)
-                  ? b.content
-                      .filter((x) => x?.type === "text")
-                      .map((x) => x.text)
-                      .join("\n")
-                  : "",
-            )
-            .join("\n")
-        if ((options.role ?? "user") !== "all" && (options.role ?? "user") !== role) continue
-        const at = text.toLowerCase().indexOf(needle)
-        if (at < 0) continue
-        const excerpt = text.slice(
-          Math.max(0, at - 100),
-          Math.min(at + options.query.length + 220, at + 500),
-        )
-        const key = JSON.stringify([profileKey(p), session, role, text])
-        if (seen.has(key)) continue
-        seen.add(key)
-        if (hits.length === limit)
-          return { profiles: profiles.map(profileKey), hits, limit_reached: true, failed }
-        hits.push({ session, profile: profileKey(p), path, line: index + 1, role, excerpt })
-      }
-    } catch (e) {
-      failed.push({ path, error: String(e) })
-    }
+  return {
+    profiles: profiles.map(profileKey),
+    match: exact || !hits.length ? "phrase" : "words",
+    hits,
+    limit_reached,
+    failed,
   }
-  return { profiles: profiles.map(profileKey), hits, limit_reached: false, failed }
 }

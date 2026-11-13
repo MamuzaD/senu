@@ -52,12 +52,12 @@ describe("profile boundary", () => {
 })
 
 describe("transcript search", () => {
-  test("canonical Codex messages, compressed and archived files, roles, exclusions and bounded excerpts", () => {
+  test("canonical Codex messages, compressed and archived files, roles, exclusions and bounded excerpts", async () => {
     const { config, env } = setup()
     rollout(config, 0, "plain", [
-      { type: "session_meta", payload: { id: "one", source: "cli" } },
+      { type: "session_meta", payload: { id: "one", source: "cli", cwd: "/repo" } },
       { type: "event_msg", payload: { type: "user_message", message: "needle duplicate" } },
-      record("prefix NEEDLE suffix"),
+      { timestamp: "2026-11-01T00:00:00Z", ...record("prefix\nNEEDLE  suffix") },
       record("needle assistant", "assistant"),
       { type: "response_item", payload: { type: "function_call_output", output: "needle tool" } },
     ])
@@ -67,7 +67,10 @@ describe("transcript search", () => {
       "compressed",
       [
         { type: "session_meta", payload: { id: "two" } },
-        record("x".repeat(1000) + "needle" + "y".repeat(1000)),
+        {
+          timestamp: "2026-11-02T00:00:00Z",
+          ...record("x".repeat(1000) + "needle" + "y".repeat(1000)),
+        },
       ],
       true,
     )
@@ -77,26 +80,91 @@ describe("transcript search", () => {
       join(archive, "saved.jsonl"),
       JSON.stringify(record("needle archived")) + "\n{partial",
     )
-    const result = searchThreads(config, { query: "needle" }, env)
-    expect(result.hits).toHaveLength(3)
-    expect(result.hits.at(-1)?.path).toBe(compressed)
-    expect(result.hits.at(-1)!.excerpt.length).toBeLessThanOrEqual(500)
-    expect(
-      searchThreads(config, { query: "needle", session: "one", role: "all" }, env).hits.map(
-        (h) => h.role,
-      ),
-    ).toEqual(["user", "assistant", "tool"])
-    expect(
-      searchThreads(config, { query: "needle", session: "one" }, { ...env, CODEX_THREAD_ID: "one" })
-        .hits,
-    ).toEqual([])
-    expect(searchThreads(config, { query: "needle", limit: 1 }, env).limit_reached).toBe(true)
-    expect(searchThreads(config, { query: "needle archived", limit: 1 }, env).limit_reached).toBe(
-      false,
+    const result = await searchThreads(config, { query: "needle" }, env)
+    // Newest message first; one with no time comes last
+    expect(result.hits.map((h) => h.session)).toEqual(["two", "one", "saved"])
+    expect(result.hits[0]!.path).toBe(compressed)
+    expect(result.hits[0]!.excerpt).toMatch(/^…x+needley+…$/)
+    expect(result.hits[0]!.excerpt.length).toBeLessThanOrEqual(500)
+    expect(result.hits[1]).toMatchObject({
+      cwd: "/repo",
+      time: "2026-11-01T00:00:00Z",
+      line: 3,
+      excerpt: "prefix NEEDLE suffix",
+    })
+    const one = await searchThreads(config, { query: "needle", session: "one", role: "all" }, env)
+    expect(one.hits.map((h) => h.role).toSorted()).toEqual(["assistant", "tool", "user"])
+    const self = { ...env, CODEX_THREAD_ID: "one" }
+    expect((await searchThreads(config, { query: "needle", session: "one" }, self)).hits).toEqual(
+      [],
     )
+    expect((await searchThreads(config, { query: "needle", limit: 1 }, env)).limit_reached).toBe(
+      true,
+    )
+    expect(
+      (await searchThreads(config, { query: "needle archived", limit: 1 }, env)).limit_reached,
+    ).toBe(false)
     expect(result.failed).toEqual([])
   })
-  test("plain sibling takes precedence and subagents and external symlinks stay out", () => {
+  test("a subagent rollout stays out under its parent's copied header", async () => {
+    const { config, env } = setup()
+    rollout(config, 0, "child", [
+      { type: "session_meta", payload: { id: "child", source: { subagent: {} } } },
+      { type: "session_meta", payload: { id: "parent", source: "cli" } },
+      record("needle from the subagent"),
+    ])
+    expect((await searchThreads(config, { query: "needle" }, env)).hits).toEqual([])
+  })
+  test("falls back to nearby whole words when no message holds the phrase", async () => {
+    const { config, env } = setup()
+    rollout(config, 0, "words", [
+      { type: "session_meta", payload: { id: "words" } },
+      record("so why is the search so slow?"),
+      record("this research is slow, why"),
+      record("why " + "x ".repeat(200) + "is search slow"),
+      record('say "hello" twice'),
+    ])
+    const loose = await searchThreads(config, { query: "why is  search slow" }, env)
+    expect(loose.match).toBe("words")
+    expect(loose.hits.map((h) => h.excerpt)).toEqual(["so why is the search so slow?"])
+    const whole = await searchThreads(config, { query: "is the search" }, env)
+    expect([whole.match, whole.hits.length]).toEqual(["phrase", 1])
+    expect((await searchThreads(config, { query: 'say "HELLO"' }, env)).hits).toHaveLength(1)
+    rollout(config, 0, "wrapped", [record("then is\nthe  search done")])
+    const wrapped = await searchThreads(config, { query: "is the search" }, env)
+    expect([wrapped.match, wrapped.hits.length]).toEqual(["phrase", 2])
+    expect((await searchThreads(config, { query: "absent words" }, env)).match).toBe("phrase")
+  })
+  test("one session returns its three newest hits unless it is asked for by id", async () => {
+    const { config, env } = setup()
+    rollout(config, 0, "chatty", [
+      { type: "session_meta", payload: { id: "chatty" } },
+      ...[1, 2, 3, 4, 5].map((n) =>
+        Object.assign(record(`needle ${n}`), { timestamp: `2026-11-1${n}T00:00:00Z` }),
+      ),
+      { ...record("needle 5"), timestamp: "2026-11-15T00:00:00Z" },
+    ])
+    rollout(config, 0, "quiet", [
+      { type: "session_meta", payload: { id: "quiet" } },
+      record("needle"),
+    ])
+    const all = await searchThreads(config, { query: "needle" }, env)
+    expect(all.hits.map((h) => h.session).toSorted()).toEqual([
+      "chatty",
+      "chatty",
+      "chatty",
+      "quiet",
+    ])
+    expect(all.limit_reached).toBe(false)
+    expect(all.hits.filter((h) => h.session === "chatty").map((h) => h.excerpt)).toEqual([
+      "needle 5",
+      "needle 4",
+      "needle 3",
+    ])
+    const one = await searchThreads(config, { query: "needle", session: "chatty", limit: 2 }, env)
+    expect(one.hits.map((h) => h.excerpt)).toEqual(["needle 5", "needle 4"])
+  })
+  test("plain sibling takes precedence and subagents and external symlinks stay out", async () => {
     const { config, env, root } = setup()
     rollout(config, 0, "same", [record("needle old")], true)
     rollout(config, 0, "same", [record("new contents")])
@@ -108,15 +176,16 @@ describe("transcript search", () => {
     writeFileSync(outside, JSON.stringify(record("needle private")))
     mkdirSync(join(config.profiles[1]!.home, "sessions"))
     symlinkSync(outside, join(config.profiles[1]!.home, "sessions", "leak.jsonl"))
-    expect(searchThreads(config, { query: "needle" }, env).hits).toEqual([])
+    expect((await searchThreads(config, { query: "needle" }, env)).hits).toEqual([])
   })
-  test("Claude text and tools retain line citations, ignore sidechains and malformed records", () => {
+  test("Claude text and tools retain line citations, ignore sidechains and malformed records", async () => {
     const { config } = setup()
     const dir = join(config.profiles[2]!.home, "projects", "project")
     mkdirSync(dir, { recursive: true })
     const msg = (content: unknown, extra = {}) => ({
       type: "user",
       sessionId: "claude-one",
+      cwd: "/repo",
       message: { role: "user", content },
       ...extra,
     })
@@ -129,10 +198,10 @@ describe("transcript search", () => {
         JSON.stringify(msg([{ type: "tool_result", content: "needle output" }])),
       ].join("\n"),
     )
-    const result = searchThreads(config, { query: "needle", role: "all" }, {})
-    expect(result.hits.map((h) => [h.line, h.role])).toEqual([
-      [2, "user"],
-      [4, "tool"],
+    const result = await searchThreads(config, { query: "needle", role: "all" }, {})
+    expect(result.hits.map((h) => [h.line, h.role, h.cwd])).toEqual([
+      [2, "user", "/repo"],
+      [4, "tool", "/repo"],
     ])
     expect(result.profiles).toEqual(["codex-work", "claude-work"])
   })

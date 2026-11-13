@@ -56,9 +56,15 @@ jobs:
 
       - name: Build
         run: |
-          bun build --compile --bytecode --format=esm --minify --sourcemap src/cli.ts \
+          bun build --compile --bytecode --format=esm --minify --sourcemap src/cli.ts src/search/worker.ts \
             --target "bun-${{ matrix.target }}" --outfile "dist/senu-${{ matrix.target }}"
           "dist/senu-${{ matrix.target }}" --help > /dev/null
+          # Search runs in a worker, a second entrypoint that --help never loads
+          home="$RUNNER_TEMP/home"
+          mkdir -p "$home/.claude/projects/p"
+          echo '{"type":"user","sessionId":"s","message":{"content":"smoke needle"}}' \
+            > "$home/.claude/projects/p/s.jsonl"
+          HOME="$home" "dist/senu-${{ matrix.target }}" search "smoke needle" | grep -q '"excerpt": "smoke needle"'
 
       - name: Upload binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

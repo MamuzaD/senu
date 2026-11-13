@@ -56,6 +56,15 @@ jobs:
       - name: Build
         run: bun run build
 
+      # Search runs in a worker, a second entrypoint that --help never loads
+      - name: Smoke test search
+        run: |
+          home="$RUNNER_TEMP/home"
+          mkdir -p "$home/.claude/projects/p"
+          echo '{"type":"user","sessionId":"s","message":{"content":"smoke needle"}}' \
+            > "$home/.claude/projects/p/s.jsonl"
+          HOME="$home" dist/senu search "smoke needle" | grep -q '"excerpt": "smoke needle"'
+
   commits:
     name: Commit messages
     if: github.event_name == 'pull_request'
