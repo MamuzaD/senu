@@ -112,6 +112,48 @@ export function matches(e: Entry, query: string): boolean {
     .every((token) => hay.includes(token))
 }
 
+/** Where `query` shows in `text`: the whole phrase wherever it appears, else each of its words */
+export function highlights(text: string, query: string): [number, number][] {
+  const needle = query.trim().toLowerCase().replace(/\s+/g, " ")
+  if (!needle) return []
+  const lower = text.toLowerCase()
+  const whole: [number, number][] = []
+  for (let at = lower.indexOf(needle); at >= 0; at = lower.indexOf(needle, at + needle.length))
+    whole.push([at, at + needle.length])
+  if (whole.length) return whole
+  // Search matches each word only at the start of one, so `is` skips `this`
+  return needle.split(" ").flatMap((word) => {
+    const start = /^[a-z0-9]/.test(word) ? "(?<![a-z0-9])" : ""
+    const pattern = new RegExp(start + word.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&"), "g")
+    return [...lower.matchAll(pattern)].map((m): [number, number] => [
+      m.index,
+      m.index + word.length,
+    ])
+  })
+}
+
+// NO_COLOR drops the background, and the selected row's title is bold already
+const MARK = noColor ? BOLD | TextAttributes.UNDERLINE : BOLD
+
+function paintMarked(
+  c: Canvas,
+  x: number,
+  y: number,
+  text: string,
+  fg: RGBA,
+  query: string,
+  opts: { attrs?: number; max?: number } = {},
+): number {
+  const end = c.text(x, y, text, fg, opts)
+  for (const [from, to] of highlights(text, query))
+    c.text(x + Bun.stringWidth(text.slice(0, from)), y, text.slice(from, to), brand.papyrus, {
+      ...opts,
+      bg: brand.shadow,
+      attrs: MARK,
+    })
+  return end
+}
+
 const byAttention = (a: Entry, b: Entry) =>
   PRIORITY[b.live?.state ?? "idle"] - PRIORITY[a.live?.state ?? "idle"]
 
@@ -234,6 +276,8 @@ interface View {
   showPreview: boolean
   focus: Focus
   turns: Turn[] | null
+  /** What to highlight in the preview: the query, when it previews a message hit */
+  mark: string
   /** The preview holds the selected thread from its first turn */
   whole: boolean
   hiddenBelow: number
@@ -309,7 +353,7 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
     const when = age(e.updatedMs)
     const whenX = right - when.length + 1
     const titleFg = lit(selected ? brand.papyrus : e.live ? colors.fg : colors.muted, x0 + 5)
-    const end = c.text(x0 + 5, y, e.title, titleFg, {
+    const end = paintMarked(c, x0 + 5, y, e.title, titleFg, v.query, {
       attrs: selected ? BOLD : 0,
       max: whenX - 1,
     })
@@ -370,7 +414,7 @@ function paintPreview(c: Canvas, v: View, x0: number, w: number) {
   lines.slice(start, end).forEach((line, i) => {
     const y = top + i
     if (line.mark) c.text(left, y, line.mark, brand.gold, { attrs: BOLD })
-    c.text(left + 2, y, line.text, line.fg, { max: left + width - 1 })
+    paintMarked(c, left + 2, y, line.text, line.fg, v.mark, { max: left + width - 1 })
   })
   if (lines.length > rows) {
     const bar = left + width - 1
@@ -926,6 +970,7 @@ export function Browser({
     showPreview,
     focus: showPreview ? focus : "list",
     turns,
+    mark: hit ? messageQuery(query) : "",
     whole,
     hiddenBelow: lines,
     dragging,

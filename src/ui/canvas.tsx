@@ -27,7 +27,7 @@ export class Canvas {
     y: number,
     ch: string,
     fg: RGBA,
-    opts: { bg?: RGBA | null; attrs?: number | undefined } = {},
+    opts: { bg?: RGBA | null | undefined; attrs?: number | undefined } = {},
   ) {
     x = Math.round(x)
     y = Math.round(y)
@@ -51,15 +51,15 @@ export class Canvas {
     y: number,
     s: string,
     fg: RGBA,
-    opts: { attrs?: number; max?: number } = {},
+    opts: { attrs?: number; max?: number; bg?: RGBA | null | undefined } = {},
   ): number {
     const max = Math.min(opts.max ?? this.width, this.width)
     for (const { segment } of graphemes.segment(s)) {
       const w = Bun.stringWidth(segment)
       if (w === 0) continue
       if (x + w > max) break
-      this.put(x, y, segment, fg, { attrs: opts.attrs })
-      if (w === 2) this.put(x + 1, y, "", fg, { attrs: opts.attrs })
+      this.put(x, y, segment, fg, { attrs: opts.attrs, bg: opts.bg })
+      if (w === 2) this.put(x + 1, y, "", fg, { attrs: opts.attrs, bg: opts.bg })
       x += w
     }
     return x

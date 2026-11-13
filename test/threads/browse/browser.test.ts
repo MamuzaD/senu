@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 
-import { matches, sections, toolSummary } from "~/threads/browse/browser.tsx"
+import { highlights, matches, sections, toolSummary } from "~/threads/browse/browser.tsx"
 import type { Thread } from "~/threads/thread.ts"
 
 const RECENT_MS = 3 * 24 * 60 * 60 * 1000
@@ -80,4 +80,21 @@ test("search matches the tmux session and the session id too", () => {
   expect(matches(e, "019a")).toBe(true)
   expect(matches(e, "build senu")).toBe(true)
   expect(matches(e, "web")).toBe(false)
+})
+
+test("highlights the whole phrase, else each word", () => {
+  expect(highlights("Why is Search slow? search again", "search")).toEqual([
+    [7, 13],
+    [20, 26],
+  ])
+  expect(highlights("so why is the search slow", "is the  search")).toEqual([[7, 20]])
+  expect(highlights("search is slow", "slow search")).toEqual([
+    [10, 14],
+    [0, 6],
+  ])
+  expect(highlights("this is a bug in data", "is a bug!")).toEqual([
+    [5, 7],
+    [8, 9],
+  ])
+  expect(highlights("anything", " ")).toEqual([])
 })
