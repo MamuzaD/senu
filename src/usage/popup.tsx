@@ -25,7 +25,13 @@ import { Sky } from "~/ui/sky.tsx"
 import { brand, colors, icons, mix, noColor } from "~/ui/theme.ts"
 import { newerRelease } from "~/update/release.ts"
 
-import { getSnapshot, readCache, spawnBackgroundRefresh } from "./cache.ts"
+import {
+  fetchedLately,
+  getSnapshot,
+  readCache,
+  spawnBackgroundRefresh,
+  withFailure,
+} from "./cache.ts"
 import { axis, stackedBars } from "./chart.ts"
 import {
   BAR_WIDTH,
@@ -156,7 +162,7 @@ function Row({
 function SpendRow({ spend, fill, cols }: { spend: Spend; fill: number; cols: number }) {
   const color = spend.reached ? colors.bad : colorFor(spend.left)
   const reset = formatUntil(spend.resetsAt)
-  // Codex reports the cap in workspace credits, not dollars.
+  // Codex reports its cap in workspace credits; Claude's usage credits are dollars under the same name.
   const amount = ` ${spend.used.toFixed(2)}/${spend.limit.toFixed(0)} credits`
   const start = INDENT.length + LABEL_WIDTH + BAR_WIDTH + 5 + amount.length
   // The red empty bar already says the cap is reached, so the words give way to the reset first.
@@ -841,10 +847,14 @@ export function UsagePopup({
 
   /** Refetches limits and rescans totals now, whatever their age. */
   const refresh = () => {
+    // Limits just fetched are left alone, so repeated presses can't hammer the provider.
+    const due = profiles.map((p) => !fetchedLately(p))
     setStartedAt(Date.now())
-    profiles.forEach(spawnBackgroundRefresh)
+    profiles.filter((_, i) => due[i]).forEach((p) => spawnBackgroundRefresh(p))
     setSections((prev) =>
-      prev.map((s) => (s.snapshot ? { ...s, refreshing: true, justUpdated: false } : s)),
+      prev.map((s, i) =>
+        due[i] && s.snapshot ? { ...s, refreshing: true, justUpdated: false } : s,
+      ),
     )
     setWatchingToday(profiles.map(() => true))
     setRefreshRun((n) => n + 1)
@@ -873,9 +883,14 @@ export function UsagePopup({
       const entry = readCache(profiles[i]!)
       const fresh = entry?.snapshot
       if (fresh && fresh.updatedAt > section.snapshot.updatedAt) {
-        update(i, { snapshot: fresh, refreshing: false, justUpdated: true, landedAt: now() })
-      } else if (fresh && (entry.failedAt ?? 0) >= startedAt) {
-        update(i, { snapshot: fresh, refreshing: false })
+        // Only limits that arrived get the glint and ring; a repeated error just replaces the last.
+        update(i, {
+          snapshot: fresh,
+          refreshing: false,
+          ...(fresh.ok ? { justUpdated: true, landedAt: now() } : {}),
+        })
+      } else if (entry && (entry.failedAt ?? 0) >= startedAt) {
+        update(i, { snapshot: withFailure(entry), refreshing: false })
       } else if (watchedOut) {
         update(i, { refreshing: false })
       }

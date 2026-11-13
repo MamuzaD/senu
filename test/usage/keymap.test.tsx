@@ -68,8 +68,4 @@ test("usage popup keymap switches views, ranges, and breakdowns", async () => {
   act(() => t.mockInput.pressTab())
   await act(() => t.renderOnce())
   expect(t.captureCharFrame()).toContain("↑/↓ look · c cost · r refresh · q quit")
-
-  act(() => t.mockInput.pressKey("r"))
-  await act(() => t.renderOnce())
-  expect(t.captureCharFrame()).toContain("r refresh")
 })

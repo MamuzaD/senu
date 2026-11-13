@@ -108,7 +108,7 @@ interface Money {
 
 /** Monthly usage credits: the only limit on an enterprise seat, and the overflow on a plan with extra usage on. */
 function toSpend(spend?: { enabled: boolean; used: Money; limit: Money } | null): Spend | null {
-  if (!spend?.enabled || !spend.limit?.amount_minor) return null
+  if (!spend?.enabled || !spend.limit.amount_minor) return null
   const amount = (m: Money) => m.amount_minor / 10 ** m.exponent
   const [used, limit] = [amount(spend.used), amount(spend.limit)]
   return {
@@ -160,6 +160,29 @@ function userAgent(): string | null {
   }
 }
 
+/** Turns the OAuth usage response into a snapshot. */
+export function parseUsage(data: any): Snapshot {
+  const spend = toSpend(data.spend)
+  return {
+    ok: true,
+    error: null,
+    updatedAt: nowSeconds(),
+    planType: null,
+    // A seat billed by spend alone has no plan windows; show them only once one is reported.
+    limits: [
+      ...(spend && !data.five_hour && !data.seven_day
+        ? []
+        : [
+            toLimit("Session", data.five_hour, 5 * HOUR_MS),
+            toLimit("Week", data.seven_day, 7 * 24 * HOUR_MS),
+          ]),
+      ...modelWeeks(data),
+    ],
+    spend,
+    banked: toBanked(data.cedar_ember),
+  }
+}
+
 export async function fetchClaude(configDir: string): Promise<Snapshot> {
   const auth = loadToken(configDir)
   if ("error" in auth) return errorSnapshot(auth.error)
@@ -176,26 +199,7 @@ export async function fetchClaude(configDir: string): Promise<Snapshot> {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
     if (!res.ok) return errorSnapshot(`HTTP ${res.status}`)
-    const data: any = await res.json()
-    const spend = toSpend(data.spend)
-    return {
-      ok: true,
-      error: null,
-      updatedAt: nowSeconds(),
-      planType: null,
-      // A seat billed by spend alone has no plan windows; show them only once one is reported.
-      limits: [
-        ...(spend && !data.five_hour && !data.seven_day
-          ? []
-          : [
-              toLimit("Session", data.five_hour, 5 * HOUR_MS),
-              toLimit("Week", data.seven_day, 7 * 24 * HOUR_MS),
-            ]),
-        ...modelWeeks(data),
-      ],
-      spend,
-      banked: toBanked(data.cedar_ember),
-    }
+    return parseUsage(await res.json())
   } catch (err) {
     return errorSnapshot(err instanceof Error ? err.message : "API request failed")
   }

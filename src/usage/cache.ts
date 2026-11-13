@@ -25,8 +25,9 @@ const usageDir = join(cacheDir, "usage")
 
 interface CacheEntry {
   cachedAt: number
-  /** ms time of the last failed fetch that left these limits in place. */
+  /** The last failed fetch that left these limits in place: its ms time and error. */
   failedAt?: number
+  failure?: string | null
   snapshot: Snapshot
 }
 
@@ -42,22 +43,35 @@ export function readCache(p: Profile): CacheEntry | null {
   }
 }
 
-/** Stores a snapshot and returns what's now cached: a failed fetch keeps the last good limits, marked with its error. */
+/** The entry's limits, marked with the error of a failed fetch that couldn't replace them. */
+export const withFailure = (entry: CacheEntry): Snapshot =>
+  entry.failedAt == null
+    ? entry.snapshot
+    : { ...entry.snapshot, refreshError: entry.failure ?? null }
+
+/** Stores a fetch and returns what to show for it: a failed one leaves the last good limits cached and notes its error beside them. */
 function writeCache(p: Profile, snapshot: Snapshot): Snapshot {
   const last = readCache(p)
   const entry: CacheEntry =
     !snapshot.ok && last?.snapshot.ok
-      ? {
-          cachedAt: last.cachedAt,
-          failedAt: Date.now(),
-          snapshot: { ...last.snapshot, refreshError: snapshot.error },
-        }
+      ? { ...last, failedAt: Date.now(), failure: snapshot.error }
       : { cachedAt: nowSeconds(), snapshot }
   mkdirSync(usageDir, { recursive: true })
   const tmp = `${cachePath(p)}.${process.pid}.tmp`
   writeFileSync(tmp, JSON.stringify(entry))
   renameSync(tmp, cachePath(p))
-  return entry.snapshot
+  return withFailure(entry)
+}
+
+const REFRESH_COOLDOWN_MS = 10_000
+
+/** True when the profile was fetched, or failed to fetch, too recently to ask again. */
+export function fetchedLately(p: Profile): boolean {
+  const entry = readCache(p)
+  return (
+    !!entry &&
+    Date.now() - Math.max(entry.cachedAt * 1000, entry.failedAt ?? 0) < REFRESH_COOLDOWN_MS
+  )
 }
 
 export function claimLockFile(path: string, ttlSeconds = LOCK_TTL_SECONDS): boolean {

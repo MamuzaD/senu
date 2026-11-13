@@ -18,9 +18,9 @@ export interface FlightPlan {
   t: number
   /** Whether any section is loading or refreshing. */
   busy: boolean
-  /** Fresh-data arrival times in ms since opening, used for rings and glints. */
+  /** Fresh-data arrival times on the flight clock, used for rings and glints. */
   marks: number[]
-  /** Departure time in ms since opening; null until a landing is scheduled. */
+  /** Departure time on the flight clock; null until a landing is scheduled. */
   leave: number | null
   /** A later flight: she left the snag at RISE_AT on a clock restarted to suit. */
   risen?: boolean
