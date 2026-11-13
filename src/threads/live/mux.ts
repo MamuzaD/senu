@@ -1,5 +1,6 @@
 import type { Profile, ThreadsConfig } from "~/config.ts"
 import type { Pane } from "~/detect/panes.ts"
+import { hasTmuxSocket } from "~/detect/panes.ts"
 
 import type { Live } from "../entries.ts"
 import type { Launch } from "../resume.ts"
@@ -27,4 +28,4 @@ export interface Mux {
   openWindow(launch: Launch): Promise<string | null>
 }
 
-export const mux = (): Mux => (inRex() ? rexMux : tmuxMux)
+export const mux = (): Mux => (inRex() && !hasTmuxSocket() ? rexMux : tmuxMux)

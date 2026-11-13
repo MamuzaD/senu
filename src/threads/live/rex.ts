@@ -157,16 +157,45 @@ export function rexRow(a: RexAgent): PaneRow {
   }
 }
 
+/** senu runs on the server's machine, so the one app on it is the one in front of you. */
+async function localApp(): Promise<string | null> {
+  const list = await call<{
+    clients:
+      | { client_id: string; info?: { kind?: string }; principal?: { transport?: string } }[]
+      | null
+  }>("client.list")
+  const local = (list?.clients ?? []).filter(
+    (c) => c.info?.kind === "app" && c.principal?.transport === "unix",
+  )
+  return local.length === 1 ? local[0]!.client_id : null
+}
+
 /**
  * Server focus alone doesn't select the tab in the app, even within the same session. Selecting
- * goes through a client: REX_CLIENT names it, else Rex uses the only app connected.
+ * goes through a client: REX_CLIENT names it, else Rex uses the only app connected. With several
+ * connected Rex won't pick, so senu picks the local one; `ambiguous` is when it can't either.
  */
-export async function rexJump(id: string, windowId: string): Promise<"ok" | "gone" | "unselected"> {
+export async function rexJump(
+  id: string,
+  windowId: string,
+): Promise<"ok" | "gone" | "unselected" | "ambiguous"> {
   const target = parts(id)
   if ((await call("session.focus_block", target)) === null) return "gone"
-  const select = [`session_id=${target.session_id}`, `window_id=${windowId}`]
-  const { ok } = await run([rex(), "--autostart=false", "do", "session.select", ...select])
-  return ok ? "ok" : "unselected"
+  const select = (client: string[]) =>
+    run([
+      rex(),
+      "--autostart=false",
+      ...client,
+      "do",
+      "session.select",
+      `session_id=${target.session_id}`,
+      `window_id=${windowId}`,
+    ])
+  if ((await select([])).ok) return "ok"
+  if (process.env.REX_CLIENT) return "unselected"
+  const app = await localApp()
+  if (!app) return "ambiguous"
+  return (await select(["-C", app])).ok ? "ok" : "unselected"
 }
 
 const rexKill = async (id: string) => (await call("block.close", parts(id))) !== null
@@ -225,9 +254,9 @@ export const rexMux: Mux = {
     const jumped = await rexJump(live.paneId, live.windowId)
     if (jumped === "ok") return null
     if (jumped === "gone") return "no longer running"
-    return process.env.REX_CLIENT
-      ? "not reachable: is Remote Control on in Rex Settings > Server > Client Info?"
-      : "Rex can't tell which device to switch; open senu from its popup"
+    return jumped === "ambiguous"
+      ? "Rex can't tell which device to switch; open senu from its popup"
+      : "not reachable: is Remote Control on in Rex Settings > Server > Client Info?"
   },
 
   kill: rexKill,

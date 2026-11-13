@@ -12,16 +12,30 @@ writeFileSync(
 import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(process.env.REX_TEST_LOG, JSON.stringify(args) + "\\n");
-if (process.env.REX_TEST_FAIL && args.includes(process.env.REX_TEST_FAIL)) process.exit(1);
-console.log(JSON.stringify(args.includes("run")
-  ? { window_id: "window:new", block_ids: ["block:new"] }
-  : { revision: 1 }));
+const passes = process.env.REX_TEST_PASS_WITH && args.includes(process.env.REX_TEST_PASS_WITH);
+if (process.env.REX_TEST_FAIL && args.includes(process.env.REX_TEST_FAIL) && !passes) process.exit(1);
+console.log(args.includes("client.list")
+  ? process.env.REX_TEST_CLIENTS
+  : JSON.stringify(args.includes("run")
+    ? { window_id: "window:new", block_ids: ["block:new"] }
+    : { revision: 1 }));
 `,
 )
 chmodSync(join(dir, "rex"), 0o755)
 
 const modulePath = join(import.meta.dir, "../../../src/threads/live/rex.ts")
-async function invoke(expression: string, fail = "") {
+const app = (client_id: string, transport: string) => ({
+  client_id,
+  info: { kind: "app" },
+  principal: { transport },
+})
+const cli = { client_id: "client:cli", info: { kind: "cli" }, principal: { transport: "unix" } }
+
+async function invoke(
+  expression: string,
+  fail = "",
+  opts: { clients?: object[]; client?: string; passWith?: string } = {},
+) {
   const log = join(dir, `${crypto.randomUUID()}.jsonl`)
   const proc = Bun.spawn(
     [
@@ -37,6 +51,9 @@ async function invoke(expression: string, fail = "") {
         REX_BIN_DIR: dir,
         REX_TEST_LOG: log,
         REX_TEST_FAIL: fail,
+        REX_TEST_PASS_WITH: opts.passWith ?? "",
+        REX_TEST_CLIENTS: JSON.stringify({ clients: opts.clients ?? [] }),
+        REX_CLIENT: opts.client ?? "",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -82,11 +99,39 @@ describe("Rex jump", () => {
     })
   }
 
-  test("reports failure when the app cannot select the destination", async () => {
-    const result = await invoke(
-      'rexJump("session:here/block:target", "window:target")',
-      "session.select",
-    )
+  const jumpHere = 'rexJump("session:here/block:target", "window:target")'
+
+  test("reports failure when the popup's app cannot select the destination", async () => {
+    const result = await invoke(jumpHere, "session.select", { client: "client:mac" })
+    expect(result.out).toBe("unselected")
+    expect(result.calls).toHaveLength(2)
+  })
+
+  test("picks the local app when Rex can't choose between devices", async () => {
+    const result = await invoke(jumpHere, "session.select", {
+      clients: [cli, app("client:mac", "unix"), app("client:phone", "tailscale")],
+      passWith: "client:mac",
+    })
+    expect(result.out).toBe("ok")
+    expect(result.calls.at(-1)!.slice(0, 4)).toEqual([
+      "--autostart=false",
+      "-C",
+      "client:mac",
+      "do",
+    ])
+  })
+
+  test("is ambiguous with no single local app", async () => {
+    const result = await invoke(jumpHere, "session.select", {
+      clients: [app("client:phone", "tailscale"), app("client:pad", "tailscale")],
+    })
+    expect(result.out).toBe("ambiguous")
+  })
+
+  test("reports failure when the local app cannot select either", async () => {
+    const result = await invoke(jumpHere, "session.select", {
+      clients: [app("client:mac", "unix")],
+    })
     expect(result.out).toBe("unselected")
   })
 
@@ -136,7 +181,7 @@ describe("Rex resume", () => {
   })
 
   test("succeeds when the app can't select the created tab, so a retry won't start a copy", async () => {
-    const result = await invoke(launch, "session.select")
+    const result = await invoke(launch, "session.select", { client: "client:mac" })
     expect(result.out).toBe("true")
     expect(result.calls).toHaveLength(3)
   })

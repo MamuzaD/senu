@@ -79,6 +79,8 @@ export function setTmuxSocket(args: string[]) {
   socketArgs = args
 }
 
+export const hasTmuxSocket = () => socketArgs.length > 0
+
 export const tmux = (...args: string[]) => run(["tmux", ...socketArgs, ...args])
 
 export async function listPanes(): Promise<Pane[]> {
