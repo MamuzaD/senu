@@ -111,7 +111,7 @@ export function mergeLoaded(last: Entry[], loaded: Entry[], since = Infinity): E
   return [...loaded, ...kept].toSorted((a, b) => b.updatedMs - a.updatedMs)
 }
 
-/** Which saved threads to read: all, the running ones, or those plus any touched within `recentMs` */
+/** Which saved threads to read: all, the running ones, or those plus the pinned and any touched within `recentMs` */
 export type Scope = "all" | "live" | "recent"
 
 export async function listEntries(
@@ -119,13 +119,14 @@ export async function listEntries(
   withUnthreaded: boolean,
   scope: Scope = "all",
   recentMs = Infinity,
+  pins: string[] = [],
 ) {
   const seen = await mux().seen(profiles)
   const ids = new Set(seen.paneByThread.keys())
   const only: Record<Scope, Only | undefined> = {
     all: undefined,
     live: { ids },
-    recent: { ids, since: Date.now() - recentMs },
+    recent: { ids: new Set([...ids, ...pins]), since: Date.now() - recentMs },
   }
   const { threads, failed } = listThreads(profiles, only[scope])
   return { entries: joinEntries(threads, seen, withUnthreaded), failed }

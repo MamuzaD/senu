@@ -19,6 +19,7 @@ import { formatDuration } from "~/usage/format.ts"
 
 import { copy } from "../clipboard.ts"
 import { mergeLoaded, type Entry, type Scope } from "../entries.ts"
+import { readPins, togglePin, writePins } from "../pins.ts"
 import { previewAt, threadKey, type Thread, type ToolKind, type Turn } from "../thread.ts"
 
 const REFRESH_MS = 5000
@@ -59,6 +60,7 @@ const keysFor = (live: boolean, panes: boolean): HintBinding[] => [
   { key: "ctrl+e", cmd: "preview-newer" },
   { key: "y", cmd: "copy-id", desc: "y copy" },
   { key: "shift+y", cmd: "copy-path" },
+  { key: "m", cmd: "pin", desc: "m pin" },
   { key: "x", cmd: "kill", desc: "x kill" },
   { key: "r", cmd: "refresh", desc: "r refresh" },
   { key: "tab", cmd: "live", desc: live ? "tab all" : "tab live" },
@@ -113,16 +115,25 @@ export function matches(e: Entry, query: string): boolean {
 const byAttention = (a: Entry, b: Entry) =>
   PRIORITY[b.live?.state ?? "idle"] - PRIORITY[a.live?.state ?? "idle"]
 
+/** Pinned threads come first, in pin order, and stay there whether or not they're running. */
 export function sections(
   entries: Entry[],
   recentMs: number,
+  pins: string[] = [],
   at = Date.now(),
 ): { label: string; entries: Entry[] }[] {
   const old = (e: Entry) => at - e.updatedMs > recentMs
+  const rank = new Map(pins.map((key, i) => [key, i]))
+  const pinned = (e: Entry) => !!e.thread && rank.has(keyOf(e))
+  const rest = entries.filter((e) => !pinned(e))
   return [
-    { label: "running", entries: entries.filter((e) => e.live).toSorted(byAttention) },
-    { label: "recent", entries: entries.filter((e) => !e.live && !old(e)) },
-    { label: "older", entries: entries.filter((e) => !e.live && old(e)) },
+    {
+      label: "pinned",
+      entries: entries.filter(pinned).toSorted((a, b) => rank.get(keyOf(a))! - rank.get(keyOf(b))!),
+    },
+    { label: "running", entries: rest.filter((e) => e.live).toSorted(byAttention) },
+    { label: "recent", entries: rest.filter((e) => !e.live && !old(e)) },
+    { label: "older", entries: rest.filter((e) => !e.live && old(e)) },
   ].filter((s) => s.entries.length)
 }
 
@@ -538,6 +549,7 @@ export function Browser({
     setPendingCount("")
     return n
   }
+  const [pins, setPins] = useState(readPins)
   const [complete, setComplete] = useState(!partial)
   const loadAll = useRef(partial)
   // Reloads read only what the view shows; the older threads come back on start and on `r`
@@ -565,11 +577,14 @@ export function Browser({
   }, WATCH_MS)
 
   const shown = useMemo(() => {
-    const pool = (live ? entries.filter((e) => e.live).toSorted(byAttention) : entries)
-      .slice(0, limit)
-      .filter((e) => matches(e, query))
-    return live ? [{ label: "running", entries: pool }] : sections(pool, recentMs)
-  }, [entries, query, live, limit, recentMs])
+    const rank = new Map(pins.map((key, i) => [key, i]))
+    const pinRank = (e: Entry) => rank.get(keyOf(e)) ?? pins.length
+    const ordered = live
+      ? entries.filter((e) => e.live).toSorted(byAttention)
+      : entries.toSorted((a, b) => pinRank(a) - pinRank(b))
+    const pool = ordered.slice(0, limit).filter((e) => matches(e, query))
+    return live ? [{ label: "running", entries: pool }] : sections(pool, recentMs, pins)
+  }, [entries, query, live, limit, recentMs, pins])
   const flat = useMemo(() => shown.flatMap((s) => s.entries), [shown])
   const selIndex = Math.max(
     0,
@@ -759,6 +774,21 @@ export function Browser({
           run: () => copyOut(current().e?.thread?.transcript, "transcript path"),
         },
         {
+          name: "pin",
+          run: () => {
+            const { e } = current()
+            if (!e?.thread) return flash("no saved thread yet")
+            const next = togglePin(pins, keyOf(e))
+            setPins(next)
+            try {
+              writePins(next)
+              flash(next.length > pins.length ? "pinned" : "unpinned")
+            } catch {
+              flash("couldn't save pins")
+            }
+          },
+        },
+        {
           name: "kill",
           run: () => {
             const { e } = current()
@@ -824,7 +854,7 @@ export function Browser({
           Array.from({ length: 10 }, (_, d) => ({ name: `count-${d}`, run: () => addDigit(d) })),
         ),
     }),
-    [flat, top, page, maxOffset, live, width, showPreview, query, focus],
+    [flat, top, page, maxOffset, live, width, showPreview, query, focus, pins],
   )
 
   const canvas = paint({

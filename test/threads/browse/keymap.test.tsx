@@ -12,7 +12,51 @@ import { act } from "react"
 
 import { Browser } from "~/threads/browse/browser.tsx"
 import { agentEntry, type Entry, type Scope } from "~/threads/entries.ts"
+import * as pins from "~/threads/pins.ts"
 import { listThreads } from "~/threads/thread.ts"
+import type { Thread } from "~/threads/thread.ts"
+
+test("older pins take priority over newer threads within the limit", async () => {
+  const readPins = spyOn(pins, "readPins").mockReturnValue(["claude:old", "claude:older"])
+  try {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const t = await createTestRenderer({ width: 100, height: 22 })
+    destroy = () => act(() => t.renderer.destroy())
+    const initial: Entry[] = ["new", "old", "older"].map((sessionId, i) => ({
+      thread: { sessionId, profile: "claude" } as Thread,
+      agent: "claude",
+      title: `${sessionId} conversation`,
+      cwd: "/p",
+      updatedMs: Date.now() - i * RECENT_MS,
+      live: null,
+    }))
+    const keymap = createDefaultOpenTuiKeymap(t.renderer)
+    act(() =>
+      createRoot(t.renderer).render(
+        <KeymapProvider keymap={keymap}>
+          <Browser
+            initial={initial}
+            load={async () => initial}
+            watch={async () => ({ merge: (es) => es, scouting: false })}
+            live={false}
+            preview={false}
+            recentMs={RECENT_MS}
+            limit={1}
+            jump={async () => {}}
+            onOpen={() => {}}
+          />
+        </KeymapProvider>,
+      ),
+    )
+    await act(() => t.renderOnce())
+    const frame = t.captureCharFrame()
+    expect(frame).toContain("old conversation")
+    expect(frame).not.toContain("new conversation")
+    expect(frame).not.toContain("older conversation")
+  } finally {
+    readPins.mockRestore()
+  }
+})
 
 test("OpenCode previews stay isolated and refresh streamed parts", async () => {
   const dir = mkdtempSync(join(tmpdir(), "senu-preview-cache-"))

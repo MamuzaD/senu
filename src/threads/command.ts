@@ -13,6 +13,7 @@ import {
   type Entry,
   type Scope,
 } from "./entries.ts"
+import { readPins } from "./pins.ts"
 import { ResumeError } from "./resume.ts"
 
 const HELP = `usage: senu threads [--live] [--json] [--profile key]... [--limit n] [-L socket | -S path]
@@ -80,7 +81,13 @@ async function browse(
   const { threads } = config
   const recentMs = threads.recentDays * 24 * 60 * 60 * 1000
   const load = async (scope: Scope) => {
-    const { entries, failed } = await listEntries(profiles, withUnthreaded, scope, recentMs)
+    const { entries, failed } = await listEntries(
+      profiles,
+      withUnthreaded,
+      scope,
+      recentMs,
+      readPins(),
+    )
     for (const f of failed) failures.add(`${f.profile}: ${f.error}`)
     return entries
   }

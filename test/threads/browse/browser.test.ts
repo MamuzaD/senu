@@ -33,12 +33,37 @@ test("sections: running, then the last 3 days, then older; running never ages", 
       entry("last week", 2 * RECENT_MS),
     ],
     RECENT_MS,
+    [],
     now,
   ).map((s) => [s.label, s.entries.map((e) => e.title)])
   expect(got).toEqual([
     ["running", ["old but running"]],
     ["recent", ["today"]],
     ["older", ["last week"]],
+  ])
+})
+
+test("sections: pinned threads lead in pin order and leave the other sections", () => {
+  const now = 10 * RECENT_MS
+  const entry = (sessionId: string, ageMs: number, live = false) => ({
+    thread: { sessionId, profile: "claude" } as Thread,
+    agent: "claude" as const,
+    title: sessionId,
+    cwd: "/p",
+    updatedMs: now - ageMs,
+    live: live
+      ? { state: "working" as const, paneId: "%1", windowId: "@1", windowIndex: 1, session: "s" }
+      : null,
+  })
+  const got = sections(
+    [entry("running", 0, true), entry("today", 1000), entry("old", 2 * RECENT_MS)],
+    RECENT_MS,
+    ["claude:old", "claude:gone", "claude:running"],
+    now,
+  ).map((s) => [s.label, s.entries.map((e) => e.title)])
+  expect(got).toEqual([
+    ["pinned", ["old", "running"]],
+    ["recent", ["today"]],
   ])
 })
 
