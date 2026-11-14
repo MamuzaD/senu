@@ -19,6 +19,10 @@ const COMMANDS: Record<string, Command> = {
     about: "print a saved thread as text, for agent handoff",
     run: async (a, c) => (await import("./search/read-command.ts")).readCommand(a, c),
   },
+  mcp: {
+    about: "serve chat search over stdio",
+    run: async (a, c) => (await import("./mcp/command.ts")).mcpCommand(a, c),
+  },
   vision: {
     about: "show Codex and Claude usage limits and today's cost",
     run: async (a, c) => (await import("./usage/command.ts")).usageCommand(a, c),
