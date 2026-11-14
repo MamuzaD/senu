@@ -97,3 +97,129 @@ test("a fast reply can arrive before send returns, but failed deliveries never b
     store.close()
   }
 })
+
+test("wait finds replies from another process and repeated waits return the same answer", async () => {
+  const { root } = setup()
+  const path = join(root, "messages.sqlite")
+  const store = new MessageStore(path)
+  let child: ReturnType<typeof Bun.spawn> | undefined
+  try {
+    const question = await store.send(from, to, "question", undefined, async () => "delivered")
+    const waiting = store.waitForReply(question.message_id, from, profiles, 2_000)
+    child = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `const { MessageStore } = await import(process.argv[1]);
+         const store = new MessageStore(process.argv[2]);
+         try { await store.send(process.argv[3], process.argv[4], "cross-process answer", process.argv[5], async () => "delivered"); }
+         finally { store.close(); }`,
+        join(import.meta.dir, "../../src/mcp/store.ts"),
+        path,
+        to,
+        from,
+        question.message_id,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+    const result = await waiting
+    expect(await child.exited).toBe(0)
+    expect(result).toMatchObject({
+      message_id: question.message_id,
+      timed_out: false,
+      reply: { from: to, text: "cross-process answer" },
+    })
+    expect(await store.waitForReply(question.message_id, from, profiles, 1)).toEqual(result)
+  } finally {
+    if (child && child.exitCode === null) {
+      child.kill()
+      await child.exited
+    }
+    store.close()
+  }
+})
+
+test("timeout preserves late replies; cancellation and access errors end waits", async () => {
+  const { root } = setup()
+  const store = new MessageStore(join(root, "messages.sqlite"))
+  try {
+    const question = await store.send(from, to, "question", undefined, async () => "delivered")
+    const id = question.message_id
+    expect(await store.waitForReply(id, from, profiles, 1)).toEqual({
+      message_id: id,
+      timed_out: true,
+      reply: null,
+    })
+    const abort = new AbortController()
+    const waiting = store.waitForReply(id, from, profiles, 60_000, abort.signal)
+    abort.abort()
+    await rejects(waiting, "abort")
+    await rejects(store.waitForReply(id, to, profiles, 1), "Message not found")
+    await rejects(store.waitForReply(id, from, ["codex-personal"], 1), "Message not found")
+    await rejects(store.waitForReply(id, from, profiles, 60_001), "timeout_ms")
+    await store.send(to, from, "late answer", id, async () => "delivered")
+    expect((await store.waitForReply(id, from, profiles, 1)).reply?.text).toBe("late answer")
+  } finally {
+    store.close()
+  }
+})
+
+test("a reply is delivered only when its sender is not waiting for it", async () => {
+  const { root } = setup()
+  const path = join(root, "messages.sqlite")
+  const asker = new MessageStore(path)
+  const peer = new MessageStore(path)
+  const delivered: string[] = []
+  const deliver = (text: string) => async () => {
+    delivered.push(text)
+    return "delivered"
+  }
+  try {
+    const question = await asker.send(from, to, "question", undefined, async () => "delivered")
+    const id = question.message_id
+    const waiting = asker.waitForReply(id, from, profiles, 2_000)
+    const held = await peer.send(to, from, "awaited answer", id, deliver("awaited answer"))
+    expect(held.delivery).toBe("returned to the waiting sender")
+    expect((await waiting).reply).toMatchObject({
+      message_id: held.message_id,
+      text: "awaited answer",
+    })
+    const later = await peer.send(to, from, "follow-up", id, deliver("follow-up"))
+    expect(later.delivery).toBe("delivered")
+
+    const second = await asker.send(from, to, "second", undefined, async () => "delivered")
+    expect((await asker.waitForReply(second.message_id, from, profiles, 1)).timed_out).toBe(true)
+    await peer.send(to, from, "after timeout", second.message_id, deliver("after timeout"))
+
+    const third = await asker.send(from, to, "third", undefined, async () => "delivered")
+    const abort = new AbortController()
+    const cancelled = asker.waitForReply(third.message_id, from, profiles, 60_000, abort.signal)
+    abort.abort()
+    await rejects(cancelled, "abort")
+    await peer.send(to, from, "after cancel", third.message_id, deliver("after cancel"))
+
+    expect(delivered).toEqual(["follow-up", "after timeout", "after cancel"])
+  } finally {
+    asker.close()
+    peer.close()
+  }
+})
+
+test("a wait keeps returning its first reply after an earlier one is delivered late", async () => {
+  const { root } = setup()
+  const store = new MessageStore(join(root, "messages.sqlite"))
+  try {
+    const question = await store.send(from, to, "question", undefined, async () => "delivered")
+    const id = question.message_id
+    const slow = Promise.withResolvers<string>()
+    const early = store.send(to, from, "sent first", id, () => slow.promise)
+    await store.send(to, from, "delivered first", id, async () => "delivered")
+    const first = await store.waitForReply(id, from, profiles, 1)
+    expect(first.reply?.text).toBe("delivered first")
+    slow.resolve("delivered")
+    await early
+    expect(await store.waitForReply(id, from, profiles, 1)).toEqual(first)
+  } finally {
+    store.close()
+  }
+})

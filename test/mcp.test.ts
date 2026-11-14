@@ -11,6 +11,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 
 import { createServer } from "~/mcp/command.ts"
 import { deliverClaude, deliverCodex, messageText, sender, sendLimiter } from "~/mcp/send.ts"
+import { MessageStore } from "~/mcp/store.ts"
 import type { Thread } from "~/threads/thread.ts"
 
 import { cleanup, record, rollout, setup } from "./chats.ts"
@@ -80,6 +81,7 @@ test("MCP client initializes, discovers tools, and receives an error for an unkn
       "read_thread",
       "list_agents",
       "send_message",
+      "wait_for_reply",
     ])
     const result = await client.callTool({
       name: "send_message",
@@ -127,6 +129,7 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
     record("reply from CLI", "assistant"),
   ])
   rollout(config, 1, "work-session", [record("private work text")])
+  rollout(config, 0, "other-session", [record("needle from CLI")])
   const dir = join(root, "senu")
   mkdirSync(dir)
   writeFileSync(
@@ -138,15 +141,45 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
       )
       .join("\n"),
   )
+  const db = new Database(join(config.profiles[0]!.home, "state_5.sqlite"))
+  db.exec(`
+    CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, name TEXT, title TEXT,
+      updated_at_ms INTEGER, updated_at INTEGER, archived INTEGER, thread_source TEXT);
+    INSERT INTO threads VALUES ('cli-session', '', '/fixture', NULL, 'Caller', 1, 1, 0, 'user');
+  `)
+  db.close()
+  const store = new MessageStore(join(root, "senu", "messages.sqlite"))
+  let messageId: string
+  try {
+    const question = await store.send(
+      "codex-personal:cli-session",
+      "claude-work:peer",
+      "question",
+      undefined,
+      async () => "delivered",
+    )
+    messageId = question.message_id
+    await store.send(
+      "claude-work:peer",
+      "codex-personal:cli-session",
+      "stored answer",
+      messageId,
+      async () => "delivered",
+    )
+  } finally {
+    store.close()
+  }
   const childEnv: Record<string, string> = {
     PATH: process.env.PATH!,
     XDG_CONFIG_HOME: root,
+    XDG_STATE_HOME: root,
+    CODEX_THREAD_ID: "cli-session",
     ...env,
   }
   const cli = join(import.meta.dir, "..", "src", "cli.ts")
   const run = Bun.spawnSync([process.execPath, cli, "search", "needle"], {
     cwd: tmpdir(),
-    env: childEnv,
+    env: { ...childEnv, CODEX_THREAD_ID: "" },
   })
   expect(run.exitCode).toBe(0)
   expect(JSON.parse(run.stdout.toString()).hits[0].excerpt).toBe("needle from CLI")
@@ -161,6 +194,58 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
     }),
   )
   try {
+    const waited = await client.callTool({
+      name: "wait_for_reply",
+      arguments: { message_id: messageId!, timeout_ms: 1 },
+    })
+    expect(waited.isError).toBeFalsy()
+    expect(JSON.parse((waited.content as { text: string }[])[0]!.text)).toMatchObject({
+      timed_out: false,
+      reply: { text: "stored answer" },
+    })
+    const path = join(root, "senu", "messages.sqlite")
+    const peer = new MessageStore(path)
+    const waits = new Database(path, { readonly: true })
+    try {
+      const asked = await peer.send(
+        "codex-personal:cli-session",
+        "claude-work:peer",
+        "second question",
+        undefined,
+        async () => "delivered",
+      )
+      const waiting = client.callTool({
+        name: "wait_for_reply",
+        arguments: { message_id: asked.message_id, timeout_ms: 10_000 },
+      })
+      while (!waits.query("SELECT 1 FROM waits WHERE message_id = ?").get(asked.message_id))
+        await Bun.sleep(10)
+      let delivered = false
+      const held = await peer.send(
+        "claude-work:peer",
+        "codex-personal:cli-session",
+        "awaited answer",
+        asked.message_id,
+        async () => {
+          delivered = true
+          return "delivered"
+        },
+      )
+      expect(held.delivery).toBe("returned to the waiting sender")
+      expect(delivered).toBe(false)
+      expect(JSON.parse(((await waiting).content as { text: string }[])[0]!.text)).toMatchObject({
+        timed_out: false,
+        reply: { text: "awaited answer" },
+      })
+    } finally {
+      waits.close()
+      peer.close()
+    }
+    const missing = await client.callTool({
+      name: "wait_for_reply",
+      arguments: { message_id: crypto.randomUUID(), timeout_ms: 1 },
+    })
+    expect(missing.isError).toBe(true)
     const result = await client.callTool({ name: "search_threads", arguments: { query: "needle" } })
     const content = result.content as { text: string }[]
     expect(JSON.parse(content[0]!.text).hits[0].excerpt).toBe("needle from CLI")

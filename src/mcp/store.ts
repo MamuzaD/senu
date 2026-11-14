@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite"
 import { chmodSync, closeSync, mkdirSync, openSync } from "node:fs"
 import { dirname, join } from "node:path"
+import { setTimeout } from "node:timers/promises"
 
 import { stateDir } from "~/paths.ts"
 
@@ -36,6 +37,8 @@ export class MessageStore {
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS message_replies ON messages(reply_to, status);
+      CREATE TABLE IF NOT EXISTS waits (message_id TEXT PRIMARY KEY, until INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS answers (message_id TEXT PRIMARY KEY, reply_id TEXT NOT NULL);
     `)
   }
 
@@ -72,11 +75,22 @@ export class MessageStore {
         throw new Error("Reply target not found in this conversation")
     }
     const id = crypto.randomUUID()
-    this.db
-      .query(
-        'INSERT INTO messages (message_id, "from", "to", text, reply_to, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      )
-      .run(id, from, to, text, replyTo ?? null, "pending", Date.now())
+    const awaited = this.db
+      .transaction(() => {
+        const waiting =
+          replyTo !== undefined &&
+          this.db
+            .query("SELECT 1 FROM waits WHERE message_id = ? AND until > ?")
+            .get(replyTo, Date.now()) !== null
+        this.db
+          .query(
+            'INSERT INTO messages (message_id, "from", "to", text, reply_to, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          )
+          .run(id, from, to, text, replyTo ?? null, waiting ? "delivered" : "pending", Date.now())
+        return waiting
+      })
+      .immediate()
+    if (awaited) return { message_id: id, delivery: "returned to the waiting sender" }
     try {
       const delivery = await deliver(id)
       this.db.query("UPDATE messages SET status = 'delivered' WHERE message_id = ?").run(id)
@@ -87,12 +101,67 @@ export class MessageStore {
     }
   }
 
+  async waitForReply(
+    id: string,
+    from: string,
+    profiles: string[],
+    timeoutMs = 30_000,
+    signal?: AbortSignal,
+  ) {
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000)
+      throw new Error("timeout_ms must be between 1 and 60000")
+    this.sent(id, from, profiles)
+    const until = Date.now() + timeoutMs
+    const stopWaiting = () =>
+      this.db.query("DELETE FROM waits WHERE message_id = ? AND until <= ?").run(id, until)
+    this.db.query("DELETE FROM waits WHERE until <= ?").run(Date.now())
+    this.db
+      .query(
+        `INSERT INTO waits (message_id, until) VALUES (?, ?)
+         ON CONFLICT (message_id) DO UPDATE SET until = max(until, excluded.until)`,
+      )
+      .run(id, until)
+    try {
+      while (true) {
+        signal?.throwIfAborted()
+        const message = this.sent(id, from, profiles)
+        const timedOut = Date.now() >= until
+        if (timedOut) stopWaiting()
+        const reply = message.status === "delivered" ? this.reply(message) : null
+        if (reply)
+          return {
+            message_id: id,
+            timed_out: false,
+            reply: { message_id: reply.message_id, from: reply.from, text: reply.text },
+          }
+        if (timedOut) return { message_id: id, timed_out: true, reply: null }
+        await setTimeout(Math.min(100, until - Date.now()), undefined, { signal })
+      }
+    } finally {
+      stopWaiting()
+    }
+  }
+
   reply(message: Message) {
-    return this.db
-      .query<Message, [string, string, string]>(
-        `SELECT * FROM messages WHERE reply_to = ? AND "from" = ? AND "to" = ?
+    const answer = () =>
+      this.db
+        .query<Message, [string]>(
+          `SELECT messages.* FROM answers JOIN messages ON messages.message_id = answers.reply_id
+           WHERE answers.message_id = ?`,
+        )
+        .get(message.message_id)
+    const pinned = answer()
+    if (pinned) return pinned
+    const first = this.db
+      .query<{ message_id: string }, [string, string, string]>(
+        `SELECT message_id FROM messages WHERE reply_to = ? AND "from" = ? AND "to" = ?
          AND status = 'delivered' ORDER BY rowid LIMIT 1`,
       )
       .get(message.message_id, message.to, message.from)
+    if (!first) return null
+    this.db
+      .query("INSERT OR IGNORE INTO answers (message_id, reply_id) VALUES (?, ?)")
+      .run(message.message_id, first.message_id)
+    return answer()
   }
 }
