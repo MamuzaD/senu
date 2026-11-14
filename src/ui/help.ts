@@ -14,8 +14,8 @@ export async function printHelp(stream: NodeJS.WriteStream, text: string): Promi
       const [, label, command, args] = usage
       return `${label === "usage:" ? `${muted("usage")} ` : label} ${command}${muted(args!)}`
     }
-    const row = line.match(/^ {2}(\S.*?)( {2,})(.*)$/)
-    if (row) return `  ${paint([[row[1]!, brand.gold]])}${row[2]}${row[3]}`
+    const row = line.match(/^( {2,})(\S.*?)( {2,})(.*)$/)
+    if (row) return `${row[1]}${paint([[row[2]!, brand.gold]])}${row[3]}${row[4]}`
     return line
   })
   write(stream, lines.join("\n"))

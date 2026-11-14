@@ -103,6 +103,94 @@ describe("senu read", () => {
       "No saved thread personal-one in codex-work, claude-work",
     )
   })
+  test("focuses on a search line, including entries joined into a turn", () => {
+    const { config, env } = setup()
+    rollout(config, 0, ID, [
+      meta,
+      record("first"),
+      record("reply", "assistant"),
+      record("continued", "assistant"),
+      record("target"),
+      record("answer", "assistant"),
+      record("last"),
+    ])
+    const read = (extra = {}) => readThread(config, { session: ID, line: 4, ...extra }, env)
+    expect(read({ before: 0, after: 0 }).turns.map((t) => t.text)).toEqual(["reply\n\ncontinued"])
+    expect(read({ before: 1, after: 1 }).turns.map((t) => t.index)).toEqual([0, 1, 2])
+    expect(renderThread(read({ before: 0, after: 0 }))).toContain(`--line 4 -C N`)
+    expect(renderThread(read({ before: 0, after: 0 }))).toContain("increase --max-chars")
+    expect(read({ after: 1 }).turns.map((t) => t.index)).toEqual([1, 2])
+    expect(read({ before: 1 }).turns.map((t) => t.index)).toEqual([0, 1])
+    expect(read().turns.map((t) => t.index)).toEqual([0, 1, 2, 3, 4])
+    expect(read({ line: 7, before: 0, after: 3 }).turns.map((t) => t.index)).toEqual([4])
+    for (const extra of [
+      { line: 1 },
+      { line: 100 },
+      { line: 0 },
+      { before: -1 },
+      { after: 1.5 },
+      { line: undefined, before: 1 },
+    ])
+      expect(() => read(extra)).toThrow()
+  })
+  test("keeps the target within budget and requires tools for a tool hit", () => {
+    const { config, env } = setup()
+    rollout(config, 0, ID, [
+      meta,
+      record("goal"),
+      tool("tool output"),
+      record("x".repeat(5000), "assistant"),
+      record("last"),
+    ])
+    expect(() => readThread(config, { session: ID, line: 3 }, env)).toThrow("--tools")
+    expect(
+      readThread(config, { session: ID, line: 3, tools: true, before: 0, after: 0 }, env).turns[0]!
+        .text,
+    ).toBe("tool output")
+    expect(() => readThread(config, { session: ID, line: 4, maxChars: 1000 }, env)).toThrow(
+      "Target turn exceeds",
+    )
+    const thread = readThread(config, { session: ID, line: 5, maxChars: 1000 }, env)
+    expect(thread.turns.some((t) => t.text === "last")).toBe(true)
+    expect(renderThread(thread).length).toBeLessThanOrEqual(1000)
+  })
+  test("long context flags match shorthand and preserve flag order", async () => {
+    const { config } = setup()
+    rollout(config, 1, ID, [
+      meta,
+      record("first"),
+      record("reply", "assistant"),
+      record("target"),
+      record("answer", "assistant"),
+      record("last"),
+    ])
+    const out = spyOn(process.stdout, "write").mockImplementation(() => true)
+    try {
+      for (const [flag, expected] of [
+        ["--before-context", [0, 1, 2]],
+        ["--after-context", [2, 3, 4]],
+        ["--context", [0, 1, 2, 3, 4]],
+      ] as const) {
+        out.mockClear()
+        expect(await readCommand([ID, "--line", "4", flag, "2", "--json"], config)).toBe(0)
+        expect(
+          JSON.parse(out.mock.calls[0]![0] as string).turns.map((t: { index: number }) => t.index),
+        ).toEqual(expected)
+      }
+      out.mockClear()
+      expect(
+        await readCommand(
+          [ID, "--line", "4", "--context", "2", "-B", "0", "--after-context", "1", "--json"],
+          config,
+        ),
+      ).toBe(0)
+      expect(
+        JSON.parse(out.mock.calls[0]![0] as string).turns.map((t: { index: number }) => t.index),
+      ).toEqual([2, 3])
+    } finally {
+      out.mockRestore()
+    }
+  })
   test("prints JSON, and a usage mistake shows the help and exits 2", async () => {
     const { config } = setup()
     rollout(config, 1, ID, [meta, record("work ask")])
@@ -111,6 +199,13 @@ describe("senu read", () => {
     try {
       expect(await readCommand([ID, "--json"], config)).toBe(0)
       expect(JSON.parse(out.mock.calls[0]![0] as string).turns[0].text).toBe("work ask")
+      out.mockClear()
+      expect(
+        await readCommand([ID, "--line", "2", "-C", "0", "-B", "1", "-A", "2", "--json"], config),
+      ).toBe(0)
+      expect(JSON.parse(out.mock.calls[0]![0] as string).turns[0].text).toBe("work ask")
+      for (const flags of [["--line"], ["-C", "1"], ["--line", "0"], ["--line", "2", "-A", "-1"]])
+        expect(await readCommand([ID, ...flags], config)).toBe(2)
       expect(await readCommand([ID, "--max-chars", "0"], config)).toBe(2)
       expect(await readCommand(["missing"], config)).toBe(1)
       expect(err.mock.calls.at(-1)![0]).toStartWith("senu read: No saved thread missing")
