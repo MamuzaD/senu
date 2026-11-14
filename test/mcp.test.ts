@@ -1,6 +1,14 @@
 import { Database } from "bun:sqlite"
 import { afterEach, expect, test } from "bun:test"
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { createServer as netServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -10,6 +18,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 
 import { createServer } from "~/mcp/command.ts"
+import { codexConfig, installCommand } from "~/mcp/install.ts"
 import {
   agentLocation,
   deliverClaude,
@@ -355,4 +364,67 @@ test("Codex MCP identifies one user thread owned by its parent and refuses ambig
     await child.exited
     db.close()
   }
+})
+
+test("mcp install rewrites only senu's Codex tables and skips missing profiles", async () => {
+  const { config } = setup()
+  const path = join(config.profiles[0]!.home, "config.toml")
+  writeFileSync(
+    path,
+    [
+      'model = "x"',
+      "",
+      "[mcp_servers.senu]",
+      'command = "/old/senu"',
+      "",
+      "[mcp_servers.senu.env]",
+      'CODEX_HOME = "/old"',
+      "",
+      "[mcp_servers.other]",
+      'command = "other"',
+      "",
+    ].join("\n"),
+  )
+  rmSync(config.profiles[1]!.home, { recursive: true })
+  config.profiles.pop()
+  const binaries = { claude: null, codex: "/bin/codex" }
+  expect(await installCommand(config, ["/new/senu"], binaries)).toBe(0)
+  const parsed = Bun.TOML.parse(readFileSync(path, "utf8")) as {
+    model: string
+    mcp_servers: Record<string, unknown>
+  }
+  expect(parsed.model).toBe("x")
+  expect(parsed.mcp_servers).toEqual({
+    other: { command: "other" },
+    senu: {
+      command: "/new/senu",
+      args: ["mcp"],
+      env_vars: ["REX_SESSION", "REX_BIN_DIR"],
+      env: { CODEX_HOME: config.profiles[0]!.home },
+    },
+  })
+  expect(codexConfig("", ["bun", "/src/cli.ts"], "/h")).toContain('args = ["/src/cli.ts","mcp"]')
+  for (const earlier of [
+    '[mcp_servers]\nsenu = { command = "/old" }\nother = { command = "other" }\n',
+    '[mcp_servers."senu"]\ncommand = "/old"\n\n[mcp_servers."senu".env]\nCODEX_HOME = "/old"\n',
+    'mcp_servers.senu.command = "/old"\nmodel = "x"\n',
+    '[mcp_servers.senu]\ncommand = "/old"\n\n  [mcp_servers.other]\n  command = "other"\n',
+  ]) {
+    const servers = (
+      Bun.TOML.parse(codexConfig(earlier, ["/new/senu"], "/h")) as {
+        mcp_servers: Record<string, { command: string }>
+      }
+    ).mcp_servers
+    expect(servers.senu!.command).toBe("/new/senu")
+    expect(Object.keys(servers).filter((name) => name !== "other")).toEqual(["senu"])
+  }
+  expect(() =>
+    codexConfig('mcp_servers = { senu = { command = "/old" } }\n', ["/s"], "/h"),
+  ).toThrow("remove it and retry")
+  expect(() =>
+    codexConfig('notes = """\nmcp_servers.senu.command = "/old"\n"""\n', ["/s"], "/h"),
+  ).toThrow("remove it and retry")
+  const before = readFileSync(path, "utf8")
+  expect(await installCommand(config, ["/newer/senu"], { claude: null, codex: null })).toBe(0)
+  expect(readFileSync(path, "utf8")).toBe(before)
 })

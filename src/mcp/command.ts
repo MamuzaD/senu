@@ -124,15 +124,25 @@ export function createServer(config: Config) {
 }
 
 const HELP = `usage: senu mcp
+       senu mcp install
 
 Serves search, thread reading, and agent messaging tools over stdio.
+
+  install  register with Claude and Codex
 `
 
 export async function mcpCommand(args: string[], config: Config): Promise<number> {
+  if (args.includes("--help") || args.includes("-h")) {
+    await printHelp(process.stdout, HELP)
+    return 0
+  }
+  if (args.length === 1 && args[0] === "install")
+    return (await import("./install.ts")).installCommand(config)
   if (args.length) {
-    const help = args.includes("--help") || args.includes("-h")
-    await printHelp(help ? process.stdout : process.stderr, HELP)
-    return help ? 0 : 2
+    console.error(`senu mcp: Unexpected argument ${args[args[0] === "install" ? 1 : 0]}`)
+    console.error()
+    await printHelp(process.stderr, HELP)
+    return 2
   }
   await createServer(config).connect(new StdioServerTransport())
   return 0

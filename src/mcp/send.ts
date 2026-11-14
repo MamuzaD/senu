@@ -160,7 +160,7 @@ export async function deliverCodex(
 
 const HELP = `usage: senu send [flags] <address> <text>
 
-Sends a message to a running Claude or Codex session. Copy its address from list_agents.
+Sends a message to a running Claude or Codex session. The address is profile:session, as listed by senu threads --live --json.
 
   --reply-to id  reply to this message
 `
