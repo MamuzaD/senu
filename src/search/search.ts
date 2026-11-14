@@ -108,6 +108,9 @@ async function scan(spec: Spec, jobs: Task["jobs"]): Promise<Scanned[]> {
   }
 }
 
+/** A mistake in how search was called, as opposed to a failure while searching */
+export class UsageError extends Error {}
+
 /** Threads whose titles match, as hits dated by the thread's last update */
 function titleHits(profiles: Profile[], spec: Spec, failed: { path: string; error: string }[]) {
   const excluded = new Set(spec.excluded)
@@ -148,9 +151,9 @@ export async function searchThreads(
   const limit = options.limit ?? 20
   const inRange = (n: number) => Number.isInteger(n) && n >= 1 && n <= 100
   if (!options.query.trim() || !inRange(limit) || !inRange(options.perSession ?? 1))
-    throw new Error("Provide a query, and a limit and per-session count between 1 and 100")
+    throw new UsageError("Provide a query, and a limit and per-session count between 1 and 100")
   if (options.role && !["user", "assistant", "tool", "all"].includes(options.role))
-    throw new Error("Invalid role")
+    throw new UsageError("Invalid role")
   const profiles = allowedProfiles(config, env, options.scope, terminal).filter(
     (p) => p.kind !== "opencode",
   )

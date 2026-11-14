@@ -128,6 +128,16 @@ describe("transcript search", () => {
       log.mockRestore()
     }
   })
+  test("a usage mistake shows the help and exits 2", async () => {
+    const { config } = setup()
+    const err = spyOn(console, "error").mockImplementation(() => {})
+    try {
+      expect(await searchCommand(["needle", "--bogus"], config)).toBe(2)
+      expect(err.mock.calls[0]![0]).toBe("senu search: Unexpected argument --bogus")
+    } finally {
+      err.mockRestore()
+    }
+  })
   test("falls back to nearby whole words when no message holds the phrase", async () => {
     const { config, env } = setup()
     rollout(config, 0, "words", [

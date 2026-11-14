@@ -1,14 +1,30 @@
 import type { Config } from "~/config.ts"
 import { allowedProfiles } from "~/privacy.ts"
+import { printHelp } from "~/ui/help.ts"
 import { profileKey } from "~/usage/cache.ts"
 
-import { searchThreads, type SearchOptions } from "./search.ts"
+import { searchThreads, UsageError, type SearchOptions } from "./search.ts"
+
+const HELP = `usage: senu search [flags] [--] <text>
+       senu search --scope-only [--scope name]
+
+Searches the titles and messages of saved Claude and Codex threads, newest first, as JSON.
+
+  --threads             only thread titles
+  --messages            only messages
+  --role r              user (you, default), assistant (agent replies), tool (output), or all
+  --session id          only this session
+  --limit n             at most n hits, 1 to 100 (default 20)
+  --per-session n       at most n hits per session (default 3)
+  --scope name          only profiles with this name, e.g. work
+  --exclude-session id  leave out this session
+  --scope-only          print the profiles this caller can search
+  --                    end of flags, for text starting with -
+`
 
 export async function searchCommand(args: string[], config: Config): Promise<number> {
-  const help =
-    "usage: senu search [--] <text> [--threads | --messages] [--session id] [--role user|assistant|tool|all] [--limit 1..100] [--per-session 1..100] [--scope name] [--exclude-session id] [--scope-only]"
   if (args.includes("--help") || args.includes("-h")) {
-    console.log(help)
+    await printHelp(process.stdout, HELP)
     return 0
   }
   const options: SearchOptions = { query: "", excludeSession: [] }
@@ -33,7 +49,7 @@ export async function searchCommand(args: string[], config: Config): Promise<num
         ].includes(a)
       ) {
         const value = args[++i]
-        if (!value || value.startsWith("--")) throw new Error(`Missing value for ${a}`)
+        if (!value || value.startsWith("--")) throw new UsageError(`Missing value for ${a}`)
         if (a === "--session") options.session = value
         if (a === "--role") options.role = value as SearchOptions["role"] & string
         if (a === "--limit") options.limit = Number(value)
@@ -41,7 +57,7 @@ export async function searchCommand(args: string[], config: Config): Promise<num
         if (a === "--scope") options.scope = value
         if (a === "--exclude-session") options.excludeSession!.push(value)
       } else if (!a.startsWith("-") && !options.query) options.query = a
-      else throw new Error(`Unexpected argument ${a}`)
+      else throw new UsageError(`Unexpected argument ${a}`)
     }
     // Both flags mean both, as neither does
     if (threads !== messages) options.only = threads ? "threads" : "messages"
@@ -60,7 +76,10 @@ export async function searchCommand(args: string[], config: Config): Promise<num
     }
     return 0
   } catch (e) {
-    console.error(`senu search: ${e instanceof Error ? e.message : String(e)}\n${help}`)
+    console.error(`senu search: ${e instanceof Error ? e.message : String(e)}`)
+    if (!(e instanceof UsageError)) return 1
+    console.error()
+    await printHelp(process.stderr, HELP)
     return 2
   }
 }

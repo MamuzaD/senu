@@ -12,7 +12,7 @@ type Command = {
 // Load only the selected command so short invocations avoid initializing unrelated modules.
 const COMMANDS: Record<string, Command> = {
   search: {
-    about: "search saved Claude and Codex messages",
+    about: "search saved Claude and Codex threads and messages",
     run: async (a, c) => (await import("./search/command.ts")).searchCommand(a, c),
   },
   vision: {
