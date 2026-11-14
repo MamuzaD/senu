@@ -19,7 +19,7 @@
 - Browse Claude Code, Codex, and OpenCode threads, then jump to a live pane or resume a saved session
 - Search saved Claude and Codex threads and messages, including compressed Codex history
 - Print a saved thread within a character budget to hand its context to another agent
-- Let agents search them through a stdio MCP server
+- Connect agents through a stdio MCP server and send cross-provider messages
 - Check Claude and Codex usage limits and today's cost
 - Inspect agent detection rules and refresh [herdr](https://github.com/herdrdev/herdr)'s detection manifests
 

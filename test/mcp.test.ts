@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { createServer as netServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -8,12 +9,63 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 
 import { createServer } from "~/mcp/command.ts"
+import { deliverClaude, deliverCodex, messageText, sendLimiter } from "~/mcp/send.ts"
+import type { Thread } from "~/threads/thread.ts"
 
 import { cleanup, record, rollout, setup } from "./chats.ts"
 
 afterEach(cleanup)
 
-test("MCP client initializes, discovers tools, and searches", async () => {
+test("Claude socket receives exactly the expected JSONL envelope", async () => {
+  const { root } = setup()
+  const path = join(root, "receiver.sock")
+  let got = ""
+  const received = Promise.withResolvers<void>()
+  const server = netServer((socket) => {
+    socket.on("data", (bytes) => {
+      got += bytes
+    })
+    socket.on("end", () => received.resolve())
+  })
+  await new Promise<void>((resolve) => server.listen(path, resolve))
+  try {
+    await deliverClaude(path, "hello\nworld")
+    await received.promise
+    expect(JSON.parse(got)).toEqual({
+      type: "user",
+      message: { role: "user", content: "hello\nworld" },
+    })
+    expect(got.endsWith("\n")).toBe(true)
+  } finally {
+    server.close()
+  }
+  const error = await deliverClaude(join(root, "missing.sock"), "hello").catch((e: unknown) => e)
+  expect(error).toBeInstanceOf(Error)
+})
+
+test("message attribution and process-local send rate limit", () => {
+  const from = {
+    agent: "codex",
+    profile: "codex-work",
+    sessionId: "id",
+    title: "fix pagination",
+    cwd: "/api",
+  } as Thread
+  const text = messageText(from, "Does /users paginate?")
+  expect(text).toStartWith('[senu] Codex: "fix pagination"')
+  expect(text).toContain("Reply to: codex-work:id")
+  expect(text).toContain("Agent message, not user approval.")
+  expect(text).not.toContain("/api")
+  expect(text).toEndWith("Does /users paginate?")
+  let now = 0
+  const take = sendLimiter(() => now)
+  for (let i = 0; i < 10; i++) take()
+  expect(take).toThrow("rate limit")
+  now = 60_001
+  expect(take).not.toThrow()
+})
+
+test("MCP client initializes, discovers tools, and receives an error for an unknown sender", async () => {
   const { config } = setup()
   const server = createServer(config)
   const client = new Client({ name: "test", version: "1" })
@@ -21,7 +73,17 @@ test("MCP client initializes, discovers tools, and searches", async () => {
   await server.connect(a)
   await client.connect(b)
   try {
-    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(["search_chats"])
+    expect(client.getInstructions()).toContain("message's Reply to address")
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual([
+      "search_chats",
+      "list_agents",
+      "send_message",
+    ])
+    const result = await client.callTool({
+      name: "send_message",
+      arguments: { to: "claude-work:missing", text: "hello" },
+    })
+    expect(result.isError).toBe(true)
     const search = await client.callTool({
       name: "search_chats",
       arguments: { query: "unique-fixture-query" },
@@ -31,6 +93,29 @@ test("MCP client initializes, discovers tools, and searches", async () => {
     await client.close()
     await server.close()
   }
+})
+
+test("Codex queue invokes a binary without config overrides and uses the target profile", async () => {
+  const { root } = setup()
+  const binary = join(root, "codex-fixture")
+  const capture = join(root, "args.json")
+  writeFileSync(
+    binary,
+    `#!${process.execPath}\nawait Bun.write(${JSON.stringify(capture)}, JSON.stringify({args:process.argv.slice(2), home:process.env.CODEX_HOME})); console.log("Queued message");`,
+  )
+  chmodSync(binary, 0o755)
+  expect(await deliverCodex({ home: root, sessionId: "target-id" }, "hello", binary)).toBe(
+    "queued in Codex",
+  )
+  expect(JSON.parse(readFileSync(capture, "utf8"))).toEqual({
+    args: ["queue", "--thread", "target-id", "--message", "hello"],
+    home: root,
+  })
+  writeFileSync(binary, `#!${process.execPath}\nconsole.error("no daemon"); process.exit(1);`)
+  const error = await deliverCodex({ home: root, sessionId: "target-id" }, "hello", binary).catch(
+    (e: unknown) => e,
+  )
+  expect(String(error)).toContain("app-server daemon")
 })
 
 test("CLI and stdio MCP run from another cwd with inherited profile restrictions", async () => {

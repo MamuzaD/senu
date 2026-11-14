@@ -20,8 +20,12 @@ const COMMANDS: Record<string, Command> = {
     run: async (a, c) => (await import("./search/read-command.ts")).readCommand(a, c),
   },
   mcp: {
-    about: "serve chat search over stdio",
+    about: "serve search and agent messaging tools over stdio",
     run: async (a, c) => (await import("./mcp/command.ts")).mcpCommand(a, c),
+  },
+  send: {
+    about: "send a message to a running Claude or Codex session",
+    run: async (a, c) => (await import("./mcp/send.ts")).sendCommand(a, c),
   },
   vision: {
     about: "show Codex and Claude usage limits and today's cost",
