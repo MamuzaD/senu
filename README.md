@@ -31,15 +31,15 @@ curl -fsSL https://raw.githubusercontent.com/MamuzaD/senu/main/install.sh | sh
 watcher checks for new releases once a day and says when one is out (on 0.1.0, re-run the script
 instead). Requires tmux on macOS or Linux, or Rex.
 
-Add the lines from [`tmux.example.conf`](tmux.example.conf) to your tmux.conf, then reload tmux
+Add the lines from [`examples/tmux.conf`](examples/tmux.conf) to your tmux.conf, then reload tmux
 (`tmux source-file <your tmux.conf>`); `senu watch once` shows what it sees.
 
-In [Rex](https://www.superlogical.com/rex), add the lines from [`rex.example.lua`](rex.example.lua)
+In [Rex](https://www.superlogical.com/rex), add the lines from [`examples/rex.lua`](examples/rex.lua)
 to your `init.lua` instead. Rex already shows agent status and plays its own sounds, so `senu watch`
 isn't needed; `senu threads` adds a picker across sessions, and `senu vision` works as usual. Jumping
 to a tab needs Remote Control on in Rex Settings > Server > Client Info.
 
-Configuration lives at `~/.config/senu/config.toml`; see [`config.example.toml`](config.example.toml).
+Configuration lives at `~/.config/senu/config.toml`; see [`examples/config.toml`](examples/config.toml).
 
 <details>
 <summary>Other ways to install</summary>

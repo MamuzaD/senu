@@ -108,11 +108,11 @@ main() {
   esac
 
   if [ -n "${REX_SESSION:-}" ]; then
-    say "next: add the lines from https://github.com/$REPO/blob/main/rex.example.lua to your Rex init.lua"
+    say "next: add the lines from https://github.com/$REPO/blob/main/examples/rex.lua to your Rex init.lua"
     return 0
   fi
   command -v tmux >/dev/null 2>&1 || warn "tmux not found; senu needs tmux or Rex"
-  say "next: add the lines from https://github.com/$REPO/blob/main/tmux.example.conf to your tmux.conf"
+  say "next: add the lines from https://github.com/$REPO/blob/main/examples/tmux.conf to your tmux.conf"
 }
 
 main "$@"
