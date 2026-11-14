@@ -20,7 +20,7 @@ const COMMANDS: Record<string, Command> = {
     run: async (a, c) => (await import("./search/read-command.ts")).readCommand(a, c),
   },
   mcp: {
-    about: "serve search and agent messaging tools over stdio",
+    about: "serve thread search, reading, and agent messaging over stdio",
     run: async (a, c) => (await import("./mcp/command.ts")).mcpCommand(a, c),
   },
   send: {

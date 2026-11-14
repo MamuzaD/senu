@@ -10,7 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 
 import { createServer } from "~/mcp/command.ts"
-import { deliverClaude, deliverCodex, messageText, sendLimiter, sender } from "~/mcp/send.ts"
+import { deliverClaude, deliverCodex, messageText, sender, sendLimiter } from "~/mcp/send.ts"
 import type { Thread } from "~/threads/thread.ts"
 
 import { cleanup, record, rollout, setup } from "./chats.ts"
@@ -76,7 +76,8 @@ test("MCP client initializes, discovers tools, and receives an error for an unkn
   try {
     expect(client.getInstructions()).toContain("message's Reply to address")
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual([
-      "search_chats",
+      "search_threads",
+      "read_thread",
       "list_agents",
       "send_message",
     ])
@@ -86,7 +87,7 @@ test("MCP client initializes, discovers tools, and receives an error for an unkn
     })
     expect(result.isError).toBe(true)
     const search = await client.callTool({
-      name: "search_chats",
+      name: "search_threads",
       arguments: { query: "unique-fixture-query" },
     })
     expect(search.isError).toBeFalsy()
@@ -121,7 +122,11 @@ test("Codex queue invokes a binary without config overrides and uses the target 
 
 test("CLI and stdio MCP run from another cwd with inherited profile restrictions", async () => {
   const { config, root, env } = setup()
-  rollout(config, 0, "cli-session", [record("needle from CLI")])
+  rollout(config, 0, "cli-session", [
+    record("needle from CLI"),
+    record("reply from CLI", "assistant"),
+  ])
+  rollout(config, 1, "work-session", [record("private work text")])
   const dir = join(root, "senu")
   mkdirSync(dir)
   writeFileSync(
@@ -156,11 +161,32 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
     }),
   )
   try {
-    const result = await client.callTool({ name: "search_chats", arguments: { query: "needle" } })
+    const result = await client.callTool({ name: "search_threads", arguments: { query: "needle" } })
     const content = result.content as { text: string }[]
     expect(JSON.parse(content[0]!.text).hits[0].excerpt).toBe("needle from CLI")
+    const read = await client.callTool({
+      name: "read_thread",
+      arguments: { session: "cli-session", line: 1, before: 0, after: 1 },
+    })
+    expect(read.isError).toBeFalsy()
+    const thread = JSON.parse((read.content as { text: string }[])[0]!.text)
+    expect(thread.turns.map((t: { text: string }) => t.text)).toEqual([
+      "needle from CLI",
+      "reply from CLI",
+    ])
+    expect(thread.omitted).toBe(0)
+    const narrowed = await client.callTool({
+      name: "read_thread",
+      arguments: { session: "cli-session", profile: ["work"] },
+    })
+    expect(narrowed.isError).toBe(true)
+    const contextWithoutLine = await client.callTool({
+      name: "read_thread",
+      arguments: { session: "cli-session", before: 1 },
+    })
+    expect(contextWithoutLine.isError).toBe(true)
     const invalid = await client.callTool({
-      name: "search_chats",
+      name: "search_threads",
       arguments: { query: "needle", limit: 101 },
     })
     expect(invalid.isError).toBe(true)
