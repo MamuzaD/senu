@@ -19,9 +19,9 @@ const HELP = `usage: senu scout [pane] [agent]
 
 Lists agent panes and their states, or one pane's state, e.g. %8.
 
-  agent     claude, codex or opencode; found from the pane if omitted
   explain   print every rule's verdict and the regions it read
   manifest  pull herdr's detection manifests
+  [agent]   claude, codex or opencode; found from the pane if omitted
 `
 
 async function readPane(

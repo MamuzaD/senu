@@ -6,20 +6,20 @@ import { profileKey } from "~/usage/cache.ts"
 import { searchThreads, UsageError, type SearchOptions } from "./search.ts"
 
 const HELP = `usage: senu search [flags] [--] <text>
-       senu search --list-profiles [--profile name|key]
+       senu search --list-profiles [--profile name|key]...
 
 Searches the titles and messages of saved Claude and Codex threads, newest first, as JSON.
 
-  --threads             only thread titles
-  --messages            only messages
-  --role r              user (you, default), assistant (agent replies), tool (output), or all
-  --session id          only this session
-  --limit n             at most n hits, 1 to 100 (default 20)
-  --per-session n       at most n hits per session (default 3)
-  --profile name|key  select by name or key, repeatable
-  --exclude-session id  leave out this session
-  --list-profiles       print the profiles this caller can search
-  --                    end of flags, for text starting with -
+  --threads                    only thread titles
+  --messages                   only messages
+  --role r                     user (you, default), assistant (agent replies), tool (output), or all
+  --session <session>          only this session
+  --limit n                    at most n hits, 1 to 100 (default 20)
+  --per-session n              at most n hits per session (default 3)
+  --profile name|key           select by name or key, repeatable
+  --exclude-session <session>  leave out this session
+  --list-profiles              print the profiles this caller can search
+  --                           end of flags, for text starting with -
 `
 
 export async function searchCommand(args: string[], config: Config): Promise<number> {

@@ -12,10 +12,10 @@ const HELP = `usage: senu vision [flags]
 
 Shows Codex and Claude usage limits and today's cost.
 
-  --json   print each profile's snapshot
+  refresh             fetch limits now, for selected profiles or all
+  today               print today's estimated spend and tokens
+  --json              print each profile's snapshot
   --profile name|key  select by name or key, repeatable
-  refresh  fetch limits now, for selected profiles or all
-  today    print today's estimated spend and tokens
 `
 
 export async function usageCommand(args: string[], config: Config): Promise<number> {

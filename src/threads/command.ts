@@ -18,19 +18,19 @@ import {
 import { readPins } from "./pins.ts"
 import { ResumeError } from "./resume.ts"
 
-const HELP = `usage: senu threads [--live] [--json] [--profile name|key]... [--limit n] [-L socket | -S path]
-       senu threads resume <session-id>
+const HELP = `usage: senu threads [flags]
+       senu threads resume <session>
 
 Browses agent threads, newest first, or lists them when piped.
 
   In the picker, / searches titles, then saved messages in allowed profiles.
 
-  --live         only running agents
-  --json         print JSON
+  resume              jump to a running thread, or reopen it in its CLI
+  --live              only running agents
+  --json              print JSON
   --profile name|key  select by name or key, repeatable
-  --limit n      at most n
-  -L, -S         the tmux server, as in tmux
-  resume         jump to a running thread, or reopen it in its CLI
+  --limit n           at most n
+  -L, -S              the tmux server, as in tmux
 `
 
 export const entryJson = (e: Entry) => ({

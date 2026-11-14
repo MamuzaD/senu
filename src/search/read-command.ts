@@ -14,7 +14,7 @@ Prints a saved Claude or Codex thread for handing its context to another agent.
     -C, --context n         turns before and after the target
   --tools                   include tool output
   --max-chars n             at most n characters of text, keeping whole turns (default 32k)
-  --profile name|key  select by name or key, repeatable
+  --profile name|key        select by name or key, repeatable
   --json                    print the kept turns as JSON
 `
 
