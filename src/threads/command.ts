@@ -108,7 +108,6 @@ async function browse(
         [
           ...selfCommand(),
           "search",
-          query,
           "--messages",
           "--role",
           "all",
@@ -116,6 +115,8 @@ async function browse(
           "100",
           "--per-session",
           "1",
+          "--",
+          query,
         ],
         {
           stdout: "pipe",

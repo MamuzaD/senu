@@ -6,7 +6,7 @@ import { searchThreads, type SearchOptions } from "./search.ts"
 
 export async function searchCommand(args: string[], config: Config): Promise<number> {
   const help =
-    "usage: senu search <text> [--threads | --messages] [--session id] [--role user|assistant|tool|all] [--limit 1..100] [--per-session 1..100] [--scope name] [--exclude-session id] [--scope-only]"
+    "usage: senu search [--] <text> [--threads | --messages] [--session id] [--role user|assistant|tool|all] [--limit 1..100] [--per-session 1..100] [--scope name] [--exclude-session id] [--scope-only]"
   if (args.includes("--help") || args.includes("-h")) {
     console.log(help)
     return 0
@@ -18,7 +18,8 @@ export async function searchCommand(args: string[], config: Config): Promise<num
   try {
     for (let i = 0; i < args.length; i++) {
       const a = args[i]!
-      if (a === "--scope-only") scopeOnly = true
+      if (a === "--" && !options.query) options.query = args[++i] ?? ""
+      else if (a === "--scope-only") scopeOnly = true
       else if (a === "--threads") threads = true
       else if (a === "--messages") messages = true
       else if (

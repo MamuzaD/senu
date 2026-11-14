@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 import { loadConfig } from "~/config.ts"
 import { allowedProfiles } from "~/privacy.ts"
+import { searchCommand } from "~/search/command.ts"
 import { searchThreads } from "~/search/search.ts"
 
 import { cleanup, record, rollout, setup } from "./chats.ts"
@@ -114,6 +115,18 @@ describe("transcript search", () => {
       record("needle from the subagent"),
     ])
     expect((await searchThreads(config, { query: "needle" }, env)).hits).toEqual([])
+  })
+  test("a query after -- may start with a dash", async () => {
+    const { config } = setup()
+    // Every caller sees work profiles
+    rollout(config, 1, "flags", [record("build w/ --bytecode")])
+    const log = spyOn(console, "log").mockImplementation(() => {})
+    try {
+      expect(await searchCommand(["--", "--bytecode", "--limit", "5"], config)).toBe(0)
+      expect(JSON.parse(log.mock.calls[0]![0] as string).hits).toHaveLength(1)
+    } finally {
+      log.mockRestore()
+    }
   })
   test("falls back to nearby whole words when no message holds the phrase", async () => {
     const { config, env } = setup()
