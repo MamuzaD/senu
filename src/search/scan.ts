@@ -149,16 +149,16 @@ export function* entries(
     cwd = typeof r.cwd === "string" ? r.cwd : cwd
     if (skip || r.isSidechain) continue
     const m = kind === "claude" ? claudeMessage(r) : codexMessage(r)
-    const text = m?.text ?? toolText(kind, r)
-    if (!text) continue
-    yield {
+    const at = {
       session,
       cwd,
       time: typeof r.timestamp === "string" ? r.timestamp : "",
       line: index + 1,
-      role: m ? (m.fromUser ? "user" : "assistant") : "tool",
-      text,
     }
+    // A Claude user record can hold tool results and text typed while the tool ran, in that order
+    const tool = toolText(kind, r)
+    if (tool) yield { ...at, role: "tool", text: tool }
+    if (m) yield { ...at, role: m.fromUser ? "user" : "assistant", text: m.text }
   }
 }
 

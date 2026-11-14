@@ -18,6 +18,7 @@
 - Get an alert when a background agent finishes or needs input
 - Browse Claude Code, Codex, and OpenCode threads, then jump to a live pane or resume a saved session
 - Search saved Claude and Codex threads and messages, including compressed Codex history
+- Print a saved thread within a character budget to hand its context to another agent
 - Check Claude and Codex usage limits and today's cost
 - Inspect agent detection rules and refresh [herdr](https://github.com/herdrdev/herdr)'s detection manifests
 

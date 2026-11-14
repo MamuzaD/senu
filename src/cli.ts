@@ -15,6 +15,10 @@ const COMMANDS: Record<string, Command> = {
     about: "search saved Claude and Codex threads and messages",
     run: async (a, c) => (await import("./search/command.ts")).searchCommand(a, c),
   },
+  read: {
+    about: "print a saved thread as text, for agent handoff",
+    run: async (a, c) => (await import("./search/read-command.ts")).readCommand(a, c),
+  },
   vision: {
     about: "show Codex and Claude usage limits and today's cost",
     run: async (a, c) => (await import("./usage/command.ts")).usageCommand(a, c),

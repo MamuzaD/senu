@@ -246,12 +246,20 @@ describe("transcript search", () => {
         JSON.stringify(msg("NEEDLE user")),
         JSON.stringify(msg("needle hidden", { isSidechain: true })),
         JSON.stringify(msg([{ type: "tool_result", content: "needle output" }])),
+        JSON.stringify(
+          msg([
+            { type: "tool_result", content: "needle result" },
+            { type: "text", text: "needle typed meanwhile" },
+          ]),
+        ),
       ].join("\n"),
     )
-    const result = await searchThreads(config, { query: "needle", role: "all" }, {})
+    const result = await searchThreads(config, { query: "needle", role: "all", perSession: 10 }, {})
     expect(result.hits.map((h) => [h.line, h.role, h.cwd])).toEqual([
       [2, "user", "/repo"],
       [4, "tool", "/repo"],
+      [5, "tool", "/repo"],
+      [5, "user", "/repo"],
     ])
     expect(result.profiles).toEqual(["codex-work", "claude-work"])
   })
