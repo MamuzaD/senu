@@ -146,3 +146,22 @@ export function codexPids(
     .filter(([pid, p]) => agentFromProcess(p.command, () => argv(pid)) === "codex")
     .map(([pid]) => pid)
 }
+
+/** MCP children do not receive CODEX_THREAD_ID. Only use locks owned by their direct
+ * parent, and let the caller reject ambiguous parents such as a shared daemon. */
+export async function parentCodexThreads(
+  profiles: Profile[],
+  pid = process.ppid,
+): Promise<Set<string>> {
+  const codex = profiles.filter((p) => p.kind === "codex")
+  const locks = codex.flatMap((p) => codexLocks(p.home))
+  if (!locks.length) return new Set()
+  const profileByDir = new Map(
+    codex
+      .filter((p) => codexLocks(p.home).length)
+      .map((p) => [realpathSync(lockDir(p.home)), profileKey(p)]),
+  )
+  const result = await run(["lsof", "-nP", "-a", "-p", String(pid), "-Fpn", "--", ...locks])
+  const holders = parseLsof(result.out, (dir) => profileByDir.get(dir))
+  return new Set(holders.get(pid) ?? [])
+}

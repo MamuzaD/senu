@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { afterEach, expect, test } from "bun:test"
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer as netServer } from "node:net"
@@ -9,7 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 
 import { createServer } from "~/mcp/command.ts"
-import { deliverClaude, deliverCodex, messageText, sendLimiter } from "~/mcp/send.ts"
+import { deliverClaude, deliverCodex, messageText, sendLimiter, sender } from "~/mcp/send.ts"
 import type { Thread } from "~/threads/thread.ts"
 
 import { cleanup, record, rollout, setup } from "./chats.ts"
@@ -165,5 +166,46 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
     expect(invalid.isError).toBe(true)
   } finally {
     await client.close()
+  }
+})
+
+test("Codex MCP identifies one user thread owned by its parent and refuses ambiguity", async () => {
+  const { config, env } = setup()
+  const profile = config.profiles[0]!
+  const dir = join(profile.home, "thread-writer-locks")
+  mkdirSync(dir)
+  const ids = ["caller", "guardian", "other-user"]
+  const paths = ids.map((id) => join(dir, id + ".lock"))
+  for (const path of paths) writeFileSync(path, "")
+  const db = new Database(join(profile.home, "state_5.sqlite"))
+  db.run(
+    "CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, name TEXT, title TEXT, updated_at_ms INTEGER, updated_at INTEGER, archived INTEGER, thread_source TEXT)",
+  )
+  db.run(
+    "INSERT INTO threads VALUES ('caller', '', '/fixture', NULL, 'Caller', 1, 1, 0, 'user'), ('guardian', '', '/fixture', NULL, 'Review', 1, 1, 0, 'guardian_review')",
+  )
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      'for (const path of process.argv.slice(1)) require("node:fs").openSync(path,"r"); console.log("ready"); setInterval(()=>{},1000)',
+      ...paths,
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  )
+  try {
+    await child.stdout.getReader().read()
+    expect((await sender(config, env, child.pid)).sessionId).toBe("caller")
+    const restrictedError = await sender(config, {}, child.pid).catch((e: unknown) => e)
+    expect(restrictedError).toBeInstanceOf(Error)
+    db.run(
+      "INSERT INTO threads VALUES ('other-user', '', '/fixture', NULL, 'Other', 1, 1, 0, 'user')",
+    )
+    const ambiguousError = await sender(config, env, child.pid).catch((e: unknown) => e)
+    expect(ambiguousError).toBeInstanceOf(Error)
+  } finally {
+    child.kill()
+    await child.exited
+    db.close()
   }
 })

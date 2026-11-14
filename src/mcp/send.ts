@@ -5,6 +5,7 @@ import { join } from "node:path"
 import type { Config } from "~/config.ts"
 import { allowedProfiles } from "~/privacy.ts"
 import { listEntries } from "~/threads/entries.ts"
+import { parentCodexThreads } from "~/threads/running.ts"
 import { listThreads, threadKey, type Thread } from "~/threads/thread.ts"
 
 export const address = (t: Thread) => threadKey(t.profile, t.sessionId)
@@ -30,18 +31,22 @@ export async function listAgents(config: Config) {
   }
 }
 
-export function sender(config: Config, env = process.env): Thread {
+export async function sender(
+  config: Config,
+  env = process.env,
+  parentPid = process.ppid,
+): Promise<Thread> {
   const ids = new Set(
     [env.CODEX_THREAD_ID, env.CLAUDE_CODE_SESSION_ID, env.CLAUDE_SESSION_ID].filter(Boolean),
   )
   const profiles = allowedProfiles(config, env)
-  const keys = new Set(
-    profiles.flatMap((p) => [...ids].map((id) => threadKey(`${p.kind}-${p.name}`, id!))),
-  )
+  const keys = ids.size
+    ? new Set(profiles.flatMap((p) => [...ids].map((id) => threadKey(`${p.kind}-${p.name}`, id!))))
+    : await parentCodexThreads(profiles, parentPid)
   const { threads: matches } = listThreads(profiles, { ids: keys })
   if (matches.length !== 1)
     throw new Error(
-      "Cannot identify the sending session. The helper must inherit CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID and its profile environment.",
+      "Cannot identify the sending session. The helper must inherit CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID and its profile environment, or have a direct Codex parent owning exactly one user thread.",
     )
   return matches[0]!
 }
@@ -93,7 +98,7 @@ const takeSend = sendLimiter()
 
 export async function sendMessage(config: Config, to: string, text: string): Promise<string> {
   if (!text.trim()) throw new Error("Message text is empty")
-  const from = sender(config)
+  const from = await sender(config)
   const profiles = allowedProfiles(config)
   const { entries } = await listEntries(profiles, false, "live")
   const target = entries.find((e) => e.live && e.thread && address(e.thread) === to)?.thread
