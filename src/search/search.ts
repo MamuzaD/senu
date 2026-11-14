@@ -19,6 +19,8 @@ export interface SearchOptions {
   limit?: number | undefined
   scope?: string | undefined
   excludeSession?: string[]
+  /** The most hits one session may return; 3, or one more than the limit with `session` */
+  perSession?: number | undefined
   /** Search only thread titles or only messages; both when unset */
   only?: "threads" | "messages" | undefined
 }
@@ -144,8 +146,9 @@ export async function searchThreads(
   terminal = false,
 ) {
   const limit = options.limit ?? 20
-  if (!options.query.trim() || !Number.isInteger(limit) || limit < 1 || limit > 100)
-    throw new Error("Provide a query and a limit between 1 and 100")
+  const inRange = (n: number) => Number.isInteger(n) && n >= 1 && n <= 100
+  if (!options.query.trim() || !inRange(limit) || !inRange(options.perSession ?? 1))
+    throw new Error("Provide a query, and a limit and per-session count between 1 and 100")
   if (options.role && !["user", "assistant", "tool", "all"].includes(options.role))
     throw new Error("Invalid role")
   const profiles = allowedProfiles(config, env, options.scope, terminal).filter(
@@ -177,7 +180,7 @@ export async function searchThreads(
       env.CLAUDE_SESSION_ID,
     ].filter((id): id is string => !!id),
   }
-  const cap = options.session ? limit + 1 : 3
+  const cap = options.perSession ?? (options.session ? limit + 1 : 3)
   const scanned = await scan(
     spec,
     transcripts.map(({ p, path, size }, i) => ({

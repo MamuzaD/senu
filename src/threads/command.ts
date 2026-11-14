@@ -104,7 +104,19 @@ async function browse(
     load,
     searchMessages: async (query, signal) => {
       const proc = Bun.spawn(
-        [...selfCommand(), "search", query, "--messages", "--role", "all", "--limit", "100"],
+        // One hit per thread, so the limit counts threads
+        [
+          ...selfCommand(),
+          "search",
+          query,
+          "--messages",
+          "--role",
+          "all",
+          "--limit",
+          "100",
+          "--per-session",
+          "1",
+        ],
         {
           stdout: "pipe",
           stderr: "pipe",
@@ -113,22 +125,24 @@ async function browse(
       const stop = () => proc.kill()
       signal.addEventListener("abort", stop, { once: true })
       try {
-        const [out, err, code] = await Promise.all([
+        const [out, err] = await Promise.all([
           new Response(proc.stdout).text(),
           new Response(proc.stderr).text(),
           proc.exited,
         ])
-        if (code) throw new Error(err.trim() || "Message search failed")
-        const result = JSON.parse(out) as { hits: SearchHit[]; failed: unknown[] }
-        if (result.failed.length)
-          throw new Error("Some transcripts could not be searched. Run senu search for details.")
-        // Hits come newest first, so a session keeps its newest
-        const hits = new Map<string, string>()
-        for (const h of result.hits) {
-          const key = `${h.profile}:${h.session}`
-          if (!hits.has(key)) hits.set(key, `${h.path}:${h.line}\n${h.role}: ${h.excerpt}`)
+        // senu search exits 1 when some transcripts fail, but still prints what the rest held
+        let result: { hits: SearchHit[] }
+        try {
+          result = JSON.parse(out)
+        } catch {
+          throw new Error(err.trim() || "Message search failed")
         }
-        return hits
+        return new Map(
+          result.hits.map((h) => [
+            `${h.profile}:${h.session}`,
+            `${h.path}:${h.line}\n${h.role}: ${h.excerpt}`,
+          ]),
+        )
       } finally {
         signal.removeEventListener("abort", stop)
       }

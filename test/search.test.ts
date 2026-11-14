@@ -163,6 +163,11 @@ describe("transcript search", () => {
     ])
     const one = await searchThreads(config, { query: "needle", session: "chatty", limit: 2 }, env)
     expect(one.hits.map((h) => h.excerpt)).toEqual(["needle 5", "needle 4"])
+    const each = await searchThreads(config, { query: "needle", perSession: 1 }, env)
+    expect(each.hits.map((h) => [h.session, h.excerpt])).toEqual([
+      ["chatty", "needle 5"],
+      ["quiet", "needle"],
+    ])
   })
   test("plain sibling takes precedence and subagents and external symlinks stay out", async () => {
     const { config, env, root } = setup()

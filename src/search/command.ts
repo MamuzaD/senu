@@ -6,7 +6,7 @@ import { searchThreads, type SearchOptions } from "./search.ts"
 
 export async function searchCommand(args: string[], config: Config): Promise<number> {
   const help =
-    "usage: senu search <text> [--threads | --messages] [--session id] [--role user|assistant|tool|all] [--limit 1..100] [--scope name] [--exclude-session id] [--scope-only]"
+    "usage: senu search <text> [--threads | --messages] [--session id] [--role user|assistant|tool|all] [--limit 1..100] [--per-session 1..100] [--scope name] [--exclude-session id] [--scope-only]"
   if (args.includes("--help") || args.includes("-h")) {
     console.log(help)
     return 0
@@ -21,12 +21,22 @@ export async function searchCommand(args: string[], config: Config): Promise<num
       if (a === "--scope-only") scopeOnly = true
       else if (a === "--threads") threads = true
       else if (a === "--messages") messages = true
-      else if (["--session", "--role", "--limit", "--scope", "--exclude-session"].includes(a)) {
+      else if (
+        [
+          "--session",
+          "--role",
+          "--limit",
+          "--per-session",
+          "--scope",
+          "--exclude-session",
+        ].includes(a)
+      ) {
         const value = args[++i]
         if (!value || value.startsWith("--")) throw new Error(`Missing value for ${a}`)
         if (a === "--session") options.session = value
         if (a === "--role") options.role = value as SearchOptions["role"] & string
         if (a === "--limit") options.limit = Number(value)
+        if (a === "--per-session") options.perSession = Number(value)
         if (a === "--scope") options.scope = value
         if (a === "--exclude-session") options.excludeSession!.push(value)
       } else if (!a.startsWith("-") && !options.query) options.query = a
