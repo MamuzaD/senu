@@ -102,31 +102,33 @@ function toolText(kind: Job["kind"], r: any): string {
     .join("\n")
 }
 
-export function scanFile({ kind, path }: Job, spec: Spec): Found[] {
-  const needle = spec.query.toLowerCase().trim().replace(/\s+/g, " ")
-  const words = needle.split(" ")
-  // Decoding and parsing dominate the cost, so skip files and lines that cannot hold every word.
-  // Each word is checked by its longest plain run, longest word first since it is likeliest to
-  // rule a line out; latin1 skips UTF-8 decoding and cannot change an ASCII match.
-  const filters = words
-    .flatMap((w) => (w.match(PLAIN) ?? []).toSorted((a, b) => b.length - a.length).slice(0, 1))
-    .toSorted((a, b) => b.length - a.length)
-    .map((run) => new RegExp(run.replace(/[.+()[\]]/g, "\\$&"), "i"))
-  const starts = wordStarts(words)
+export interface Entry {
+  session: string
+  cwd: string
+  time: string
+  line: number
+  role: "user" | "assistant" | "tool"
+  text: string
+}
+
+export function readTranscript(path: string): Buffer {
   const bytes = readFileSync(path)
-  const content = path.endsWith(".zst") ? Bun.zstdDecompressSync(bytes) : bytes
-  if (filters.length) {
-    const latin = content.toString("latin1")
-    if (!filters.every((f) => f.test(latin))) return []
-  }
-  const found: Found[] = []
-  const excluded = new Set(spec.excluded)
+  return path.endsWith(".zst") ? Bun.zstdDecompressSync(bytes) : bytes
+}
+
+/** A transcript's messages and tool output in order; a subagent's rollout and sidechains yield
+ * nothing. `keep` can rule a line out before it is parsed. */
+export function* entries(
+  { kind, path }: Job,
+  content: Buffer,
+  keep: (line: string) => boolean = () => true,
+): Generator<Entry> {
   let session = basename(path).replace(/\.jsonl(?:\.zst)?$/, "")
   let cwd = ""
   let skip = false
   let headed = false
   for (const [index, line] of content.toString("utf8").split("\n").entries()) {
-    if (!line.includes('"session_meta"') && !filters.every((f) => f.test(line))) continue
+    if (!line.includes('"session_meta"') && !keep(line)) continue
     let r
     try {
       r = JSON.parse(line)
@@ -145,19 +147,44 @@ export function scanFile({ kind, path }: Job, spec: Spec): Found[] {
     }
     session = r.sessionId ?? session
     cwd = typeof r.cwd === "string" ? r.cwd : cwd
-    if (
-      skip ||
-      r.isSidechain ||
-      excluded.has(session) ||
-      (spec.session && spec.session !== session)
-    )
-      continue
+    if (skip || r.isSidechain) continue
     const m = kind === "claude" ? claudeMessage(r) : codexMessage(r)
-    const role = m ? (m.fromUser ? "user" : "assistant") : "tool"
-    if (spec.role !== "all" && spec.role !== role) continue
     const text = m?.text ?? toolText(kind, r)
+    if (!text) continue
+    yield {
+      session,
+      cwd,
+      time: typeof r.timestamp === "string" ? r.timestamp : "",
+      line: index + 1,
+      role: m ? (m.fromUser ? "user" : "assistant") : "tool",
+      text,
+    }
+  }
+}
+
+export function scanFile(job: Job, spec: Spec): Found[] {
+  const needle = spec.query.toLowerCase().trim().replace(/\s+/g, " ")
+  const words = needle.split(" ")
+  // Decoding and parsing dominate the cost, so skip files and lines that cannot hold every word.
+  // Each word is checked by its longest plain run, longest word first since it is likeliest to
+  // rule a line out; latin1 skips UTF-8 decoding and cannot change an ASCII match.
+  const filters = words
+    .flatMap((w) => (w.match(PLAIN) ?? []).toSorted((a, b) => b.length - a.length).slice(0, 1))
+    .toSorted((a, b) => b.length - a.length)
+    .map((run) => new RegExp(run.replace(/[.+()[\]]/g, "\\$&"), "i"))
+  const starts = wordStarts(words)
+  const content = readTranscript(job.path)
+  if (filters.length) {
+    const latin = content.toString("latin1")
+    if (!filters.every((f) => f.test(latin))) return []
+  }
+  const found: Found[] = []
+  const excluded = new Set(spec.excluded)
+  for (const e of entries(job, content, (line) => filters.every((f) => f.test(line)))) {
+    if (excluded.has(e.session) || (spec.session && spec.session !== e.session)) continue
+    if (spec.role !== "all" && spec.role !== e.role) continue
     // Excerpts show one line, so a phrase may cross a line break in the source
-    const flat = text.replace(/\s+/g, " ")
+    const flat = e.text.replace(/\s+/g, " ")
     const lower = flat.toLowerCase()
     let at = lower.indexOf(needle)
     const exact = at >= 0
@@ -167,14 +194,14 @@ export function scanFile({ kind, path }: Job, spec: Spec): Found[] {
       if (at < 0) continue
     }
     found.push({
-      session,
-      cwd,
-      time: typeof r.timestamp === "string" ? r.timestamp : "",
-      line: index + 1,
-      role,
+      session: e.session,
+      cwd: e.cwd,
+      time: e.time,
+      line: e.line,
+      role: e.role,
       excerpt: excerpt(flat, at),
       exact,
-      key: `${session}\0${role}\0${Bun.hash(text)}`,
+      key: `${e.session}\0${e.role}\0${Bun.hash(e.text)}`,
     })
   }
   return found
