@@ -661,7 +661,14 @@ export function spawnTodayRefresh(profiles: Profile[]): Profile[] {
   try {
     // Transcript parsing is synchronous, so run it outside the animated popup.
     const child = Bun.spawn(
-      [...selfCommand(), "vision", "today", ...claimed.map(profileKey), "--refresh", "--locked"],
+      [
+        ...selfCommand(),
+        "vision",
+        "today",
+        ...claimed.flatMap((p) => ["--profile", profileKey(p)]),
+        "--refresh",
+        "--locked",
+      ],
       {
         stdio: ["ignore", "ignore", "ignore"],
         detached: true,

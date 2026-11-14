@@ -1,55 +1,60 @@
 import { hasUsage, type Config } from "~/config.ts"
+import { selectProfiles } from "~/profiles.ts"
 import { printHelp } from "~/ui/help.ts"
 
 import { claimLock, getSnapshot, profileKey, refreshLocked } from "./cache.ts"
 import { formatTokens } from "./format.ts"
 import { claimTodayLock, refreshTodayLocked, scanToday } from "./today.ts"
 
-const HELP = `usage: senu vision [--json]
-       senu vision refresh [profile]
-       senu vision today [profile...] [--json]
+const HELP = `usage: senu vision [flags]
+       senu vision refresh [flags]
+       senu vision today [flags]
 
 Shows Codex and Claude usage limits and today's cost.
 
   --json   print each profile's snapshot
-  refresh  fetch limits now, for one profile (e.g. codex-work) or all
+  --profile name|key  select by name or key, repeatable
+  refresh  fetch limits now, for selected profiles or all
   today    print today's estimated spend and tokens
 `
 
 export async function usageCommand(args: string[], config: Config): Promise<number> {
-  const profiles = config.profiles.filter(hasUsage)
-
   if (args.includes("-h") || args.includes("--help")) {
     await printHelp(process.stdout, HELP)
     return 0
   }
 
-  if (args[0] === "refresh") {
-    const key = args.slice(1).find((a) => !a.startsWith("-"))
-    // --locked transfers a lock already claimed by the parent; refreshLocked releases it.
-    const locked = args.includes("--locked")
-    const targets = key ? profiles.filter((p) => profileKey(p) === key) : profiles
-    if (!targets.length) {
-      console.error(
-        `senu vision: no profile "${key}" (have ${profiles.map(profileKey).join(", ")})`,
-      )
-      return 2
+  const keys: string[] = []
+  const command = args[0] === "refresh" || args[0] === "today" ? args[0] : undefined
+  const locked = args.includes("--locked")
+  const available = config.profiles.filter(hasUsage)
+  let profiles: typeof available
+  try {
+    for (let i = command ? 1 : 0; i < args.length; i++) {
+      const a = args[i]!
+      if (a === "--profile") {
+        const value = args[++i]
+        if (!value || value.startsWith("-")) throw new Error("missing value for --profile")
+        keys.push(value)
+      } else if (["--json", "--locked", "--refresh"].includes(a)) continue
+      // Old watchers hand their already-claimed locks to the new binary.
+      else if (locked && command && !a.startsWith("-")) keys.push(a)
+      else throw new Error(`unexpected argument ${a}`)
     }
+    profiles = selectProfiles(available, keys)
+  } catch (e) {
+    console.error(`senu vision: ${e instanceof Error ? e.message : String(e)}`)
+    return 2
+  }
+
+  if (args[0] === "refresh") {
+    const targets = profiles
     await Promise.all(targets.filter((p) => locked || claimLock(p)).map((p) => refreshLocked(p)))
     return 0
   }
 
   if (args[0] === "today") {
-    const keys = args.slice(1).filter((a) => !a.startsWith("-"))
-    const targets = keys.length ? profiles.filter((p) => keys.includes(profileKey(p))) : profiles
-    if (!targets.length) {
-      console.error(
-        `senu vision: no profile "${keys.join(", ")}" (have ${profiles.map(profileKey).join(", ")})`,
-      )
-      return 2
-    }
-    // --locked transfers the parent's profile locks; refreshTodayLocked releases each one.
-    const locked = args.includes("--locked")
+    const targets = profiles
     const results = await Promise.all(
       // oxlint-disable-next-line oxc/no-map-spread -- keeps key and ms first in --json output
       targets.map(async (p) => {

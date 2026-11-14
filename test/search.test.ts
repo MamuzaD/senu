@@ -38,6 +38,21 @@ describe("profile boundary", () => {
       restricted: [],
     })
   })
+  test("repeated names and keys form a union within the privacy boundary", () => {
+    const { config, env } = setup()
+    expect(allowedProfiles(config, env, ["work", "codex-work"]).map((p) => p.name)).toEqual([
+      "work",
+      "work",
+    ])
+    expect(
+      allowedProfiles(config, { CODEX_HOME: "/unknown" }, ["personal", "codex-work"]).map(
+        (p) => `${p.kind}-${p.name}`,
+      ),
+    ).toEqual(["codex-work"])
+    expect(() => allowedProfiles(config, env, ["work", "missing"])).toThrow(
+      "unknown profile selection",
+    )
+  })
   test("rejects malformed privacy config", () => {
     const { root } = setup()
     const path = join(root, "config.toml")

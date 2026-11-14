@@ -17,7 +17,7 @@ export interface ReadOptions {
   /** Include tool output, left out by default */
   tools?: boolean | undefined
   maxChars?: number | undefined
-  scope?: string | undefined
+  profile?: string[] | undefined
 }
 /** Consecutive entries from one role, joined */
 export interface Turn {
@@ -99,7 +99,7 @@ export function readThread(
     if (count !== undefined && options.line === undefined)
       throw new UsageError("Context flags require --line")
   }
-  const profiles = allowedProfiles(config, env, options.scope, terminal).filter(
+  const profiles = allowedProfiles(config, env, options.profile, terminal).filter(
     (p) => p.kind !== "opencode",
   )
   let found

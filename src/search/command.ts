@@ -6,7 +6,7 @@ import { profileKey } from "~/usage/cache.ts"
 import { searchThreads, UsageError, type SearchOptions } from "./search.ts"
 
 const HELP = `usage: senu search [flags] [--] <text>
-       senu search --scope-only [--scope name]
+       senu search --list-profiles [--profile name|key]
 
 Searches the titles and messages of saved Claude and Codex threads, newest first, as JSON.
 
@@ -16,9 +16,9 @@ Searches the titles and messages of saved Claude and Codex threads, newest first
   --session id          only this session
   --limit n             at most n hits, 1 to 100 (default 20)
   --per-session n       at most n hits per session (default 3)
-  --scope name          only profiles with this name, e.g. work
+  --profile name|key  select by name or key, repeatable
   --exclude-session id  leave out this session
-  --scope-only          print the profiles this caller can search
+  --list-profiles       print the profiles this caller can search
   --                    end of flags, for text starting with -
 `
 
@@ -28,14 +28,14 @@ export async function searchCommand(args: string[], config: Config): Promise<num
     return 0
   }
   const options: SearchOptions = { query: "", excludeSession: [] }
-  let scopeOnly = false
+  let listProfiles = false
   let threads = false
   let messages = false
   try {
     for (let i = 0; i < args.length; i++) {
       const a = args[i]!
       if (a === "--" && !options.query) options.query = args[++i] ?? ""
-      else if (a === "--scope-only") scopeOnly = true
+      else if (a === "--list-profiles") listProfiles = true
       else if (a === "--threads") threads = true
       else if (a === "--messages") messages = true
       else if (
@@ -44,7 +44,7 @@ export async function searchCommand(args: string[], config: Config): Promise<num
           "--role",
           "--limit",
           "--per-session",
-          "--scope",
+          "--profile",
           "--exclude-session",
         ].includes(a)
       ) {
@@ -54,17 +54,17 @@ export async function searchCommand(args: string[], config: Config): Promise<num
         if (a === "--role") options.role = value as SearchOptions["role"] & string
         if (a === "--limit") options.limit = Number(value)
         if (a === "--per-session") options.perSession = Number(value)
-        if (a === "--scope") options.scope = value
+        if (a === "--profile") (options.profile ??= []).push(value)
         if (a === "--exclude-session") options.excludeSession!.push(value)
       } else if (!a.startsWith("-") && !options.query) options.query = a
       else throw new UsageError(`Unexpected argument ${a}`)
     }
     // Both flags mean both, as neither does
     if (threads !== messages) options.only = threads ? "threads" : "messages"
-    if (scopeOnly)
+    if (listProfiles)
       console.log(
         JSON.stringify({
-          profiles: allowedProfiles(config, process.env, options.scope, true)
+          profiles: allowedProfiles(config, process.env, options.profile, true)
             .filter((p) => p.kind !== "opencode")
             .map(profileKey),
         }),

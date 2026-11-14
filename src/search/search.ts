@@ -17,7 +17,7 @@ export interface SearchOptions {
   session?: string | undefined
   role?: "user" | "assistant" | "tool" | "all" | undefined
   limit?: number | undefined
-  scope?: string | undefined
+  profile?: string[] | undefined
   excludeSession?: string[]
   /** The most hits one session may return; 3, or one more than the limit with `session` */
   perSession?: number | undefined
@@ -154,7 +154,7 @@ export async function searchThreads(
     throw new UsageError("Provide a query, and a limit and per-session count between 1 and 100")
   if (options.role && !["user", "assistant", "tool", "all"].includes(options.role))
     throw new UsageError("Invalid role")
-  const profiles = allowedProfiles(config, env, options.scope, terminal).filter(
+  const profiles = allowedProfiles(config, env, options.profile, terminal).filter(
     (p) => p.kind !== "opencode",
   )
   const failed: { path: string; error: string }[] = []

@@ -14,7 +14,7 @@ Prints a saved Claude or Codex thread for handing its context to another agent.
     -C, --context n         turns before and after the target
   --tools                   include tool output
   --max-chars n             at most n characters of text, keeping whole turns (default 32k)
-  --scope name              only profiles with this name, e.g. work
+  --profile name|key  select by name or key, repeatable
   --json                    print the kept turns as JSON
 `
 
@@ -38,11 +38,11 @@ export async function readCommand(args: string[], config: Config): Promise<numbe
               : raw
       if (a === "--tools") options.tools = true
       else if (a === "--json") json = true
-      else if (["--max-chars", "--scope", "--line", "-B", "-A", "-C"].includes(a)) {
+      else if (["--max-chars", "--profile", "--line", "-B", "-A", "-C"].includes(a)) {
         const value = args[++i]
         if (!value || value.startsWith("--")) throw new UsageError(`Missing value for ${a}`)
         if (a === "--max-chars") options.maxChars = Number(value)
-        else if (a === "--scope") options.scope = value
+        else if (a === "--profile") (options.profile ??= []).push(value)
         else if (a === "--line") options.line = Number(value)
         else {
           if (a === "-B" || a === "-C") options.before = Number(value)

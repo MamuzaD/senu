@@ -1,10 +1,10 @@
 import type { Config, Profile } from "~/config.ts"
 import { setTmuxSocket } from "~/detect/panes.ts"
 import { selfCommand } from "~/paths.ts"
+import { selectProfiles } from "~/profiles.ts"
 import type { SearchHit } from "~/search/search.ts"
 import { mux } from "~/threads/live/mux.ts"
 import { printHelp } from "~/ui/help.ts"
-import { profileKey } from "~/usage/cache.ts"
 import { formatDuration } from "~/usage/format.ts"
 
 import {
@@ -18,7 +18,7 @@ import {
 import { readPins } from "./pins.ts"
 import { ResumeError } from "./resume.ts"
 
-const HELP = `usage: senu threads [--live] [--json] [--profile key]... [--limit n] [-L socket | -S path]
+const HELP = `usage: senu threads [--live] [--json] [--profile name|key]... [--limit n] [-L socket | -S path]
        senu threads resume <session-id>
 
 Browses agent threads, newest first, or lists them when piped.
@@ -27,7 +27,7 @@ Browses agent threads, newest first, or lists them when piped.
 
   --live         only running agents
   --json         print JSON
-  --profile key  only this profile, e.g. codex-work
+  --profile name|key  select by name or key, repeatable
   --limit n      at most n
   -L, -S         the tmux server, as in tmux
   resume         jump to a running thread, or reopen it in its CLI
@@ -210,15 +210,13 @@ export async function threadsCommand(args: string[], config: Config): Promise<nu
       return 2
     }
   }
-  const all = config.profiles
-  const unknown = keys.filter((k) => !all.some((p) => profileKey(p) === k))
-  if (unknown.length) {
-    console.error(
-      `senu threads: no profile ${unknown.join(", ")} (have ${all.map(profileKey).join(", ")})`,
-    )
+  let profiles: typeof config.profiles
+  try {
+    profiles = selectProfiles(config.profiles, keys)
+  } catch (e) {
+    console.error(`senu threads: ${e instanceof Error ? e.message : String(e)}`)
     return 2
   }
-  const profiles = keys.length ? all.filter((p) => keys.includes(profileKey(p))) : all
   if (!json && process.stdout.isTTY) return browse(config, profiles, !keys.length, limit, liveOnly)
 
   const { entries, failed } = await listEntries(profiles, !keys.length, liveOnly ? "live" : "all")

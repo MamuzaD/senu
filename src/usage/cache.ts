@@ -10,8 +10,11 @@ import {
 } from "node:fs"
 import { dirname, join } from "node:path"
 
-import type { Profile as AnyProfile, UsageProfile as Profile } from "~/config.ts"
+import type { UsageProfile as Profile } from "~/config.ts"
 import { cacheDir, selfCommand } from "~/paths.ts"
+import { profileKey } from "~/profiles.ts"
+
+export { profileKey } from "~/profiles.ts"
 
 import { fetchClaude } from "./claude.ts"
 import { fetchCodex } from "./codex.ts"
@@ -31,7 +34,6 @@ interface CacheEntry {
   snapshot: Snapshot
 }
 
-export const profileKey = (p: AnyProfile) => `${p.kind}-${p.name.replace(/[^\w.-]/g, "_")}`
 const cachePath = (p: Profile) => join(usageDir, `${profileKey(p)}.json`)
 const lockPath = (p: Profile) => join(usageDir, `${profileKey(p)}.lock`)
 
@@ -120,10 +122,13 @@ export async function refreshLocked(p: Profile): Promise<Snapshot> {
 export function spawnBackgroundRefresh(p: Profile) {
   if (!claimLock(p)) return
   try {
-    const child = Bun.spawn([...selfCommand(), "vision", "refresh", profileKey(p), "--locked"], {
-      stdio: ["ignore", "ignore", "ignore"],
-      detached: true,
-    })
+    const child = Bun.spawn(
+      [...selfCommand(), "vision", "refresh", "--profile", profileKey(p), "--locked"],
+      {
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: true,
+      },
+    )
     child.unref()
   } catch {
     releaseLock(p)

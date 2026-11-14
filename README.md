@@ -63,3 +63,14 @@ Run `bun test` and `bun run typecheck` to check changes, or `bun run dev` to run
 browser download needs `xattr -d com.apple.quarantine senu && chmod +x senu` first.
 
 </details>
+
+### Selecting profiles
+
+Use repeatable `--profile <name|key>` with `search`, `read`, `threads`, and `vision`.
+A name such as `work` selects all profiles with that name; a key such as `codex-work`
+selects one. Exact keys take precedence over matching names. Repeated values select their union. Search and read still enforce
+`[privacy] restricted`, so selection can only narrow access.
+
+Use `senu search --list-profiles` to list the searchable profiles allowed for the caller.
+This replaces `--scope-only`; `--profile` replaces `--scope` and positional profiles
+in `vision refresh` and `vision today`.

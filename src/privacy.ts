@@ -3,6 +3,7 @@ import { join, resolve } from "node:path"
 
 import type { Config, Profile } from "~/config.ts"
 import { home } from "~/paths.ts"
+import { profileKey, selectProfiles } from "~/profiles.ts"
 
 const canonical = (p: string) => {
   try {
@@ -19,9 +20,10 @@ const canonical = (p: string) => {
 export function allowedProfiles(
   config: Config,
   env = process.env,
-  narrow?: string,
+  narrow?: string | string[],
   terminal = false,
 ): Profile[] {
+  const values = typeof narrow === "string" ? [narrow] : narrow
   const signals: { kind: string; path: string }[] = []
   if (env.CODEX_HOME || env.CODEX_THREAD_ID)
     signals.push({ kind: "codex", path: env.CODEX_HOME || join(home, ".codex") })
@@ -33,7 +35,7 @@ export function allowedProfiles(
   )
     signals.push({ kind: "claude", path: env.CLAUDE_CONFIG_DIR || join(home, ".claude") })
   const restricted = config.privacy?.restricted ?? []
-  if (!restricted.length) return config.profiles.filter((p) => !narrow || p.name === narrow)
+  if (!restricted.length) return selectProfiles(config.profiles, values)
   const matched = signals.map((s) =>
     config.profiles.filter((p) => p.kind === s.kind && canonical(p.home) === canonical(s.path)),
   )
@@ -44,9 +46,15 @@ export function allowedProfiles(
       .map((p) => p.name),
   )
   const unknown = (!signals.length && !terminal) || matched.some((ps) => !ps.length)
-  return config.profiles.filter((p) => {
-    if (narrow && p.name !== narrow) return false
+  const visible = config.profiles.filter((p) => {
     if (names.size) return names.has(p.name)
     return !unknown || restricted.includes(p.name)
   })
+  // Validate against configured profiles, but never disclose hidden keys in errors.
+  try {
+    const selected = new Set(selectProfiles(config.profiles, values))
+    return visible.filter((p) => selected.has(p))
+  } catch {
+    throw new Error(`unknown profile selection (have ${visible.map(profileKey).join(", ")})`)
+  }
 }
