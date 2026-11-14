@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { afterEach, expect, test } from "bun:test"
 import { statSync } from "node:fs"
 import { join } from "node:path"
@@ -220,6 +221,43 @@ test("a wait keeps returning its first reply after an earlier one is delivered l
     await early
     expect(await store.waitForReply(id, from, profiles, 1)).toEqual(first)
   } finally {
+    store.close()
+  }
+})
+
+test("sending drops messages older than a week, with their pinned replies", async () => {
+  const { root } = setup()
+  const path = join(root, "messages.sqlite")
+  const store = new MessageStore(path)
+  const db = new Database(path)
+  const count = (table: string) =>
+    db.query<{ n: number }, []>(`SELECT count(*) AS n FROM ${table}`).get()!.n
+  try {
+    const old = await store.send(from, to, "old question", undefined, async () => "delivered")
+    await store.send(to, from, "old answer", old.message_id, async () => "delivered")
+    void store.send(from, to, "never delivered", undefined, () => new Promise(() => {}))
+    expect((await store.waitForReply(old.message_id, from, profiles, 1)).reply?.text).toBe(
+      "old answer",
+    )
+    expect([count("messages"), count("answers")]).toEqual([3, 1])
+    const week = 7 * 24 * 60 * 60 * 1000
+    db.run("UPDATE messages SET created_at = ?", [Date.now() - week + 60_000])
+    const kept = await store.send(from, to, "inside the week", undefined, async () => "delivered")
+    expect(count("messages")).toBe(4)
+    db.run("UPDATE messages SET created_at = ? WHERE message_id != ?", [
+      Date.now() - week - 1,
+      kept.message_id,
+    ])
+    const fresh = await store.send(from, to, "fresh", undefined, async () => "delivered")
+    expect([count("messages"), count("answers")]).toEqual([2, 0])
+    expect(store.sent(fresh.message_id, from, profiles).text).toBe("fresh")
+    expect(() => store.sent(old.message_id, from, profiles)).toThrow("Message not found")
+    await rejects(
+      store.send(to, from, "too late", old.message_id, async () => "delivered"),
+      "Reply target not found",
+    )
+  } finally {
+    db.close()
     store.close()
   }
 })

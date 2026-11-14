@@ -15,6 +15,8 @@ export interface Message {
   created_at: number
 }
 
+const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
 /** Shared by CLI and MCP processes; a pending delivery is never an available reply. */
 export class MessageStore {
   private db: Database
@@ -77,6 +79,10 @@ export class MessageStore {
     const id = crypto.randomUUID()
     const awaited = this.db
       .transaction(() => {
+        this.db.query("DELETE FROM messages WHERE created_at < ?").run(Date.now() - RETENTION_MS)
+        this.db.exec(
+          "DELETE FROM answers WHERE message_id NOT IN (SELECT message_id FROM messages)",
+        )
         const waiting =
           replyTo !== undefined &&
           this.db
