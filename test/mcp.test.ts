@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite"
 import { afterEach, expect, test } from "bun:test"
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer as netServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -10,7 +10,14 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 
 import { createServer } from "~/mcp/command.ts"
-import { deliverClaude, deliverCodex, messageText, sender, sendLimiter } from "~/mcp/send.ts"
+import {
+  agentLocation,
+  deliverClaude,
+  deliverCodex,
+  messageText,
+  sender,
+  sendLimiter,
+} from "~/mcp/send.ts"
 import { MessageStore } from "~/mcp/store.ts"
 import type { Thread } from "~/threads/thread.ts"
 
@@ -43,6 +50,19 @@ test("Claude socket receives exactly the expected JSONL envelope", async () => {
   }
   const error = await deliverClaude(join(root, "missing.sock"), "hello").catch((e: unknown) => e)
   expect(error).toBeInstanceOf(Error)
+})
+
+test("agent locations use tmux pane indexes and Rex window positions", () => {
+  const live = {
+    state: "idle" as const,
+    paneId: "%17",
+    windowId: "@2",
+    windowIndex: 2,
+    session: "senu",
+  }
+  expect(agentLocation({ ...live, paneIndex: 0 })).toBe("senu:2.0")
+  expect(agentLocation({ ...live, paneIndex: 3 })).toBe("senu:2.3")
+  expect(agentLocation(live)).toBe("senu:2")
 })
 
 test("message attribution and process-local send rate limit", () => {
@@ -145,7 +165,7 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
   db.exec(`
     CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, name TEXT, title TEXT,
       updated_at_ms INTEGER, updated_at INTEGER, archived INTEGER, thread_source TEXT);
-    INSERT INTO threads VALUES ('cli-session', '', '/fixture', NULL, 'Caller', 1, 1, 0, 'user');
+    INSERT INTO threads VALUES ('cli-session', '', '/fixture', NULL, 'needle from title', 1, 1, 0, 'user');
   `)
   db.close()
   const store = new MessageStore(join(root, "senu", "messages.sqlite"))
@@ -183,13 +203,16 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
   })
   expect(run.exitCode).toBe(0)
   expect(JSON.parse(run.stdout.toString()).hits[0].excerpt).toBe("needle from CLI")
+  const locks = join(config.profiles[0]!.home, "thread-writer-locks")
+  mkdirSync(locks)
+  const lock = openSync(join(locks, "cli-session.lock"), "w")
   const client = new Client({ name: "stdio-test", version: "1" })
   await client.connect(
     new StdioClientTransport({
       command: process.execPath,
       args: [cli, "mcp"],
       cwd: tmpdir(),
-      env: childEnv,
+      env: { ...childEnv, CODEX_THREAD_ID: "" },
       stderr: "pipe",
     }),
   )
@@ -248,7 +271,19 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
     expect(missing.isError).toBe(true)
     const result = await client.callTool({ name: "search_threads", arguments: { query: "needle" } })
     const content = result.content as { text: string }[]
-    expect(JSON.parse(content[0]!.text).hits[0].excerpt).toBe("needle from CLI")
+    const hits = JSON.parse(content[0]!.text).hits
+    expect(hits.map((hit: { session: string }) => hit.session)).toEqual(["other-session"])
+    expect(hits[0].excerpt).toBe("needle from CLI")
+    const excluded = await client.callTool({
+      name: "search_threads",
+      arguments: { query: "needle", excludeSession: ["other-session"] },
+    })
+    expect(JSON.parse((excluded.content as { text: string }[])[0]!.text).hits).toEqual([])
+    const titles = await client.callTool({
+      name: "search_threads",
+      arguments: { query: "needle", only: "threads" },
+    })
+    expect(JSON.parse((titles.content as { text: string }[])[0]!.text).hits).toEqual([])
     const read = await client.callTool({
       name: "read_thread",
       arguments: { session: "cli-session", line: 1, before: 0, after: 1 },
@@ -277,6 +312,7 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
     expect(invalid.isError).toBe(true)
   } finally {
     await client.close()
+    closeSync(lock)
   }
 })
 

@@ -17,6 +17,7 @@ export interface Live {
   paneId: string
   windowId: string
   windowIndex: number
+  paneIndex?: number | undefined
   session: string
 }
 
@@ -67,8 +68,8 @@ export function joinEntries(threads: Thread[], seen: Seen, withUnthreaded: boole
     const pane = paneById.get(paneId)
     if (!pane || !listed.has(key)) continue
     const state = rowByPane.get(paneId)?.state ?? "idle"
-    const { windowId, windowIndex, session } = pane
-    live.set(key, { state, paneId, windowId, windowIndex, session })
+    const { windowId, windowIndex, paneIndex, session } = pane
+    live.set(key, { state, paneId, windowId, windowIndex, paneIndex, session })
   }
   const threaded = new Set([...live.values()].map((l) => l.paneId))
   return [

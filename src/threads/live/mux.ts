@@ -10,7 +10,7 @@ import { tmuxMux } from "./tmux.ts"
 
 /** What a multiplexer can see right now. */
 export interface Seen {
-  panes: Pick<Pane, "id" | "windowId" | "windowIndex" | "session" | "cwd">[]
+  panes: Pick<Pane, "id" | "windowId" | "windowIndex" | "paneIndex" | "session" | "cwd">[]
   rows: PaneRow[]
   /** Running threads' panes, by `threadKey` */
   paneByThread: Map<string, string>
@@ -18,6 +18,7 @@ export interface Seen {
 
 /** What senu needs from a multiplexer. Actions resolve to why they failed, or null. */
 export interface Mux {
+  name: "tmux" | "rex"
   /** Keeps what it learns between polls, so the picker holds one. */
   collector(): { collect(): Promise<Collected> }
   seen(profiles: Profile[]): Promise<Seen>

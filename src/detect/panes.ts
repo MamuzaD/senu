@@ -22,6 +22,7 @@ export interface Pane {
   sessionAttached: boolean
   windowId: string
   windowIndex: number
+  paneIndex?: number
   windowName: string
   windowActive: boolean
   /** Last activity in the window, epoch seconds. */
@@ -57,6 +58,7 @@ const FIELDS = [
   "@ai_state",
   "host",
   "host_short",
+  "pane_index",
   // Keep the free-text title last so embedded separators cannot shift the fixed fields.
   "pane_title",
 ]
@@ -137,6 +139,7 @@ function parsePanes(out: string): Pane[] {
       aiState,
       host,
       hostShort,
+      paneIndex,
     ] = f
     const title = f.slice(FIELDS.length - 1).join(SEP)
     panes.push({
@@ -152,6 +155,7 @@ function parsePanes(out: string): Pane[] {
       sessionAttached: attached !== "" && attached !== "0",
       windowId: windowId!,
       windowIndex: Number(windowIndex),
+      paneIndex: Number(paneIndex),
       windowName: windowName!,
       windowActive: windowActive === "1",
       windowActivity: Number(activity),

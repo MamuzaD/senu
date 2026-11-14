@@ -233,6 +233,7 @@ export async function rexOpenWindow(launch: Launch): Promise<boolean> {
 }
 
 export const rexMux: Mux = {
+  name: "rex",
   // Rex holds each agent's state, so there's nothing to keep between polls
   collector: () => ({
     async collect() {

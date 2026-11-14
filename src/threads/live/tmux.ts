@@ -86,6 +86,7 @@ async function jump(
 
 /** Also what senu falls back to outside any multiplexer, where it can list a tmux server's agents. */
 export const tmuxMux: Mux = {
+  name: "tmux",
   collector: () => new Collector(),
 
   async seen(profiles) {

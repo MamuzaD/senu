@@ -236,6 +236,7 @@ test.skipIf(!Bun.which("tmux"))("an agent that exits under remain-on-exit is dro
     }
     expect(agents).toEqual(["codex"])
     let panes = await listPanes()
+    expect(panes[0]?.paneIndex).toBe(0)
     for (let i = 0; i < 80 && !panes[0]?.dead; i++) {
       await Bun.sleep(25)
       panes = await listPanes()

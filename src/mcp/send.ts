@@ -4,7 +4,8 @@ import { join } from "node:path"
 
 import type { Config } from "~/config.ts"
 import { allowedProfiles } from "~/privacy.ts"
-import { listEntries } from "~/threads/entries.ts"
+import { listEntries, type Live } from "~/threads/entries.ts"
+import { mux } from "~/threads/live/mux.ts"
 import { parentCodexThreads } from "~/threads/running.ts"
 import { listThreads, threadKey, type Thread } from "~/threads/thread.ts"
 import { printHelp } from "~/ui/help.ts"
@@ -12,6 +13,9 @@ import { printHelp } from "~/ui/help.ts"
 import { MessageStore } from "./store.ts"
 
 export const address = (t: Thread) => threadKey(t.profile, t.sessionId)
+
+export const agentLocation = (live: Live) =>
+  `${live.session}:${live.windowIndex}${live.paneIndex === undefined ? "" : `.${live.paneIndex}`}`
 
 export async function listAgents(config: Config) {
   const { entries, failed } = await listEntries(allowedProfiles(config), false, "live")
@@ -26,6 +30,8 @@ export async function listAgents(config: Config) {
               cwd: e.cwd,
               title: e.title,
               state: e.live.state,
+              mux: mux().name,
+              location: agentLocation(e.live),
             },
           ]
         : [],
