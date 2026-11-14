@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test"
 
-import { codexPids, panesFor, parseLsof, parseProcs, stillClaude } from "~/threads/running.ts"
+import {
+  codexPids,
+  offPanes,
+  panesFor,
+  parseLsof,
+  parseProcs,
+  stillClaude,
+} from "~/threads/running.ts"
 
 describe("parseLsof", () => {
   test("groups the locks each process holds", () => {
@@ -118,5 +125,17 @@ describe("panesFor", () => {
       [999, ["stale-session-file"]],
     ])
     expect(panesFor(holders, procs, panes)).toEqual(new Map())
+  })
+
+  test("offPanes names the live process holding a thread outside every pane", () => {
+    const holders = new Map([
+      [102, ["codex-thread"]],
+      [300, ["in-a-plain-terminal"]],
+      [999, ["stale-session-file"]],
+    ])
+    const daemon = new Map([...procs, [300, { ppid: 1, command: "/opt/bin/codex" }]])
+    expect(offPanes(holders, daemon, panesFor(holders, daemon, panes))).toEqual(
+      new Map([["in-a-plain-terminal", { pid: 300, command: "codex" }]]),
+    )
   })
 })

@@ -138,7 +138,7 @@ test("Codex queue invokes a binary without config overrides and uses the target 
   )
   chmodSync(binary, 0o755)
   expect(await deliverCodex({ home: root, sessionId: "target-id" }, "hello", binary)).toBe(
-    "queued in Codex",
+    "queued in Codex until its turn ends",
   )
   expect(JSON.parse(readFileSync(capture, "utf8"))).toEqual({
     args: ["queue", "--thread", "target-id", "--message", "hello"],
@@ -427,4 +427,39 @@ test("mcp install rewrites only senu's Codex tables and skips missing profiles",
   const before = readFileSync(path, "utf8")
   expect(await installCommand(config, ["/newer/senu"], { claude: null, codex: null })).toBe(0)
   expect(readFileSync(path, "utf8")).toBe(before)
+})
+
+test("a session's announced Senu version replaces its earlier one", () => {
+  const { root } = setup()
+  const store = new MessageStore(join(root, "senu", "messages.sqlite"))
+  try {
+    store.announce("codex-work:a", "0.4.4")
+    store.announce("claude-work:b", "0.5.0")
+    store.announce("codex-work:a", "0.5.0")
+    expect(store.versions()).toEqual(
+      new Map([
+        ["codex-work:a", "0.5.0"],
+        ["claude-work:b", "0.5.0"],
+      ]),
+    )
+  } finally {
+    store.close()
+  }
+})
+
+test("mcp install re-registers Claude through its CLI under the profile's config dir", async () => {
+  const { config, root } = setup()
+  const log = join(root, "claude.log")
+  const fake = join(root, "claude")
+  writeFileSync(fake, `#!/bin/sh\necho "$CLAUDE_CONFIG_DIR $*" >> ${JSON.stringify(log)}\n`)
+  chmodSync(fake, 0o755)
+  config.profiles = [config.profiles[2]!]
+  const home = config.profiles[0]!.home
+  expect(await installCommand(config, ["/new/senu"], { claude: fake, codex: null })).toBe(0)
+  expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
+    `${home} mcp remove --scope user senu`,
+    `${home} mcp add --scope user senu -- /new/senu mcp`,
+  ])
+  writeFileSync(fake, "#!/bin/sh\necho no such scope >&2\nexit 1\n")
+  expect(await installCommand(config, ["/new/senu"], { claude: fake, codex: null })).toBe(1)
 })

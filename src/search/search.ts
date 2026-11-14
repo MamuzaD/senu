@@ -35,6 +35,8 @@ export interface SearchHit {
   /** `title` for a thread title, else who wrote the message */
   role: string
   excerpt: string
+  /** The thread's title, when it is listed */
+  title?: string
 }
 
 function files(root: string, base: string): string[] {
@@ -111,18 +113,13 @@ async function scan(spec: Spec, jobs: Task["jobs"]): Promise<Scanned[]> {
 /** A mistake in how search was called, as opposed to a failure while searching */
 export class UsageError extends Error {}
 
+type Listed = { p: Profile; threads: ReturnType<typeof claudeThreads> }[]
+
 /** Threads whose titles match, as hits dated by the thread's last update */
-function titleHits(profiles: Profile[], spec: Spec, failed: { path: string; error: string }[]) {
+function titleHits(listed: Listed, spec: Spec) {
   const excluded = new Set(spec.excluded)
-  return profiles.flatMap((p) => {
-    let threads
-    try {
-      threads = p.kind === "claude" ? claudeThreads(p) : codexThreads(p)
-    } catch (e) {
-      if (existsSync(p.home)) failed.push({ path: p.home, error: String(e) })
-      return []
-    }
-    return threads.flatMap((t) => {
+  return listed.flatMap(({ p, threads }) =>
+    threads.flatMap((t) => {
       const match = titleMatch(t.title, spec.query)
       if (!match || excluded.has(t.sessionId) || (spec.session && spec.session !== t.sessionId))
         return []
@@ -136,8 +133,8 @@ function titleHits(profiles: Profile[], spec: Spec, failed: { path: string; erro
         key: `${t.sessionId}\0title`,
       }
       return [{ f, p, path: t.transcript }]
-    })
-  })
+    }),
+  )
 }
 
 /** Hits come newest first. When no message holds the whole phrase, messages holding
@@ -172,6 +169,22 @@ export async function searchThreads(
       if (size !== undefined) transcripts.push({ p, path, size })
     }
   }
+  const listed: Listed = profiles.map((p) => {
+    try {
+      return { p, threads: p.kind === "claude" ? claudeThreads(p) : codexThreads(p) }
+    } catch (e) {
+      if (existsSync(p.home)) failed.push({ path: p.home, error: String(e) })
+      return { p, threads: [] }
+    }
+  })
+  const titles = new Map(
+    listed.flatMap(({ p, threads }) =>
+      threads.map((t) => [
+        `${profileKey(p)}\0${t.sessionId}`,
+        t.title.replace(/\s+/g, " ").slice(0, 80),
+      ]),
+    ),
+  )
   const spec: Spec = {
     query: options.query,
     role: options.role ?? "user",
@@ -201,7 +214,7 @@ export async function searchThreads(
       const { p, path } = transcripts[s.i]!
       return "found" in s ? s.found.map((f) => ({ f, p, path })) : []
     })
-    .concat(options.only === "messages" ? [] : titleHits(profiles, spec, failed))
+    .concat(options.only === "messages" ? [] : titleHits(listed, spec))
     .toSorted((a, b) => (a.f.time < b.f.time ? 1 : a.f.time > b.f.time ? -1 : 0))
   const exact = found.some(({ f }) => f.exact)
   // A thread untitled by its agent goes by its first prompt, so its title would repeat a message
@@ -230,11 +243,14 @@ export async function searchThreads(
     seen.add(`${profile}\0${key}`)
     perSession.set(session, count + 1)
     if (hits.length === limit) limit_reached = true
-    else hits.push({ ...hit, profile, path })
+    else {
+      const title = titles.get(session)
+      hits.push({ ...hit, ...(title ? { title } : {}), profile, path })
+    }
   }
   return {
     profiles: profiles.map(profileKey),
-    match: exact || !hits.length ? "phrase" : "words",
+    match: !hits.length ? "none" : exact ? "phrase" : "words",
     hits,
     limit_reached,
     failed,

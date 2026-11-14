@@ -10,7 +10,7 @@ import { join } from "node:path"
 
 import type { Config, Profile } from "~/config.ts"
 import { home, selfCommand } from "~/paths.ts"
-import { profileKey } from "~/usage/cache.ts"
+import { profileKey } from "~/profiles.ts"
 
 const SENU = `(?:senu|"senu"|'senu')`
 const TABLE = new RegExp(String.raw`^\[\s*mcp_servers\s*\.\s*${SENU}\s*(\.[^\]]+)?\]`)

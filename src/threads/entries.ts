@@ -59,7 +59,11 @@ const unthreaded = (rows: PaneRow[], threaded: Set<string>, cwdOf: (paneId: stri
     agentEntry(r, cwdOf(r.paneId)),
   )
 
-export function joinEntries(threads: Thread[], seen: Seen, withUnthreaded: boolean): Entry[] {
+export function joinEntries(
+  threads: Thread[],
+  seen: Omit<Seen, "offPane">,
+  withUnthreaded: boolean,
+): Entry[] {
   const paneById = new Map(seen.panes.map((p) => [p.id, p]))
   const rowByPane = new Map(seen.rows.map((r) => [r.paneId, r]))
   const listed = new Set(threads.map((t) => threadKey(t.profile, t.sessionId)))
@@ -130,7 +134,7 @@ export async function listEntries(
     recent: { ids: new Set([...ids, ...pins]), since: Date.now() - recentMs },
   }
   const { threads, failed } = listThreads(profiles, only[scope])
-  return { entries: joinEntries(threads, seen, withUnthreaded), failed }
+  return { entries: joinEntries(threads, seen, withUnthreaded), failed, offPane: seen.offPane }
 }
 
 export class OpenError extends Error {}

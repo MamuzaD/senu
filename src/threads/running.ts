@@ -111,10 +111,38 @@ export function panesFor(
   return live
 }
 
+export interface Holder {
+  pid: number
+  command: string
+}
+
+export interface Running {
+  /** Running threads' panes, by `threadKey` */
+  paneByThread: Map<string, string>
+  /** The processes holding threads outside every pane, by `threadKey` */
+  offPane: Map<string, Holder>
+}
+
+/** The holders `panesFor` could not place, leaving out processes that exited. */
+export function offPanes(
+  holders: SessionsByPid,
+  procs: Map<number, Proc>,
+  paneByThread: Map<string, string>,
+): Map<string, Holder> {
+  const off = new Map<string, Holder>()
+  for (const [pid, keys] of holders) {
+    const proc = procs.get(pid)
+    if (!proc) continue
+    for (const key of keys)
+      if (!paneByThread.has(key)) off.set(key, { pid, command: basename(proc.command) })
+  }
+  return off
+}
+
 export async function runningThreads(
   profiles: Profile[],
   panes: Pick<Pane, "id" | "pid">[],
-): Promise<Map<string, string>> {
+): Promise<Running> {
   const claude: SessionsByPid = new Map()
   for (const p of profiles) if (p.kind === "claude") claudeSessionsByPid(p, claude)
   const codex = profiles.filter((p) => p.kind === "codex")
@@ -135,7 +163,8 @@ export async function runningThreads(
     ? await run(["lsof", "-nP", "-a", "-p", pids.join(","), "-Fpn", "--", ...locks])
     : { out: "" }
   const holders = parseLsof(lsof.out, (dir) => profileByDir.get(dir), stillClaude(claude, procs))
-  return panesFor(holders, procs, panes)
+  const paneByThread = panesFor(holders, procs, panes)
+  return { paneByThread, offPane: offPanes(holders, procs, paneByThread) }
 }
 
 export function codexPids(

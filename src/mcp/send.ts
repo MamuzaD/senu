@@ -4,9 +4,10 @@ import { join } from "node:path"
 
 import type { Config } from "~/config.ts"
 import { allowedProfiles } from "~/privacy.ts"
+import { profileKey } from "~/profiles.ts"
 import { listEntries, type Live } from "~/threads/entries.ts"
 import { mux } from "~/threads/live/mux.ts"
-import { parentCodexThreads } from "~/threads/running.ts"
+import { parentCodexThreads, type Holder } from "~/threads/running.ts"
 import { listThreads, threadKey, type Thread } from "~/threads/thread.ts"
 import { printHelp } from "~/ui/help.ts"
 
@@ -17,8 +18,26 @@ export const address = (t: Thread) => threadKey(t.profile, t.sessionId)
 export const agentLocation = (live: Live) =>
   `${live.session}:${live.windowIndex}${live.paneIndex === undefined ? "" : `.${live.paneIndex}`}`
 
+const offPaneReason = (h: Holder) =>
+  `held by ${h.command} (pid ${h.pid}) outside every ${mux().name} pane`
+
+export async function announce(config: Config, version: string) {
+  const from = await sender(config)
+  const store = new MessageStore()
+  try {
+    store.announce(address(from), version)
+  } finally {
+    store.close()
+  }
+}
+
 export async function listAgents(config: Config) {
-  const { entries, failed } = await listEntries(allowedProfiles(config), false, "live")
+  const profiles = allowedProfiles(config)
+  const { entries, failed, offPane } = await listEntries(profiles, false, "live")
+  const store = new MessageStore()
+  const versions = store.versions()
+  store.close()
+  const self = await sender(config).then(address, () => undefined)
   return {
     agents: entries.flatMap((e) =>
       e.live && e.thread && e.agent !== "opencode"
@@ -32,10 +51,20 @@ export async function listAgents(config: Config) {
               state: e.live.state,
               mux: mux().name,
               location: agentLocation(e.live),
+              senu: versions.get(address(e.thread)),
+              ...(address(e.thread) === self ? { self: true } : {}),
             },
           ]
         : [],
     ),
+    unreachable: listThreads(profiles, { ids: new Set(offPane.keys()) }).threads.map((t) => ({
+      to: address(t),
+      agent: t.agent,
+      profile: t.profile,
+      cwd: t.cwd,
+      title: t.title,
+      reason: offPaneReason(offPane.get(address(t))!),
+    })),
     failed,
   }
 }
@@ -50,7 +79,7 @@ export async function sender(
   )
   const profiles = allowedProfiles(config, env)
   const keys = ids.size
-    ? new Set(profiles.flatMap((p) => [...ids].map((id) => threadKey(`${p.kind}-${p.name}`, id!))))
+    ? new Set(profiles.flatMap((p) => [...ids].map((id) => threadKey(profileKey(p), id!))))
     : await parentCodexThreads(profiles, parentPid)
   const { threads: matches } = listThreads(profiles, { ids: keys })
   if (matches.length !== 1)
@@ -99,36 +128,68 @@ export function sendLimiter(now = Date.now) {
     const at = now()
     times = times.filter((t) => at - t < 60_000)
     if (times.length >= 10)
-      throw new Error("Send rate limit reached. Wait a minute before sending again.")
+      throw new Error("Send rate limit reached: 10 sends a minute. Wait before sending again.")
     times.push(at)
   }
 }
 const takeSend = sendLimiter()
 
-export async function sendMessage(config: Config, to: string, text: string, replyTo?: string) {
+export async function sendMessage(
+  config: Config,
+  to: string,
+  text: string,
+  replyTo?: string,
+  waitMs?: number,
+  signal?: AbortSignal,
+) {
   if (!text.trim()) throw new Error("Message text is empty")
   const from = await sender(config)
   const profiles = allowedProfiles(config)
-  const { entries } = await listEntries(profiles, false, "live")
+  const { entries, offPane } = await listEntries(profiles, false, "live")
   const target = entries.find((e) => e.live && e.thread && address(e.thread) === to)?.thread
-  if (!target)
+  if (!target) {
+    if (!/^[^:]+:[^:]+$/.test(to))
+      throw new Error("Address must be profile:session, as the running agents list gives it")
+    if (!profiles.some((p) => to.startsWith(`${profileKey(p)}:`)))
+      throw new Error("Target's profile is outside the allowed profiles")
+    const holder = offPane.get(to)
     throw new Error(
-      "Target is gone, outside the allowed profiles, or not running in a supported terminal",
+      holder
+        ? `Target is ${offPaneReason(holder)}`
+        : "Target is not running; list the running agents for current addresses",
     )
+  }
   if (address(from) === address(target)) throw new Error("Choose another session")
   if (target.agent !== "claude" && target.agent !== "codex")
     throw new Error("Messaging supports Claude and Codex only")
-  takeSend()
   const store = new MessageStore()
   try {
-    return await store.send(address(from), address(target), text, replyTo, async (id) => {
-      const content = messageText(from, text, id, replyTo)
-      if (target.agent === "claude") {
-        await deliverClaude(claudeSocket(target), content)
-        return "handed to Claude Code"
-      }
-      return deliverCodex(target, content)
-    })
+    if (replyTo !== undefined) store.checkReply(address(from), address(target), replyTo)
+    takeSend()
+    const sent = await store.send(
+      address(from),
+      address(target),
+      text,
+      replyTo,
+      async (id) => {
+        const content = messageText(from, text, id, replyTo)
+        if (target.agent === "claude") {
+          await deliverClaude(claudeSocket(target), content)
+          return "handed to Claude Code"
+        }
+        return deliverCodex(target, content)
+      },
+      { waitMs },
+    )
+    if (waitMs === undefined) return sent
+    const waited = await store.waitForReply(
+      sent.message_id,
+      address(from),
+      profiles.map(profileKey),
+      waitMs,
+      signal,
+    )
+    return { ...sent, timed_out: waited.timed_out, reply: waited.reply }
   } finally {
     store.close()
   }
@@ -155,7 +216,7 @@ export async function deliverCodex(
     throw new Error(
       `Codex queue failed. Check that the app-server daemon is running. ${err.trim() || out.trim()}`,
     )
-  return "queued in Codex"
+  return "queued in Codex until its turn ends"
 }
 
 const HELP = `usage: senu send [flags] <address> <text>

@@ -148,7 +148,7 @@ describe("senu read", () => {
         .text,
     ).toBe("tool output")
     expect(() => readThread(config, { session: ID, line: 4, maxChars: 1000 }, env)).toThrow(
-      "Target turn exceeds",
+      "Target turn needs",
     )
     const thread = readThread(config, { session: ID, line: 5, maxChars: 1000 }, env)
     expect(thread.turns.some((t) => t.text === "last")).toBe(true)

@@ -90,13 +90,14 @@ export const tmuxMux: Mux = {
   collector: () => new Collector(),
 
   async seen(profiles) {
-    if (!(await tmux("info")).ok) return { panes: [], rows: [], paneByThread: new Map() }
+    if (!(await tmux("info")).ok)
+      return { panes: [], rows: [], ...(await runningThreads(profiles, [])) }
     const panes = listPanes()
-    const [{ rows }, paneByThread] = await Promise.all([
+    const [{ rows }, running] = await Promise.all([
       new Collector().collect(),
       panes.then((ps) => runningThreads(profiles, ps)),
     ])
-    return { panes: await panes, rows, paneByThread }
+    return { panes: await panes, rows, ...running }
   },
 
   async jump(live, opts) {

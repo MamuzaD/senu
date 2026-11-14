@@ -4,16 +4,15 @@ import { hasTmuxSocket } from "~/detect/panes.ts"
 
 import type { Live } from "../entries.ts"
 import type { Launch } from "../resume.ts"
+import type { Running } from "../running.ts"
 import type { Collected, PaneRow } from "./collect.ts"
 import { inRex, rexMux } from "./rex.ts"
 import { tmuxMux } from "./tmux.ts"
 
 /** What a multiplexer can see right now. */
-export interface Seen {
+export interface Seen extends Running {
   panes: Pick<Pane, "id" | "windowId" | "windowIndex" | "paneIndex" | "session" | "cwd">[]
   rows: PaneRow[]
-  /** Running threads' panes, by `threadKey` */
-  paneByThread: Map<string, string>
 }
 
 /** What senu needs from a multiplexer. Actions resolve to why they failed, or null. */

@@ -171,7 +171,7 @@ describe("transcript search", () => {
     rollout(config, 0, "wrapped", [record("then is\nthe  search done")])
     const wrapped = await searchThreads(config, { query: "is the search" }, env)
     expect([wrapped.match, wrapped.hits.length]).toEqual(["phrase", 2])
-    expect((await searchThreads(config, { query: "absent words" }, env)).match).toBe("phrase")
+    expect((await searchThreads(config, { query: "absent words" }, env)).match).toBe("none")
   })
   test("one session returns its three newest hits unless it is asked for by id", async () => {
     const { config, env } = setup()
@@ -277,5 +277,6 @@ describe("transcript search", () => {
       [5, "user", "/repo"],
     ])
     expect(result.profiles).toEqual(["codex-work", "claude-work"])
+    expect(result.hits[0]!.title).toBe("NEEDLE user")
   })
 })

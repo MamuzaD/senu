@@ -11,11 +11,13 @@ export interface Message {
   to: string
   text: string
   reply_to: string | null
-  status: "pending" | "delivered" | "failed"
+  /** `offered` is a reply held for its waiting sender to claim */
+  status: "pending" | "offered" | "delivered" | "failed"
   created_at: number
 }
 
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+const CLAIM_WINDOW_MS = 1000
 
 /** Shared by CLI and MCP processes; a pending delivery is never an available reply. */
 export class MessageStore {
@@ -41,11 +43,36 @@ export class MessageStore {
       CREATE INDEX IF NOT EXISTS message_replies ON messages(reply_to, status);
       CREATE TABLE IF NOT EXISTS waits (message_id TEXT PRIMARY KEY, until INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS answers (message_id TEXT PRIMARY KEY, reply_id TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS servers (
+        address TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        seen_at INTEGER NOT NULL
+      );
     `)
   }
 
   close() {
     this.db.close()
+  }
+
+  /** Records the Senu version serving a session, for its peers' list_agents. */
+  announce(address: string, version: string) {
+    this.db.query("DELETE FROM servers WHERE seen_at < ?").run(Date.now() - RETENTION_MS)
+    this.db
+      .query(
+        `INSERT INTO servers (address, version, seen_at) VALUES (?, ?, ?)
+         ON CONFLICT (address) DO UPDATE SET version = excluded.version, seen_at = excluded.seen_at`,
+      )
+      .run(address, version, Date.now())
+  }
+
+  versions(): Map<string, string> {
+    return new Map(
+      this.db
+        .query<{ address: string; version: string }, []>("SELECT address, version FROM servers")
+        .all()
+        .map((s) => [s.address, s.version]),
+    )
   }
 
   private get(id: string) {
@@ -64,46 +91,92 @@ export class MessageStore {
     return message
   }
 
+  /** Throws unless `replyTo` is a message `to` sent `from`. */
+  checkReply(from: string, to: string, replyTo: string) {
+    const original = this.get(replyTo)
+    if (!original || original.from !== to || original.to !== from || original.status === "failed")
+      throw new Error("Reply target not found in this conversation")
+  }
+
+  /** A message to a peer that is waiting on its sender is offered to that wait, as the reply to
+   * the awaited message whether or not `replyTo` names it, and delivered as a new turn only if
+   * the wait ends without claiming it. `waitMs` starts the sender's own wait before delivery, so
+   * no reply can arrive ahead of it; such a message is a question, so without `replyTo` it
+   * answers no wait. */
   async send(
     from: string,
     to: string,
     text: string,
     replyTo: string | undefined,
     deliver: (id: string) => Promise<string>,
+    {
+      claimWindowMs = CLAIM_WINDOW_MS,
+      waitMs,
+    }: { claimWindowMs?: number; waitMs?: number | undefined } = {},
   ) {
-    if (replyTo !== undefined) {
-      const original = this.get(replyTo)
-      if (!original || original.from !== to || original.to !== from || original.status === "failed")
-        throw new Error("Reply target not found in this conversation")
-    }
+    if (replyTo !== undefined) this.checkReply(from, to, replyTo)
     const id = crypto.randomUUID()
     const awaited = this.db
       .transaction(() => {
-        this.db.query("DELETE FROM messages WHERE created_at < ?").run(Date.now() - RETENTION_MS)
+        const now = Date.now()
+        this.db.query("DELETE FROM messages WHERE created_at < ?").run(now - RETENTION_MS)
         this.db.exec(
           "DELETE FROM answers WHERE message_id NOT IN (SELECT message_id FROM messages)",
         )
+        const awaitedByPeer =
+          waitMs === undefined
+            ? this.db
+                .query<{ message_id: string }, [string, string, number]>(
+                  `SELECT waits.message_id FROM waits JOIN messages USING (message_id)
+                   WHERE messages."from" = ? AND messages."to" = ? AND waits.until > ?
+                   AND waits.message_id NOT IN (SELECT message_id FROM answers)
+                   ORDER BY messages.rowid DESC LIMIT 1`,
+                )
+                .get(to, from, now)?.message_id
+            : undefined
         const waiting =
-          replyTo !== undefined &&
-          this.db
-            .query("SELECT 1 FROM waits WHERE message_id = ? AND until > ?")
-            .get(replyTo, Date.now()) !== null
+          replyTo === undefined
+            ? awaitedByPeer !== undefined
+            : this.db
+                .query("SELECT 1 FROM waits WHERE message_id = ? AND until > ?")
+                .get(replyTo, now) !== null
         this.db
           .query(
             'INSERT INTO messages (message_id, "from", "to", text, reply_to, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
           )
-          .run(id, from, to, text, replyTo ?? null, waiting ? "delivered" : "pending", Date.now())
+          .run(
+            id,
+            from,
+            to,
+            text,
+            replyTo ?? awaitedByPeer ?? null,
+            waiting ? "offered" : "pending",
+            now,
+          )
+        if (waitMs !== undefined)
+          this.db.query("INSERT INTO waits (message_id, until) VALUES (?, ?)").run(id, now + waitMs)
         return waiting
       })
       .immediate()
-    if (awaited) return { message_id: id, delivery: "returned to the waiting sender" }
+    if (awaited) {
+      const claimed = { message_id: id, delivery: "returned to the waiting sender" }
+      for (const until = Date.now() + claimWindowMs; Date.now() < until; await setTimeout(20))
+        if (this.get(id)?.status === "delivered") return claimed
+      const withdrawn = this.db
+        .query("UPDATE messages SET status = 'pending' WHERE message_id = ? AND status = 'offered'")
+        .run(id).changes
+      if (!withdrawn) return claimed
+    }
     try {
       const delivery = await deliver(id)
       this.db.query("UPDATE messages SET status = 'delivered' WHERE message_id = ?").run(id)
       return { message_id: id, delivery }
     } catch (error) {
       this.db.query("UPDATE messages SET status = 'failed' WHERE message_id = ?").run(id)
-      throw error
+      this.db.query("DELETE FROM waits WHERE message_id = ?").run(id)
+      throw new Error(`Not delivered: ${error instanceof Error ? error.message : String(error)}`, {
+        cause: error,
+      })
     }
   }
 
@@ -133,7 +206,7 @@ export class MessageStore {
         const message = this.sent(id, from, profiles)
         const timedOut = Date.now() >= until
         if (timedOut) stopWaiting()
-        const reply = message.status === "delivered" ? this.reply(message) : null
+        const reply = message.status === "delivered" ? this.replyOrFirstOffered(message) : null
         if (reply)
           return {
             message_id: id,
@@ -146,6 +219,23 @@ export class MessageStore {
     } finally {
       stopWaiting()
     }
+  }
+
+  private replyOrFirstOffered(message: Message) {
+    return this.db
+      .transaction(() => {
+        const reply = this.reply(message)
+        if (reply) return reply
+        this.db
+          .query(
+            `UPDATE messages SET status = 'delivered' WHERE message_id = (
+               SELECT message_id FROM messages WHERE reply_to = ? AND "from" = ? AND "to" = ?
+               AND status = 'offered' ORDER BY rowid LIMIT 1)`,
+          )
+          .run(message.message_id, message.to, message.from)
+        return this.reply(message)
+      })
+      .immediate()
   }
 
   reply(message: Message) {

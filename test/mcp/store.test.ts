@@ -13,6 +13,9 @@ const from = "codex-personal:questioner"
 const to = "claude-work:peer"
 const profiles = ["codex-personal", "claude-work"]
 
+const abandonWait = (db: Database, id: string) =>
+  db.query("INSERT INTO waits (message_id, until) VALUES (?, ?)").run(id, Date.now() + 60_000)
+
 async function rejects(promise: Promise<unknown>, text: string) {
   const error = await promise.catch((e: unknown) => e)
   expect(error).toBeInstanceOf(Error)
@@ -259,5 +262,100 @@ test("sending drops messages older than a week, with their pinned replies", asyn
   } finally {
     db.close()
     store.close()
+  }
+})
+
+test("a reply offered to a wait that ended without claiming it is delivered instead", async () => {
+  const { root } = setup()
+  const path = join(root, "messages.sqlite")
+  const store = new MessageStore(path)
+  const db = new Database(path)
+  try {
+    const question = await store.send(from, to, "question", undefined, async () => "delivered")
+    const id = question.message_id
+    abandonWait(db, id)
+    let delivered = false
+    const deliver = async () => {
+      delivered = true
+      return "delivered"
+    }
+    const reply = await store.send(to, from, "answer", id, deliver, { claimWindowMs: 30 })
+    expect([reply.delivery, delivered]).toEqual(["delivered", true])
+    expect((await store.waitForReply(id, from, profiles, 1)).reply?.text).toBe("answer")
+    await rejects(
+      store.send(from, to, "next", undefined, async () => {
+        throw new Error("socket closed")
+      }),
+      "Not delivered: socket closed",
+    )
+  } finally {
+    db.close()
+    store.close()
+  }
+})
+
+test("a send that waits has its wait in place before delivery, so a fast reply is not also delivered", async () => {
+  const { root } = setup()
+  const path = join(root, "messages.sqlite")
+  const asker = new MessageStore(path)
+  const peer = new MessageStore(path)
+  try {
+    let delivered = false
+    let replying: Promise<{ delivery: string }> | undefined
+    const question = await asker.send(
+      from,
+      to,
+      "question",
+      undefined,
+      async (id) => {
+        replying = peer.send(to, from, "fast answer", id, async () => {
+          delivered = true
+          return "delivered"
+        })
+        return "delivered"
+      },
+      { waitMs: 2_000 },
+    )
+    const waited = await asker.waitForReply(question.message_id, from, profiles, 2_000)
+    expect(waited.reply?.text).toBe("fast answer")
+    expect([(await replying!).delivery, delivered]).toEqual([
+      "returned to the waiting sender",
+      false,
+    ])
+  } finally {
+    asker.close()
+    peer.close()
+  }
+})
+
+test("a message to a waiting peer answers its wait without reply_to", async () => {
+  const { root } = setup()
+  const path = join(root, "messages.sqlite")
+  const asker = new MessageStore(path)
+  const peer = new MessageStore(path)
+  try {
+    const deliverTurn = async () => "delivered"
+    const first = await asker.send(from, to, "question", undefined, deliverTurn)
+    const waiting = asker.waitForReply(first.message_id, from, profiles, 2_000)
+    let delivered = false
+    const answer = await peer.send(to, from, "results, no reply_to", undefined, async () => {
+      delivered = true
+      return "delivered"
+    })
+    expect([answer.delivery, delivered]).toEqual(["returned to the waiting sender", false])
+    expect((await waiting).reply?.text).toBe("results, no reply_to")
+    const later = await peer.send(to, from, "unprompted", undefined, async () => "delivered")
+    expect(later.delivery).toBe("delivered")
+
+    const second = await asker.send(from, to, "second", undefined, async () => "delivered")
+    const stillWaiting = asker.waitForReply(second.message_id, from, profiles, 300)
+    const question = await peer.send(to, from, "my own question", undefined, deliverTurn, {
+      waitMs: 1_000,
+    })
+    expect(question.delivery).toBe("delivered")
+    expect((await stillWaiting).timed_out).toBe(true)
+  } finally {
+    asker.close()
+    peer.close()
   }
 })

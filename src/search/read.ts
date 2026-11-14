@@ -161,7 +161,9 @@ export function readThread(
       throw new UsageError(`No readable turn at line ${options.line}; tool hits require --tools`)
     add(anchor)
     if (!kept.has(anchor))
-      throw new UsageError("Target turn exceeds --max-chars; increase the budget")
+      throw new UsageError(
+        `Target turn needs ${block(all[anchor]!).length + GAP} characters and the budget leaves ${room}; raise max chars`,
+      )
     const defaultContext = options.before === undefined && options.after === undefined ? 3 : 0
     const before = options.before ?? defaultContext
     const after = options.after ?? defaultContext
