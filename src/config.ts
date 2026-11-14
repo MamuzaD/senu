@@ -1,210 +1,180 @@
 import { existsSync, readFileSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
 
+import { z } from "zod"
+
 import { configPath, expandHome, home } from "./paths.ts"
 
-export type ProfileKind = "codex" | "claude" | "opencode"
-
-export interface Profile {
-  kind: ProfileKind
-  name: string
-  /** CODEX_HOME, the Claude config dir, or OpenCode's data directory ending in /opencode. */
-  home: string
-}
-
-export type UsageProfile = Profile & { kind: "codex" | "claude" }
-export const hasUsage = (p: Profile): p is UsageProfile => p.kind !== "opencode"
+export class ConfigError extends Error {}
 
 export const opencodeHome = () =>
   join(process.env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode")
 
-export type UsageScene = "night" | "dawn" | "day" | "dusk" | "auto"
+const flag = z.boolean({ error: "expected true or false" })
+const soundPath = z.string({ error: "expected a path string" }).transform(expandHome)
+const days = "expected a number of days above 0"
+const SCENES = ["night", "dawn", "day", "dusk", "auto"] as const
+const scene = z.enum(SCENES, {
+  error: (issue) =>
+    `expected one of ${SCENES.map((s) => `"${s}"`).join(", ")}, got ${JSON.stringify(issue.input)}`,
+})
+
+const soundSchema = z.object(
+  {
+    enabled: flag.default(true),
+    always: flag.default(false),
+    /** Optional files; an empty path uses a system sound or a generated WAV chime. */
+    done: soundPath.default(""),
+    request: soundPath.default(""),
+  },
+  { error: "expected a table ([sound])" },
+)
+
+const threadsSchema = z
+  .object(
+    {
+      preview: flag.default(true),
+      live_preview: flag.default(false),
+      recent_days: z.number({ error: days }).gt(0, { error: days }).default(3),
+      resume: z.enum(["auto", "window"], { error: 'expected "auto" or "window"' }).default("auto"),
+      raise_ghostty_tab: flag.default(true),
+    },
+    { error: "expected a table ([threads])" },
+  )
+  .transform((t) => ({
+    preview: t.preview,
+    livePreview: t.live_preview,
+    /** Threads untouched longer than this fold into "older". */
+    recentDays: t.recent_days,
+    /** "auto" resumes in this pane, or a new window from a tmux popup; "window" opens one whenever in tmux. */
+    resume: t.resume,
+    /** macOS: jumping to a session shown in another Ghostty tab raises that tab instead of pulling the session into this one. */
+    raiseGhosttyTab: t.raise_ghostty_tab,
+  }))
+
+const KINDS = ["codex", "claude", "opencode"] as const
+// Functions, not strings: opencodeHome reads XDG_DATA_HOME when called.
+const kindHomes: Record<ProfileKind, () => string> = {
+  codex: () => join(home, ".codex"),
+  claude: () => join(home, ".claude"),
+  opencode: opencodeHome,
+}
+
+const profileSchema = z
+  .object(
+    {
+      kind: z.enum(KINDS, { error: `expected one of ${KINDS.join(", ")}` }),
+      name: z.string({ error: "expected a string" }).min(1, { error: "expected a string" }),
+      home: z.string({ error: "expected a string" }).optional(),
+    },
+    { error: "expected a table" },
+  )
+  .transform((p, ctx) => {
+    const { kind, name } = p
+    const dir = expandHome(p.home ?? kindHomes[kind]())
+    if (kind !== "opencode")
+      return {
+        kind,
+        name,
+        /** CODEX_HOME, the Claude config dir, or OpenCode's data directory ending in /opencode. */
+        home: dir,
+      }
+    if (basename(dir) !== "opencode") {
+      ctx.issues.push({
+        code: "custom",
+        path: ["home"],
+        input: p.home,
+        message: "OpenCode's data directory must end in /opencode",
+      })
+      return z.NEVER
+    }
+    return { kind, name, home: resolve(dir) }
+  })
+
+function defaultProfiles(): Profile[] {
+  return [
+    { kind: "codex", name: "default", home: process.env.CODEX_HOME || kindHomes.codex() },
+    { kind: "claude", name: "default", home: kindHomes.claude() },
+    { kind: "opencode", name: "default", home: kindHomes.opencode() },
+  ]
+}
+
+const configSchema = z.object({
+  profiles: z
+    .array(profileSchema, { error: "expected an array of tables ([[profiles]])" })
+    .prefault([])
+    .transform((profiles, ctx) => {
+      const seen = new Set<string>()
+      for (const p of profiles) {
+        const key = `${p.kind}:${p.name}`
+        if (seen.has(key))
+          ctx.issues.push({ code: "custom", input: profiles, message: `duplicate ${key}` })
+        seen.add(key)
+      }
+      return profiles.length ? profiles : defaultProfiles()
+    }),
+  privacy: z
+    .object(
+      {
+        restricted: z
+          .custom<string[]>((v) => Array.isArray(v) && v.every((s) => typeof s === "string" && s), {
+            error: "expected an array of profile names",
+          })
+          .default([]),
+      },
+      { error: "expected a table ([privacy])" },
+    )
+    .prefault({}),
+  // SENU_SCENE overrides usage.scene, so the scene is checked after parsing, in sceneOf.
+  usage: z
+    .object({ scene: z.unknown().optional() }, { error: "expected a table ([usage])" })
+    .prefault({}),
+  threads: threadsSchema.prefault({}),
+  sound: soundSchema.prefault({}),
+})
+
+export type ProfileKind = (typeof KINDS)[number]
+export type Profile = z.output<typeof profileSchema>
+export type UsageProfile = Profile & { kind: "codex" | "claude" }
+export const hasUsage = (p: Profile): p is UsageProfile => p.kind !== "opencode"
+export type UsageScene = z.output<typeof scene>
+export type ThreadsConfig = z.output<typeof threadsSchema>
+export type SoundConfig = z.output<typeof soundSchema>
 
 export interface Config {
   profiles: Profile[]
   privacy?: { restricted: string[] }
-  usage: {
-    scene: UsageScene
-  }
+  usage: { scene: UsageScene }
   threads: ThreadsConfig
   sound: SoundConfig
 }
 
-export interface ThreadsConfig {
-  preview: boolean
-  livePreview: boolean
-  /** Threads untouched longer than this fold into "older". */
-  recentDays: number
-  /** "auto" resumes in this pane, or a new window from a tmux popup; "window" opens one whenever in tmux. */
-  resume: "auto" | "window"
-  /** macOS: jumping to a session shown in another Ghostty tab raises that tab instead of pulling the session into this one. */
-  raiseGhosttyTab: boolean
-}
-
-export interface SoundConfig {
-  enabled: boolean
-  always: boolean
-  /** Optional files; an empty path uses a system sound or a generated WAV chime. */
-  done: string
-  request: string
-}
-
-const defaultThreads = (): ThreadsConfig => ({
-  preview: true,
-  livePreview: false,
-  recentDays: 3,
-  resume: "auto",
-  raiseGhosttyTab: true,
-})
-const defaultSound = (): SoundConfig => ({ enabled: true, always: false, done: "", request: "" })
-
-function parseSound(raw: unknown): SoundConfig {
-  const defaults = defaultSound()
-  if (raw === undefined) return defaults
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
-    throw new ConfigError("sound: expected a table ([sound])")
-  const values = raw as Record<string, unknown>
-  for (const key of ["enabled", "always"] as const) {
-    if (values[key] !== undefined && typeof values[key] !== "boolean")
-      throw new ConfigError(`sound.${key}: expected true or false`)
-  }
-  for (const key of ["done", "request"] as const) {
-    if (values[key] !== undefined && typeof values[key] !== "string")
-      throw new ConfigError(`sound.${key}: expected a path string`)
-  }
-  return {
-    enabled: (values.enabled as boolean | undefined) ?? defaults.enabled,
-    always: (values.always as boolean | undefined) ?? defaults.always,
-    done: expandHome((values.done as string | undefined) ?? defaults.done),
-    request: expandHome((values.request as string | undefined) ?? defaults.request),
-  }
-}
-
-function parseThreads(raw: unknown): ThreadsConfig {
-  const defaults = defaultThreads()
-  if (raw === undefined) return defaults
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
-    throw new ConfigError("threads: expected a table ([threads])")
-  const values = raw as Record<string, unknown>
-  for (const key of ["preview", "live_preview", "raise_ghostty_tab"] as const) {
-    if (values[key] !== undefined && typeof values[key] !== "boolean")
-      throw new ConfigError(`threads.${key}: expected true or false`)
-  }
-  const days = values.recent_days
-  if (days !== undefined && !(typeof days === "number" && days > 0))
-    throw new ConfigError("threads.recent_days: expected a number of days above 0")
-  const resume = values.resume
-  if (resume !== undefined && resume !== "auto" && resume !== "window")
-    throw new ConfigError('threads.resume: expected "auto" or "window"')
-  return {
-    preview: (values.preview as boolean | undefined) ?? defaults.preview,
-    livePreview: (values.live_preview as boolean | undefined) ?? defaults.livePreview,
-    recentDays: days ?? defaults.recentDays,
-    resume: resume ?? defaults.resume,
-    raiseGhosttyTab: (values.raise_ghostty_tab as boolean | undefined) ?? defaults.raiseGhosttyTab,
-  }
-}
-
-const KINDS: ProfileKind[] = ["codex", "claude", "opencode"]
-const SCENES: UsageScene[] = ["night", "dawn", "day", "dusk", "auto"]
-
-function parseScene(raw: unknown, where: string): UsageScene {
-  if (typeof raw !== "string" || !SCENES.includes(raw as UsageScene)) {
-    throw new ConfigError(
-      `${where}: expected one of ${SCENES.map((s) => `"${s}"`).join(", ")}, got ${JSON.stringify(raw)}`,
-    )
-  }
-  return raw as UsageScene
+/** Parses `data`, or throws the first problem as a ConfigError like `profiles[1].kind: expected …`. */
+function check<T extends z.ZodType>(schema: T, data: unknown, where: string[] = []): z.output<T> {
+  const result = schema.safeParse(data)
+  if (result.success) return result.data
+  const { path, message } = result.error.issues[0]!
+  const label = [...where, ...path]
+    .map((key, i) => (typeof key === "number" ? `[${key}]` : i ? `.${String(key)}` : String(key)))
+    .join("")
+  throw new ConfigError(`${label}: ${message}`)
 }
 
 function sceneOf(fromConfig: unknown): UsageScene {
   const env = process.env.SENU_SCENE
-  if (env) return parseScene(env, "SENU_SCENE")
-  return fromConfig === undefined ? "night" : parseScene(fromConfig, "usage.scene")
-}
-
-function defaultProfiles(): Profile[] {
-  return [
-    { kind: "codex", name: "default", home: process.env.CODEX_HOME || join(home, ".codex") },
-    { kind: "claude", name: "default", home: join(home, ".claude") },
-    { kind: "opencode", name: "default", home: opencodeHome() },
-  ]
-}
-
-export class ConfigError extends Error {}
-
-function parseProfile(raw: unknown, index: number): Profile {
-  const where = `profiles[${index}]`
-  if (typeof raw !== "object" || raw === null) throw new ConfigError(`${where}: expected a table`)
-  const { kind, name, home: profileHome } = raw as Record<string, unknown>
-  if (typeof kind !== "string" || !KINDS.includes(kind as ProfileKind)) {
-    throw new ConfigError(`${where}.kind: expected one of ${KINDS.join(", ")}`)
-  }
-  if (typeof name !== "string" || !name) throw new ConfigError(`${where}.name: expected a string`)
-  if (profileHome !== undefined && typeof profileHome !== "string") {
-    throw new ConfigError(`${where}.home: expected a string`)
-  }
-  const fallback =
-    kind === "opencode" ? opencodeHome() : join(home, kind === "codex" ? ".codex" : ".claude")
-  const resolved = expandHome(profileHome ?? fallback)
-  if (kind === "opencode" && basename(resolved) !== "opencode")
-    throw new ConfigError(`${where}.home: OpenCode's data directory must end in /opencode`)
-  return {
-    kind: kind as ProfileKind,
-    name,
-    home: kind === "opencode" ? resolve(resolved) : resolved,
-  }
-}
-
-function parsePrivacy(raw: unknown): { restricted: string[] } {
-  if (raw === undefined) return { restricted: [] }
-  if (!raw || typeof raw !== "object" || Array.isArray(raw))
-    throw new ConfigError("privacy: expected a table ([privacy])")
-  const restricted = (raw as Record<string, unknown>).restricted ?? []
-  if (!Array.isArray(restricted) || restricted.some((v) => typeof v !== "string" || !v))
-    throw new ConfigError("privacy.restricted: expected an array of profile names")
-  return { restricted }
+  if (env) return check(scene, env, ["SENU_SCENE"])
+  return check(scene.default("night"), fromConfig, ["usage", "scene"])
 }
 
 export function loadConfig(path = configPath): Config {
-  if (!existsSync(path))
-    return {
-      profiles: defaultProfiles(),
-      privacy: parsePrivacy(undefined),
-      usage: { scene: sceneOf(undefined) },
-      threads: defaultThreads(),
-      sound: defaultSound(),
+  let data: unknown = {}
+  if (existsSync(path)) {
+    try {
+      data = Bun.TOML.parse(readFileSync(path, "utf8"))
+    } catch (err) {
+      throw new ConfigError(`${path}: ${err instanceof Error ? err.message : String(err)}`)
     }
-
-  let data: Record<string, unknown>
-  try {
-    data = Bun.TOML.parse(readFileSync(path, "utf8")) as Record<string, unknown>
-  } catch (err) {
-    throw new ConfigError(`${path}: ${err instanceof Error ? err.message : String(err)}`)
   }
-
-  const rawUsage = data.usage ?? {}
-  if (typeof rawUsage !== "object" || rawUsage === null || Array.isArray(rawUsage))
-    throw new ConfigError("usage: expected a table ([usage])")
-  const usage = rawUsage as Record<string, unknown>
-  const rawProfiles = data.profiles
-  if (rawProfiles !== undefined && !Array.isArray(rawProfiles)) {
-    throw new ConfigError("profiles: expected an array of tables ([[profiles]])")
-  }
-  const profiles = rawProfiles?.length ? rawProfiles.map(parseProfile) : defaultProfiles()
-
-  const seen = new Set<string>()
-  for (const p of profiles) {
-    const key = `${p.kind}:${p.name}`
-    if (seen.has(key)) throw new ConfigError(`profiles: duplicate ${key}`)
-    seen.add(key)
-  }
-
-  return {
-    profiles,
-    privacy: parsePrivacy(data.privacy),
-    usage: { scene: sceneOf(usage.scene) },
-    threads: parseThreads(data.threads),
-    sound: parseSound(data.sound),
-  }
+  const { usage, ...config } = check(configSchema, data)
+  return { ...config, usage: { scene: sceneOf(usage.scene) } }
 }
