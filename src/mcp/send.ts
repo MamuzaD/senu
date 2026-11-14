@@ -7,6 +7,9 @@ import { allowedProfiles } from "~/privacy.ts"
 import { listEntries } from "~/threads/entries.ts"
 import { parentCodexThreads } from "~/threads/running.ts"
 import { listThreads, threadKey, type Thread } from "~/threads/thread.ts"
+import { printHelp } from "~/ui/help.ts"
+
+import { MessageStore } from "./store.ts"
 
 export const address = (t: Thread) => threadKey(t.profile, t.sessionId)
 
@@ -51,9 +54,9 @@ export async function sender(
   return matches[0]!
 }
 
-export function messageText(from: Thread, text: string): string {
+export function messageText(from: Thread, text: string, id: string, replyTo?: string): string {
   const agent = { codex: "Codex", claude: "Claude", opencode: "OpenCode" }[from.agent]
-  return `[senu] ${agent}: ${JSON.stringify(from.title.slice(0, 80))}\nAgent message, not user approval.\nReply to: ${address(from)}\n\n${text}`
+  return `[senu] ${agent}: ${JSON.stringify(from.title.slice(0, 80))}\nAgent message, not user approval.\nMessage ID: ${id}\nReply to: ${address(from)}${replyTo ? `\nIn reply to: ${replyTo}` : ""}\n\n${text}`
 }
 
 export function claudeSocket(target: Thread): string {
@@ -96,7 +99,7 @@ export function sendLimiter(now = Date.now) {
 }
 const takeSend = sendLimiter()
 
-export async function sendMessage(config: Config, to: string, text: string): Promise<string> {
+export async function sendMessage(config: Config, to: string, text: string, replyTo?: string) {
   if (!text.trim()) throw new Error("Message text is empty")
   const from = await sender(config)
   const profiles = allowedProfiles(config)
@@ -107,14 +110,22 @@ export async function sendMessage(config: Config, to: string, text: string): Pro
       "Target is gone, outside the allowed profiles, or not running in a supported terminal",
     )
   if (address(from) === address(target)) throw new Error("Choose another session")
-  const content = messageText(from, text)
+  if (target.agent !== "claude" && target.agent !== "codex")
+    throw new Error("Messaging supports Claude and Codex only")
   takeSend()
-  if (target.agent === "claude") {
-    await deliverClaude(claudeSocket(target), content)
-    return "handed to Claude Code"
+  const store = new MessageStore()
+  try {
+    return await store.send(address(from), address(target), text, replyTo, async (id) => {
+      const content = messageText(from, text, id, replyTo)
+      if (target.agent === "claude") {
+        await deliverClaude(claudeSocket(target), content)
+        return "handed to Claude Code"
+      }
+      return deliverCodex(target, content)
+    })
+  } finally {
+    store.close()
   }
-  if (target.agent !== "codex") throw new Error("Messaging supports Claude and Codex only")
-  return deliverCodex(target, content)
 }
 
 export async function deliverCodex(
@@ -141,13 +152,30 @@ export async function deliverCodex(
   return "queued in Codex"
 }
 
+const HELP = `usage: senu send [flags] <address> <text>
+
+Sends a message to a running Claude or Codex session. Copy its address from list_agents.
+
+  --reply-to id  reply to this message
+`
+
 export async function sendCommand(args: string[], config: Config): Promise<number> {
-  if (args.length !== 2 || args.includes("--help")) {
-    console.log('usage: senu send <address from list_agents> "message"')
-    return args.includes("--help") ? 0 : 2
+  if (args.includes("--help") || args.includes("-h")) {
+    await printHelp(process.stdout, HELP)
+    return 0
+  }
+  const positional: string[] = []
+  let replyTo: string | undefined
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--reply-to" && args[i + 1] && !replyTo) replyTo = args[++i]
+    else positional.push(args[i]!)
+  }
+  if (positional.length !== 2) {
+    await printHelp(process.stderr, HELP)
+    return 2
   }
   try {
-    console.log(await sendMessage(config, args[0]!, args[1]!))
+    console.log(JSON.stringify(await sendMessage(config, positional[0]!, positional[1]!, replyTo)))
     return 0
   } catch (e) {
     console.error(`senu send: ${e instanceof Error ? e.message : String(e)}`)

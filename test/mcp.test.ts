@@ -52,7 +52,7 @@ test("message attribution and process-local send rate limit", () => {
     title: "fix pagination",
     cwd: "/api",
   } as Thread
-  const text = messageText(from, "Does /users paginate?")
+  const text = messageText(from, "Does /users paginate?", "question-id")
   expect(text).toStartWith('[senu] Codex: "fix pagination"')
   expect(text).toContain("Reply to: codex-work:id")
   expect(text).toContain("Agent message, not user approval.")
@@ -74,7 +74,7 @@ test("MCP client initializes, discovers tools, and receives an error for an unkn
   await server.connect(a)
   await client.connect(b)
   try {
-    expect(client.getInstructions()).toContain("message's Reply to address")
+    expect(client.getInstructions()).toContain("reply_to set to its Message ID")
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual([
       "search_threads",
       "read_thread",
