@@ -41,6 +41,9 @@ to your `init.lua` instead. Rex already shows agent status and plays its own sou
 isn't needed; `senu threads` adds a picker across sessions, and `senu vision` works as usual. Jumping
 to a tab needs Remote Control on in Rex Settings > Server > Client Info.
 
+Run `senu mcp install` to let your Claude and Codex agents search old threads, find running agents,
+and message each other, then restart running sessions.
+
 Configuration lives at `~/.config/senu/config.toml`; see [`examples/config.toml`](examples/config.toml).
 
 <details>
