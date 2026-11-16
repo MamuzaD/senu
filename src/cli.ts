@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { version } from "../package.json"
 import { ConfigError, loadConfig, type Config } from "./config.ts"
+import { compiled } from "./paths.ts"
 
 const TAGLINE = "watches AI coding agents in tmux and Rex"
 
@@ -74,7 +75,7 @@ async function help(): Promise<string> {
   ].join("\n")
 }
 
-/** Mentions a newer release the daemon has already seen; never hits the network. */
+/** Mentions a newer release from the cache; never waits for the network. */
 async function hintUpdate() {
   const latest = (await import("./update/release.ts")).newerRelease()
   if (!latest) return
@@ -87,6 +88,14 @@ async function hintUpdate() {
 
 async function main(argv: string[]): Promise<number> {
   const [name, ...args] = argv
+  if (name === "--check-release" && args.length === 0) {
+    await (await import("./update/startup.ts")).refreshRelease()
+    return 0
+  }
+  if (compiled && !["mcp", "watch", "update"].includes(name ?? "")) {
+    const { refreshOnStartup } = await import("./update/startup.ts")
+    refreshOnStartup()
+  }
   if (!name || name === "help" || name === "-h" || name === "--help") {
     const { write } = await import("./ui/banner.ts")
     write(process.stdout, await help())

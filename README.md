@@ -30,8 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/MamuzaD/senu/main/install.sh | sh
 ```
 
 `senu` lands in `~/.local/bin`, so keep that on your `PATH`. Run `senu update` to update; the
-watcher checks for new releases once a day and says when one is out (on 0.1.0, re-run the script
-instead). Requires tmux on macOS or Linux, or Rex.
+CLI checks for new releases in the background once a day when you run it. Requires tmux on macOS or Linux, or Rex.
 
 Add the lines from [`examples/tmux.conf`](examples/tmux.conf) to your tmux.conf, then reload tmux
 (`tmux source-file <your tmux.conf>`); `senu watch once` shows what it sees.

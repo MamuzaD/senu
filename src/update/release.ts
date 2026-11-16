@@ -7,15 +7,15 @@ import { compareVersions } from "~/version.ts"
 import { version } from "../../package.json"
 
 /**
- * Release checks against GitHub. The watch daemon refreshes the cached newest
- * version once a day; help, `senu --version`, and the vision and threads popups
- * read it to mention or offer an update without touching the network.
+ * Release checks against GitHub. CLI startup refreshes stale release data in a
+ * background helper; the watch daemon also checks while running. Help, version,
+ * and popups read the cache without waiting on the network.
  */
 
 export const REPO = "MamuzaD/senu"
 export const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`
 
-const DAY_MS = 24 * 60 * 60 * 1000
+export const DAY_MS = 24 * 60 * 60 * 1000
 
 export const statePath = join(stateDir, "update.json")
 
