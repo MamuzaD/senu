@@ -5,13 +5,17 @@ import { compiled } from "./paths.ts"
 
 const TAGLINE = "watches AI coding agents in tmux and Rex"
 
-type Command = {
-  about: string
-  run: (args: string[], config: Config) => Promise<number>
-}
+type Command = { about: string } & (
+  | { run: (args: string[], config: Config) => Promise<number> }
+  | { runUnconfigured: (args: string[]) => Promise<number> }
+)
 
 // Load only the selected command so short invocations avoid initializing unrelated modules.
 const COMMANDS: Record<string, Command> = {
+  config: {
+    about: "show effective configuration or default options",
+    runUnconfigured: async (a) => (await import("./config-command.ts")).configCommand(a),
+  },
   search: {
     about: "search saved Claude and Codex threads and messages",
     run: async (a, c) => (await import("./search/command.ts")).searchCommand(a, c),
@@ -118,6 +122,7 @@ async function main(argv: string[]): Promise<number> {
 
   let config: Config
   try {
+    if ("runUnconfigured" in command) return await command.runUnconfigured(args)
     config = loadConfig()
   } catch (err) {
     if (err instanceof ConfigError) {

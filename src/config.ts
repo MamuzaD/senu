@@ -19,6 +19,8 @@ const scene = z.enum(SCENES, {
     `expected one of ${SCENES.map((s) => `"${s}"`).join(", ")}, got ${JSON.stringify(issue.input)}`,
 })
 
+const defaultScene = scene.default("night")
+
 const soundSchema = z.object(
   {
     enabled: flag.default(true),
@@ -163,7 +165,16 @@ function check<T extends z.ZodType>(schema: T, data: unknown, where: string[] = 
 function sceneOf(fromConfig: unknown): UsageScene {
   const env = process.env.SENU_SCENE
   if (env) return check(scene, env, ["SENU_SCENE"])
-  return check(scene.default("night"), fromConfig, ["usage", "scene"])
+  return check(defaultScene, fromConfig, ["usage", "scene"])
+}
+
+/** Schema defaults without reading a file or applying SENU_SCENE. */
+export function defaultConfig(): Config {
+  const { usage, ...config } = check(configSchema, {})
+  return {
+    ...config,
+    usage: { scene: check(defaultScene, usage.scene, ["usage", "scene"]) },
+  }
 }
 
 export function loadConfig(path = configPath): Config {

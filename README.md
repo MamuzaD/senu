@@ -44,6 +44,7 @@ Run `senu mcp install` to let your Claude and Codex agents search old threads, f
 and message each other, then restart running sessions.
 
 Configuration lives at `~/.config/senu/config.toml`; see [`examples/config.toml`](examples/config.toml).
+Run `senu config` to see its path and effective settings, or `senu config --defaults` to print the default options as TOML.
 
 <details>
 <summary>Other ways to install</summary>
