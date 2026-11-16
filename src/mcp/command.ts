@@ -11,6 +11,11 @@ import { version } from "../../package.json"
 import { announce, listAgents, sender, sendMessage } from "./send.ts"
 import { waitForReply } from "./wait.ts"
 
+// Codex injects the owning thread on each request, including shared-daemon calls.
+const callerMetadata = z.object({ threadId: z.string().min(1).optional() })
+const callerThreadId = ({ _meta }: { _meta?: unknown }) =>
+  callerMetadata.parse(_meta ?? {}).threadId
+
 export function createServer(config: Config) {
   const server = new McpServer(
     { name: "senu", version },
@@ -45,8 +50,11 @@ export function createServer(config: Config) {
       },
       annotations: { readOnlyHint: true },
     },
-    async (args) => {
-      const caller = await sender(config).catch(() => undefined)
+    async (args, extra) => {
+      const threadId = callerThreadId(extra)
+      const caller = await sender(config, process.env, process.ppid, threadId).catch(
+        () => undefined,
+      )
       return result(
         await searchThreads(config, {
           ...args,
@@ -81,7 +89,11 @@ export function createServer(config: Config) {
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => result(await listAgents(config)),
+    async (_args, extra) => {
+      const threadId = callerThreadId(extra)
+      await announce(config, version, threadId).catch(() => {})
+      return result(await listAgents(config, threadId))
+    },
   )
   server.registerTool(
     "send_message",
@@ -98,8 +110,11 @@ export function createServer(config: Config) {
     },
     async ({ to, text, reply_to, wait_ms }, extra) => {
       try {
-        void announce(config, version).catch(() => {})
-        return result(await sendMessage(config, to, text, reply_to, wait_ms, extra.signal))
+        const threadId = callerThreadId(extra)
+        void announce(config, version, threadId).catch(() => {})
+        return result(
+          await sendMessage(config, to, text, reply_to, wait_ms, extra.signal, threadId),
+        )
       } catch (e) {
         return { ...result(e instanceof Error ? e.message : String(e)), isError: true }
       }
@@ -118,7 +133,9 @@ export function createServer(config: Config) {
     },
     async ({ message_id, timeout_ms }, extra) => {
       try {
-        return result(await waitForReply(config, message_id, timeout_ms, extra.signal))
+        return result(
+          await waitForReply(config, message_id, timeout_ms, extra.signal, callerThreadId(extra)),
+        )
       } catch (e) {
         return { ...result(e instanceof Error ? e.message : String(e)), isError: true }
       }

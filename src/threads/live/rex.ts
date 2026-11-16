@@ -247,7 +247,16 @@ export const rexMux: Mux = {
     return {
       panes: agents,
       rows: agents.map(rexRow),
-      ...(await runningThreads(profiles, agents)),
+      ...(await runningThreads(
+        profiles,
+        agents.map((a) => ({
+          id: a.id,
+          pid: a.pid,
+          cwd: a.cwd,
+          session: a.session,
+          oscTitle: a.title,
+        })),
+      )),
     }
   },
 

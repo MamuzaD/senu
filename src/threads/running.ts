@@ -5,6 +5,7 @@ import type { Profile } from "~/config.ts"
 import { agentFromProcess, processArgv, run, type Pane } from "~/detect/panes.ts"
 import { profileKey } from "~/usage/cache.ts"
 
+import { codexThreadIdentities, type CodexThreadIdentity } from "./codex.ts"
 import { threadKey } from "./thread.ts"
 
 // Claude writes sessions/<pid>.json naming its session and leaves it behind if it crashes, so a
@@ -139,9 +140,103 @@ export function offPanes(
   return off
 }
 
+/** App servers can own many threads, even while still parented by the first TUI. */
+export function codexServers(
+  pids: number[],
+  argv: (pid: number) => string[] = processArgv,
+): Set<number> {
+  return new Set(pids.filter((pid) => argv(pid).includes("app-server")))
+}
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
+
+// Mirror Codex's status_surfaces.rs + terminal_title.rs: trim, truncate by
+// grapheme, then sanitize the assembled title. Order matters at the boundary.
+const titleWhitespace = /\p{White_Space}/u
+const disallowedTitleChar =
+  // oxlint-disable-next-line eslint/no-misleading-character-class -- intentionally strip Codex's exact combining/invisible codepoint ranges
+  /[\p{Cc}\u00ad\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufe00-\ufe0f\ufeff\ufff9-\ufffb\u{1bca0}-\u{1bca3}\u{e0100}-\u{e01ef}]/u
+const activityPrefixes = [
+  "",
+  "● ",
+  ...["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"].flatMap((s) => [`${s} `, `● ${s} `]),
+]
+
+function sanitizeTitle(title: string): string {
+  let out = ""
+  let count = 0
+  let space = false
+  for (const ch of title) {
+    if (titleWhitespace.test(ch)) {
+      space = out.length > 0
+      continue
+    }
+    if (disallowedTitleChar.test(ch)) continue
+    if (space && 240 - count > 1) {
+      out += " "
+      count++
+      space = false
+    }
+    if (count >= 240) break
+    out += ch
+    count++
+  }
+  return out
+}
+
+function terminalThreadTitles(title: string): string[] {
+  const trimmed = title.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "")
+  if (!trimmed) return []
+  const chars = [...graphemes.segment(trimmed)].map((g) => g.segment)
+  const name = chars.length > 48 ? chars.slice(0, 45).join("") + "..." : trimmed
+  // Keep the separator during sanitization so trailing whitespace/invisibles
+  // behave as they do in the complete `<activity><name> | <project>` title.
+  return activityPrefixes.map((prefix) => sanitizeTitle(`${prefix}${name} |`))
+}
+
+type TitledPane = Pick<Pane, "id" | "oscTitle" | "cwd" | "session">
+
+/** Only accept a title/cwd match unique across both open threads and client panes. */
+export function addCodexTitles(
+  live: Map<string, string>,
+  threads: CodexThreadIdentity[],
+  panes: TitledPane[],
+): Map<string, string> {
+  const identities = threads.map((t) => ({
+    key: t.key,
+    cwd: t.cwd,
+    titles: new Set(t.titles.flatMap(terminalThreadTitles)),
+  }))
+  const candidates = panes.map((pane) => {
+    const blocked = /^(?:● )?(?:\[ [!.] \] )?Action Required(?: \||$)/i.test(pane.oscTitle)
+    return {
+      pane: pane.id,
+      threads: blocked
+        ? []
+        : identities.filter(
+            (t) =>
+              t.cwd === pane.cwd &&
+              [...t.titles].some((title) => pane.oscTitle.startsWith(title + " ")),
+          ),
+    }
+  })
+  const matched = new Map(live)
+  const occupied = new Set(live.values())
+  for (const { pane, threads: matches } of candidates) {
+    const thread = matches.length === 1 ? matches[0] : undefined
+    if (!thread || matched.has(thread.key) || occupied.has(pane)) continue
+    if (candidates.filter((c) => c.threads.some((t) => t.key === thread.key)).length === 1) {
+      matched.set(thread.key, pane)
+      occupied.add(pane)
+    }
+  }
+  return matched
+}
+
 export async function runningThreads(
   profiles: Profile[],
-  panes: Pick<Pane, "id" | "pid">[],
+  panes: (Pick<Pane, "id" | "pid"> &
+    Partial<Pick<Pane, "oscTitle" | "cwd" | "session" | "dead">>)[],
 ): Promise<Running> {
   const claude: SessionsByPid = new Map()
   for (const p of profiles) if (p.kind === "claude") claudeSessionsByPid(p, claude)
@@ -163,7 +258,37 @@ export async function runningThreads(
     ? await run(["lsof", "-nP", "-a", "-p", pids.join(","), "-Fpn", "--", ...locks])
     : { out: "" }
   const holders = parseLsof(lsof.out, (dir) => profileByDir.get(dir), stillClaude(claude, procs))
-  const paneByThread = panesFor(holders, procs, panes)
+  const servers = codexServers(pids)
+  const direct = new Map([...holders].filter(([pid]) => !servers.has(pid)))
+  const live = panesFor(direct, procs, panes)
+  const clients = panesFor(
+    new Map(pids.filter((pid) => !servers.has(pid)).map((pid) => [pid, [String(pid)]])),
+    procs,
+    panes,
+  )
+  const clientPanes = new Set(clients.values())
+  const titled = panes.flatMap((p) =>
+    clientPanes.has(p.id) &&
+    !p.dead &&
+    p.oscTitle !== undefined &&
+    p.cwd !== undefined &&
+    p.session !== undefined
+      ? [{ id: p.id, oscTitle: p.oscTitle, cwd: p.cwd, session: p.session }]
+      : [],
+  )
+  const open = new Set([...holders.values()].flat())
+  const identities =
+    servers.size && titled.length
+      ? codex.flatMap((p) => {
+          try {
+            return codexThreadIdentities(p, open)
+          } catch {
+            // listThreads reports unreadable profiles; retain the other process matches.
+            return []
+          }
+        })
+      : []
+  const paneByThread = addCodexTitles(live, identities, titled)
   return { paneByThread, offPane: offPanes(holders, procs, paneByThread) }
 }
 

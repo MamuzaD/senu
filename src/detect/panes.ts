@@ -83,7 +83,8 @@ export function setTmuxSocket(args: string[]) {
 
 export const hasTmuxSocket = () => socketArgs.length > 0
 
-export const tmux = (...args: string[]) => run(["tmux", ...socketArgs, ...args])
+// MCP children may have no UTF-8 locale; preserve titles and captured Unicode output.
+export const tmux = (...args: string[]) => run(["tmux", "-u", ...socketArgs, ...args])
 
 export async function listPanes(): Promise<Pane[]> {
   const { out } = await tmux(...listArgs([]))

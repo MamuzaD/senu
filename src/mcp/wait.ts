@@ -10,8 +10,9 @@ export async function waitForReply(
   messageId: string,
   timeoutMs?: number,
   signal?: AbortSignal,
+  threadId?: string,
 ) {
-  const from = await sender(config)
+  const from = await sender(config, process.env, process.ppid, threadId)
   const profiles = allowedProfiles(config).map(profileKey)
   const store = new MessageStore()
   try {

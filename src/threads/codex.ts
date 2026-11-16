@@ -19,11 +19,14 @@ import { firstLine } from "./transcript.ts"
 
 export const CODEX_STATE_DB = "state_5.sqlite"
 
+const USER_THREADS = `
+  FROM threads
+  WHERE archived = 0 AND coalesce(thread_source, '') IN ('', 'user') AND title <> ''`
+
 const QUERY = `
   SELECT id, rollout_path, cwd, coalesce(nullif(name, ''), title) AS title,
          coalesce(updated_at_ms, updated_at * 1000) AS updated_at
-  FROM threads
-  WHERE archived = 0 AND coalesce(thread_source, '') IN ('', 'user') AND title <> ''`
+  ${USER_THREADS}`
 
 interface Row {
   id: string
@@ -36,17 +39,22 @@ interface Row {
 const ONLY = `
   AND (id IN (SELECT value FROM json_each(?)) OR coalesce(updated_at_ms, updated_at * 1000) >= ?)`
 
-export function codexThreads(p: Profile, only?: Only): Thread[] {
-  const path = join(p.home, CODEX_STATE_DB)
-  if (!existsSync(path)) return []
+function openState(home: string): Database | null {
+  const path = join(home, CODEX_STATE_DB)
+  if (!existsSync(path)) return null
   // The db is in WAL mode, and a read-only open needs its -shm, which codex deletes when it closes
   // cleanly. With no -shm nothing is writing, so the file can be read as it is. Linux builds of
   // SQLite only read `file:` names as URIs when asked.
   const shm = existsSync(`${path}-shm`)
-  const db = new Database(
+  return new Database(
     shm ? path : `file:${encodeURI(path)}?immutable=1`,
     constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI,
   )
+}
+
+export function codexThreads(p: Profile, only?: Only): Thread[] {
+  const db = openState(p.home)
+  if (!db) return []
   const prefix = threadKey(profileKey(p), "")
   const ids = [...(only?.ids ?? [])].flatMap((k) =>
     k.startsWith(prefix) ? [k.slice(prefix.length)] : [],
@@ -64,6 +72,39 @@ export function codexThreads(p: Profile, only?: Only): Thread[] {
         cwd: r.cwd,
         updatedMs: r.updated_at,
         transcript: r.rollout_path,
+      }))
+  } finally {
+    db.close()
+  }
+}
+
+export interface CodexThreadIdentity {
+  key: string
+  cwd: string
+  titles: string[]
+}
+
+/** The TUI may still advertise the original title after a thread is named. */
+export function codexThreadIdentities(
+  p: Profile,
+  open: ReadonlySet<string>,
+): CodexThreadIdentity[] {
+  const prefix = threadKey(profileKey(p), "")
+  const ids = [...open].flatMap((key) => (key.startsWith(prefix) ? [key.slice(prefix.length)] : []))
+  if (!ids.length) return []
+  const db = openState(p.home)
+  if (!db) return []
+  try {
+    return db
+      .query<{ id: string; cwd: string; title: string; name: string | null }, [string]>(`
+      SELECT id, cwd, title, name ${USER_THREADS}
+      AND id IN (SELECT value FROM json_each(?))
+    `)
+      .all(JSON.stringify(ids))
+      .map((r) => ({
+        key: threadKey(profileKey(p), r.id),
+        cwd: r.cwd,
+        titles: [...new Set([r.title, r.name ?? ""].filter(Boolean))],
       }))
   } finally {
     db.close()

@@ -231,6 +231,7 @@ describe("tmux calls per poll", () => {
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs"
 const dir = ${JSON.stringify(dir)}
 const args = process.argv.slice(2)
+if (args[0] === "-u") args.shift()
 appendFileSync(dir + "/calls", args.join(" ") + "\\n")
 const panes: string[] = JSON.parse(readFileSync(dir + "/panes.json", "utf8"))
 const statePath = dir + "/state.json"

@@ -21,8 +21,8 @@ export const agentLocation = (live: Live) =>
 const offPaneReason = (h: Holder) =>
   `held by ${h.command} (pid ${h.pid}) outside every ${mux().name} pane`
 
-export async function announce(config: Config, version: string) {
-  const from = await sender(config)
+export async function announce(config: Config, version: string, threadId?: string) {
+  const from = await sender(config, process.env, process.ppid, threadId)
   const store = new MessageStore()
   try {
     store.announce(address(from), version)
@@ -31,13 +31,16 @@ export async function announce(config: Config, version: string) {
   }
 }
 
-export async function listAgents(config: Config) {
+export async function listAgents(config: Config, threadId?: string) {
   const profiles = allowedProfiles(config)
   const { entries, failed, offPane } = await listEntries(profiles, false, "live")
   const store = new MessageStore()
   const versions = store.versions()
   store.close()
-  const self = await sender(config).then(address, () => undefined)
+  const self = await sender(config, process.env, process.ppid, threadId).then(
+    address,
+    () => undefined,
+  )
   return {
     agents: entries.flatMap((e) =>
       e.live && e.thread && e.agent !== "opencode"
@@ -73,18 +76,22 @@ export async function sender(
   config: Config,
   env = process.env,
   parentPid = process.ppid,
+  threadId?: string,
 ): Promise<Thread> {
   const ids = new Set(
-    [env.CODEX_THREAD_ID, env.CLAUDE_CODE_SESSION_ID, env.CLAUDE_SESSION_ID].filter(Boolean),
+    threadId === undefined
+      ? [env.CODEX_THREAD_ID, env.CLAUDE_CODE_SESSION_ID, env.CLAUDE_SESSION_ID].filter(Boolean)
+      : [threadId],
   )
-  const profiles = allowedProfiles(config, env)
+  const allowed = allowedProfiles(config, env)
+  const profiles = threadId === undefined ? allowed : allowed.filter((p) => p.kind === "codex")
   const keys = ids.size
     ? new Set(profiles.flatMap((p) => [...ids].map((id) => threadKey(profileKey(p), id!))))
     : await parentCodexThreads(profiles, parentPid)
   const { threads: matches } = listThreads(profiles, { ids: keys })
   if (matches.length !== 1)
     throw new Error(
-      "Cannot identify the sending session. The helper must inherit CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID and its profile environment, or have a direct Codex parent owning exactly one user thread.",
+      "Cannot identify the sending session. Supply MCP threadId metadata, or the helper must inherit CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID and its profile environment, or have a direct Codex parent owning exactly one user thread.",
     )
   return matches[0]!
 }
@@ -141,9 +148,10 @@ export async function sendMessage(
   replyTo?: string,
   waitMs?: number,
   signal?: AbortSignal,
+  threadId?: string,
 ) {
   if (!text.trim()) throw new Error("Message text is empty")
-  const from = await sender(config)
+  const from = await sender(config, process.env, process.ppid, threadId)
   const profiles = allowedProfiles(config)
   const { entries, offPane } = await listEntries(profiles, false, "live")
   const target = entries.find((e) => e.live && e.thread && address(e.thread) === to)?.thread

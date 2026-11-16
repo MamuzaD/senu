@@ -175,6 +175,7 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
     CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, name TEXT, title TEXT,
       updated_at_ms INTEGER, updated_at INTEGER, archived INTEGER, thread_source TEXT);
     INSERT INTO threads VALUES ('cli-session', '', '/fixture', NULL, 'needle from title', 1, 1, 0, 'user');
+    INSERT INTO threads VALUES ('other-session', '', '/fixture', NULL, 'other caller', 1, 1, 0, 'user');
   `)
   db.close()
   const store = new MessageStore(join(root, "senu", "messages.sqlite"))
@@ -226,6 +227,39 @@ test("CLI and stdio MCP run from another cwd with inherited profile restrictions
     }),
   )
   try {
+    const wrongCaller = await client.callTool({
+      name: "wait_for_reply",
+      arguments: { message_id: messageId!, timeout_ms: 1 },
+      _meta: { threadId: "other-session" },
+    })
+    expect(wrongCaller.isError).toBe(true)
+    const viaMetadata = await client.callTool({
+      name: "wait_for_reply",
+      arguments: { message_id: messageId!, timeout_ms: 1 },
+      _meta: { threadId: "cli-session", unrelated: true },
+    })
+    expect(viaMetadata.isError).toBeFalsy()
+    expect(JSON.parse((viaMetadata.content as { text: string }[])[0]!.text)).toMatchObject({
+      reply: { text: "stored answer" },
+    })
+    const metadataSearch = await client.callTool({
+      name: "search_threads",
+      arguments: { query: "needle", only: "threads" },
+      _meta: { threadId: "other-session" },
+    })
+    expect(
+      JSON.parse((metadataSearch.content as { text: string }[])[0]!.text).hits.map(
+        (hit: { session: string }) => hit.session,
+      ),
+    ).toEqual(["cli-session"])
+    for (const threadId of [42, "", "missing"]) {
+      const invalid = await client.callTool({
+        name: "wait_for_reply",
+        arguments: { message_id: messageId!, timeout_ms: 1 },
+        _meta: { threadId },
+      })
+      expect(invalid.isError).toBe(true)
+    }
     const waited = await client.callTool({
       name: "wait_for_reply",
       arguments: { message_id: messageId!, timeout_ms: 1 },
@@ -359,6 +393,15 @@ test("Codex MCP identifies one user thread owned by its parent and refuses ambig
     )
     const ambiguousError = await sender(config, env, child.pid).catch((e: unknown) => e)
     expect(ambiguousError).toBeInstanceOf(Error)
+    expect((await sender(config, env, child.pid, "caller")).sessionId).toBe("caller")
+    expect(
+      (await sender(config, { ...env, CODEX_THREAD_ID: "caller" }, child.pid, "other-user"))
+        .sessionId,
+    ).toBe("other-user")
+    const missing = await sender(config, env, child.pid, "missing").catch((e: unknown) => e)
+    expect(String(missing)).toContain("Cannot identify")
+    const hidden = await sender(config, {}, child.pid, "caller").catch((e: unknown) => e)
+    expect(String(hidden)).toContain("Cannot identify")
   } finally {
     child.kill()
     await child.exited

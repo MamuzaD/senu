@@ -249,3 +249,32 @@ test.skipIf(!Bun.which("tmux"))("an agent that exits under remain-on-exit is dro
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test.skipIf(!Bun.which("tmux"))("MCP preserves Unicode titles without a UTF-8 locale", () => {
+  const dir = mkdtempSync(join(tmpdir(), "senu-utf8-"))
+  const sock = join(dir, "sock")
+  const t = (...args: string[]) =>
+    Bun.spawnSync(["tmux", "-u", "-S", sock, "-f", "/dev/null", ...args])
+  try {
+    expect(t("new-session", "-d", "-s", "unicode", "sleep 30").exitCode).toBe(0)
+    const title = "⠦ Test Unicode 日本語 | work"
+    expect(t("select-pane", "-t", "unicode:0.0", "-T", title).exitCode).toBe(0)
+    const run = Bun.spawnSync(
+      [
+        process.execPath,
+        "-e",
+        `
+      import { listPanes, setTmuxSocket } from ${JSON.stringify(join(import.meta.dir, "../../src/detect/panes.ts"))};
+      setTmuxSocket(["-S", ${JSON.stringify(sock)}]);
+      console.log(JSON.stringify((await listPanes()).map(p => p.oscTitle)));
+    `,
+      ],
+      { env: { PATH: process.env.PATH!, HOME: process.env.HOME!, LANG: "C", LC_ALL: "C" } },
+    )
+    expect(run.exitCode).toBe(0)
+    expect(JSON.parse(run.stdout.toString())).toEqual([title])
+  } finally {
+    t("kill-server")
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
