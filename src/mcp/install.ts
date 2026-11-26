@@ -48,7 +48,7 @@ export function codexConfig(text: string, command: string[], codexHome: string):
     "[mcp_servers.senu]",
     `command = ${JSON.stringify(command[0])}`,
     `args = ${JSON.stringify([...command.slice(1), "mcp"])}`,
-    'env_vars = ["REX_SESSION", "REX_BIN_DIR"]',
+    'env_vars = ["TMUX", "REX_BLOCK", "REX_SERVER", "REX_BIN_DIR"]',
     "",
     "[mcp_servers.senu.env]",
     `CODEX_HOME = ${JSON.stringify(codexHome)}`,

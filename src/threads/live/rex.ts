@@ -8,8 +8,8 @@ import { runningThreads } from "../running.ts"
 import { attentionOf, titleTask, type Attention, type PaneRow } from "./collect.ts"
 import type { Mux } from "./mux.ts"
 
-/** tmux started inside a Rex block inherits REX_SESSION, so tmux wins. */
-export const inRex = () => !process.env.TMUX && !!process.env.REX_SESSION
+/** tmux started inside a Rex block inherits REX_BLOCK, so tmux wins. */
+export const inRex = () => !process.env.TMUX && !!process.env.REX_BLOCK
 
 // Popups don't get a login shell's PATH
 const rex = () => join(process.env.REX_BIN_DIR ?? "", "rex")
@@ -157,23 +157,35 @@ export function rexRow(a: RexAgent): PaneRow {
   }
 }
 
-/** senu runs on the server's machine, so the one app on it is the one in front of you. */
-async function localApp(): Promise<string | null> {
-  const list = await call<{
-    clients:
-      | { client_id: string; info?: { kind?: string }; principal?: { transport?: string } }[]
-      | null
-  }>("client.list")
-  const local = (list?.clients ?? []).filter(
-    (c) => c.info?.kind === "app" && c.principal?.transport === "unix",
+/**
+ * The session holding this terminal. Terminals only get REX_BLOCK, and the API wants a session
+ * id, so the CLI resolves it.
+ */
+async function here(): Promise<View | null> {
+  const block = process.env.REX_BLOCK
+  if (!block) return null
+  const { ok, out } = await run([rex(), "--autostart=false", "session", "inspect", block, "--json"])
+  return ok ? (JSON.parse(out) as View) : null
+}
+
+/**
+ * The one app showing this session, which is the device in front of you. An app is a separate
+ * client on every server it connects to, so REX_CLIENT from a popup can name a client this server
+ * doesn't know; the session's own attachments don't have that problem.
+ */
+async function attachedApp(sessionId: string): Promise<string | null> {
+  const list = await call<{ clients: { client_id: string; info?: { kind?: string } }[] | null }>(
+    "client.list",
+    { kinds: ["app"], session_id: sessionId },
   )
-  return local.length === 1 ? local[0]!.client_id : null
+  const apps = (list?.clients ?? []).filter((c) => c.info?.kind === "app")
+  return apps.length === 1 ? apps[0]!.client_id : null
 }
 
 /**
  * Server focus alone doesn't select the tab in the app, even within the same session. Selecting
- * goes through a client: REX_CLIENT names it, else Rex uses the only app connected. With several
- * connected Rex won't pick, so senu picks the local one; `ambiguous` is when it can't either.
+ * goes through a client: REX_CLIENT names it, else Rex uses the only app connected. When that
+ * fails senu asks for the app attached to this session; `ambiguous` is when there isn't one.
  */
 export async function rexJump(
   id: string,
@@ -192,9 +204,8 @@ export async function rexJump(
       `window_id=${windowId}`,
     ])
   if ((await select([])).ok) return "ok"
-  if (process.env.REX_CLIENT) return "unselected"
-  const app = await localApp()
-  if (!app) return "ambiguous"
+  const app = await attachedApp((await here())?.session_id ?? target.session_id)
+  if (!app) return process.env.REX_CLIENT ? "unselected" : "ambiguous"
   return (await select(["-C", app])).ok ? "ok" : "unselected"
 }
 
@@ -209,7 +220,7 @@ export function floating(view: View, blockId: string): boolean {
 }
 
 async function rexInPopup(): Promise<boolean> {
-  const view = await call<View>("session.view", { session_id: process.env.REX_SESSION })
+  const view = await here()
   return !!view && floating(view, process.env.REX_BLOCK ?? "")
 }
 
@@ -221,7 +232,8 @@ export function rexRunArgs(launch: Launch, sessionId: string): string[] {
 }
 
 export async function rexOpenWindow(launch: Launch): Promise<boolean> {
-  const sessionId = process.env.REX_SESSION ?? ""
+  const sessionId = (await here())?.session_id
+  if (!sessionId) return false
   const { ok, out } = await run([rex(), "--autostart=false", ...rexRunArgs(launch, sessionId)])
   if (!ok) return false
   // The agent is already running, so a tab the app can't select still counts; failing here

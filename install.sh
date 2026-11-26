@@ -107,7 +107,7 @@ main() {
     *) warn "$install_dir is not on your PATH; add it to your shell profile" ;;
   esac
 
-  if [ -n "${REX_SESSION:-}" ]; then
+  if [ -n "${REX_BLOCK:-}" ]; then
     say "next: add the lines from https://github.com/$REPO/blob/main/examples/rex.lua to your Rex init.lua"
     return 0
   fi

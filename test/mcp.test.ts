@@ -442,7 +442,7 @@ test("mcp install rewrites only senu's Codex tables and skips missing profiles",
     senu: {
       command: "/new/senu",
       args: ["mcp"],
-      env_vars: ["REX_SESSION", "REX_BIN_DIR"],
+      env_vars: ["TMUX", "REX_BLOCK", "REX_SERVER", "REX_BIN_DIR"],
       env: { CODEX_HOME: config.profiles[0]!.home },
     },
   })

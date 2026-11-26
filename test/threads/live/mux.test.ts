@@ -20,7 +20,7 @@ test("explicit tmux sockets override Rex detection, and clearing them restores R
     ],
     {
       cwd: new URL("../../../", import.meta.url).pathname,
-      env: { ...process.env, TMUX: "", REX_SESSION: "session:test" },
+      env: { ...process.env, TMUX: "", REX_BLOCK: "block:test" },
       stdout: "pipe",
       stderr: "pipe",
     },

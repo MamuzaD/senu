@@ -16,6 +16,8 @@ const passes = process.env.REX_TEST_PASS_WITH && args.includes(process.env.REX_T
 if (process.env.REX_TEST_FAIL && args.includes(process.env.REX_TEST_FAIL) && !passes) process.exit(1);
 console.log(args.includes("client.list")
   ? process.env.REX_TEST_CLIENTS
+  : args.includes("inspect")
+  ? JSON.stringify({ session_id: "session:here", windows: [] })
   : JSON.stringify(args.includes("run")
     ? { window_id: "window:new", block_ids: ["block:new"] }
     : { revision: 1 }));
@@ -47,7 +49,7 @@ async function invoke(
       env: {
         ...process.env,
         TMUX: "",
-        REX_SESSION: "session:here",
+        REX_BLOCK: "block:here",
         REX_BIN_DIR: dir,
         REX_TEST_LOG: log,
         REX_TEST_FAIL: fail,
@@ -104,15 +106,22 @@ describe("Rex jump", () => {
   test("reports failure when the popup's app cannot select the destination", async () => {
     const result = await invoke(jumpHere, "session.select", { client: "client:mac" })
     expect(result.out).toBe("unselected")
-    expect(result.calls).toHaveLength(2)
+    expect(result.calls).toHaveLength(4)
   })
 
-  test("picks the local app when Rex can't choose between devices", async () => {
+  test("picks the app attached to this session when Rex can't choose between devices", async () => {
     const result = await invoke(jumpHere, "session.select", {
-      clients: [cli, app("client:mac", "unix"), app("client:phone", "tailscale")],
+      clients: [cli, app("client:mac", "unix")],
       passWith: "client:mac",
     })
     expect(result.out).toBe("ok")
+    expect(result.calls.at(-2)).toEqual([
+      "--autostart=false",
+      "api",
+      "call",
+      "client.list",
+      JSON.stringify({ kinds: ["app"], session_id: "session:here" }),
+    ])
     expect(result.calls.at(-1)!.slice(0, 4)).toEqual([
       "--autostart=false",
       "-C",
@@ -121,7 +130,16 @@ describe("Rex jump", () => {
     ])
   })
 
-  test("is ambiguous with no single local app", async () => {
+  test("uses the attached app when REX_CLIENT names a client from another server", async () => {
+    const result = await invoke(jumpHere, "session.select", {
+      client: "client:home-server-id",
+      clients: [app("client:mac", "ssh")],
+      passWith: "client:mac",
+    })
+    expect(result.out).toBe("ok")
+  })
+
+  test("is ambiguous with several apps on this session", async () => {
     const result = await invoke(jumpHere, "session.select", {
       clients: [app("client:phone", "tailscale"), app("client:pad", "tailscale")],
     })
@@ -153,6 +171,13 @@ describe("Rex resume", () => {
     expect(result.out).toBe("true")
     expect(result.calls[0]).toEqual([
       "--autostart=false",
+      "session",
+      "inspect",
+      "block:here",
+      "--json",
+    ])
+    expect(result.calls[1]).toEqual([
+      "--autostart=false",
       "run",
       "--json",
       "--interactive",
@@ -167,11 +192,11 @@ describe("Rex resume", () => {
       "resume",
       "thread",
     ])
-    expect(JSON.parse(result.calls[1]!.at(-1)!)).toEqual({
+    expect(JSON.parse(result.calls[2]!.at(-1)!)).toEqual({
       session_id: "session:here",
       block_id: "block:new",
     })
-    expect(result.calls[2]).toEqual([
+    expect(result.calls[3]).toEqual([
       "--autostart=false",
       "do",
       "session.select",
@@ -183,11 +208,17 @@ describe("Rex resume", () => {
   test("succeeds when the app can't select the created tab, so a retry won't start a copy", async () => {
     const result = await invoke(launch, "session.select", { client: "client:mac" })
     expect(result.out).toBe("true")
-    expect(result.calls).toHaveLength(3)
+    expect(result.calls).toHaveLength(6)
   })
 
   test("does not select a tab when creation fails", async () => {
     const result = await invoke(launch, "run")
+    expect(result.out).toBe("false")
+    expect(result.calls).toHaveLength(2)
+  })
+
+  test("does not start an agent when Rex can't say which session this is", async () => {
+    const result = await invoke(launch, "inspect")
     expect(result.out).toBe("false")
     expect(result.calls).toHaveLength(1)
   })
