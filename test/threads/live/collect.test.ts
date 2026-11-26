@@ -42,16 +42,29 @@ function row(
 }
 
 describe("sortRows", () => {
-  test("blocked > working > done > idle, ties by recency", () => {
+  test("blocked > error > done > working > idle, ties by recency", () => {
     const rows = [
       row("a", "idle", 50),
       row("b", "done", 10),
-      row("c", "working", 5),
+      row("c", "working", 5, { windowIndex: 2 }),
       row("d", "blocked", 1),
-      row("e", "working", 30),
+      row("e", "working", 30, { windowIndex: 3 }),
       row("f", "idle", 90),
+      row("g", "error", 2),
+      row("h", "done", 40),
     ]
-    expect(sortRows(rows).map((r) => r.windowId)).toEqual(["d", "e", "c", "b", "f", "a"])
+    expect(sortRows(rows).map((r) => r.windowId)).toEqual(["d", "g", "h", "b", "c", "e", "f", "a"])
+  })
+
+  test("working agents hold their place however their activity changes", () => {
+    const at = (c: number, e: number) =>
+      sortRows([
+        row("e", "working", e, { session: "b", windowIndex: 1 }),
+        row("c", "working", c, { session: "a", windowIndex: 2 }),
+        row("r", "working", 0, { host: "glamdring", session: "a", windowIndex: 1 }),
+      ]).map((r) => r.windowId)
+    expect(at(5, 30)).toEqual(["c", "e", "r"])
+    expect(at(30, 5)).toEqual(["c", "e", "r"])
   })
 })
 

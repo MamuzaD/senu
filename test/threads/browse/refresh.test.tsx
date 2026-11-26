@@ -34,7 +34,7 @@ test("a remote jump waits for confirmation of the destination app", async () => 
     cwd: "/",
     updatedMs: Date.now(),
     live: {
-      state: "done",
+      state: "error",
       paneId: "glamdring//session:s/block:b",
       windowId: "window:w",
       windowIndex: 1,
@@ -64,6 +64,7 @@ test("a remote jump waits for confirmation of the destination app", async () => 
       ),
     )
     await act(() => t.renderOnce())
+    expect(t.captureCharFrame()).toContain("▲")
     await act(async () => t.mockInput.pressEnter())
     await act(() => t.renderOnce())
     expect(t.captureCharFrame()).toContain("MacBook on glamdring")

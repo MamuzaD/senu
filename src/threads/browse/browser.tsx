@@ -6,7 +6,7 @@ import { useBindings } from "@opentui/keymap/react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 
-import { PRIORITY, type Attention } from "~/threads/live/collect.ts"
+import { byAttention as rankRows, type Attention } from "~/threads/live/collect.ts"
 import { mux } from "~/threads/live/mux.ts"
 import { inRex, rexJumpClient } from "~/threads/live/rex.ts"
 import { runApp } from "~/ui/app.tsx"
@@ -155,8 +155,14 @@ function paintMarked(
   return end
 }
 
-const byAttention = (a: Entry, b: Entry) =>
-  PRIORITY[b.live?.state ?? "idle"] - PRIORITY[a.live?.state ?? "idle"]
+const ranked = (e: Entry) => ({
+  state: e.live?.state ?? "idle",
+  activity: e.updatedMs,
+  host: e.live?.host,
+  session: e.live?.session ?? "",
+  windowIndex: e.live?.windowIndex ?? 0,
+})
+const byAttention = (a: Entry, b: Entry) => rankRows(ranked(a), ranked(b))
 
 /** What to search saved messages for: a shorter query would match nearly every transcript */
 const messageQuery = (query: string) => (query.trim().length >= 3 ? query.trim() : "")
@@ -303,7 +309,13 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
   let y = 1
   if (v.live) {
     let x = c.text(x0 + 1, y, "agents", brand.sand, { attrs: BOLD }) + 1
-    for (const s of ["blocked", "working", "done", "idle"] as Attention[]) {
+    for (const s of [
+      "blocked",
+      "error",
+      "done",
+      "working",
+      "idle",
+    ] as const satisfies Attention[]) {
       const n = v.rows.filter((r) => r.kind === "entry" && r.entry.live?.state === s).length
       if (!n) continue
       x =

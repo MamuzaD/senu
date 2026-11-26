@@ -5,7 +5,7 @@ import { agentFromProcess, processArgv, run } from "~/detect/panes.ts"
 
 import type { Launch } from "../resume.ts"
 import { runningThreads } from "../running.ts"
-import { attentionOf, titleTask, type Attention, type PaneRow } from "./collect.ts"
+import { attentionOf, titleTask, type PaneRow } from "./collect.ts"
 import type { Mux } from "./mux.ts"
 
 /** tmux started inside a Rex block inherits REX_BLOCK, so tmux wins. */
@@ -191,9 +191,6 @@ const remoteAgents = async () =>
 
 const REMOTE_MS = 5000
 
-const attention = (state: string | undefined): Attention =>
-  state === "error" ? "done" : (attentionOf(state ?? "") ?? "idle")
-
 export function rexRow(a: RexAgent): PaneRow {
   return {
     windowId: a.windowId,
@@ -202,7 +199,7 @@ export function rexRow(a: RexAgent): PaneRow {
     windowName: "",
     paneId: a.id,
     agent: a.agent,
-    state: attention(a.record?.state),
+    state: attentionOf(a.record?.state ?? "") ?? "idle",
     // An agent that hasn't reported yet is at least running now
     activity: (a.record?.updated_at ? Date.parse(a.record.updated_at) : Date.now()) / 1000,
     label: a.record?.msg || titleTask(a.title, a.agent, a.session) || basename(a.cwd),

@@ -3,10 +3,16 @@ import type { Agent, AgentState } from "~/detect/manifest.ts"
 import { AgentCache, capturePanes, listPanes, tmux, type AgentPane } from "~/detect/panes.ts"
 
 /** The status bar's states: `done` is the daemon's "finished while you weren't looking". */
-export type Attention = "blocked" | "working" | "done" | "idle"
+export type Attention = "blocked" | "error" | "working" | "done" | "idle"
 
 /** What wants you most sorts first. */
-export const PRIORITY: Record<Attention, number> = { blocked: 3, working: 2, done: 1, idle: 0 }
+export const PRIORITY: Record<Attention, number> = {
+  blocked: 4,
+  error: 3,
+  done: 2,
+  working: 1,
+  idle: 0,
+}
 
 export interface AgentRow {
   windowId: string
@@ -109,9 +115,24 @@ export function labelFor(p: AgentPane, screen: string | null): string {
 // ----------------------------------------------------------- fold and sort
 
 /** Rank rows: attention first, then the most recent activity. */
-export function sortRows<T extends { state: Attention; activity: number }>(rows: T[]): T[] {
-  return rows.toSorted((a, b) => PRIORITY[b.state] - PRIORITY[a.state] || b.activity - a.activity)
+interface Ranked {
+  state: Attention
+  activity: number
+  host?: string | undefined
+  session: string
+  windowIndex: number
 }
+
+const byLocation = (a: Ranked, b: Ranked) =>
+  (a.host ?? "").localeCompare(b.host ?? "") ||
+  a.session.localeCompare(b.session) ||
+  a.windowIndex - b.windowIndex
+
+export const byAttention = (a: Ranked, b: Ranked) =>
+  PRIORITY[b.state] - PRIORITY[a.state] ||
+  (a.state === "working" ? byLocation(a, b) : b.activity - a.activity)
+
+export const sortRows = <T extends Ranked>(rows: T[]): T[] => rows.toSorted(byAttention)
 
 /**
  * One row per window: the pane that wants you most stands for it (the active

@@ -32,6 +32,7 @@ export const brand = {
 
 export const states = {
   blocked: { glyph: "!", fg: hex("#ff9e64"), bold: true },
+  error: { glyph: "▲", fg: hex("#ff646e"), bold: true },
   working: { glyph: "●", fg: hex("#e0c060"), bold: false },
   done: { glyph: noColor ? "✓" : "●", fg: hex("#7aa2f7"), bold: true },
   idle: { glyph: "◯", fg: hex("#9ece6a"), bold: false },

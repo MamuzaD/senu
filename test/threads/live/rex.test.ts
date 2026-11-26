@@ -127,8 +127,8 @@ describe("rexRow", () => {
     })
   })
 
-  test("shows an error as done", () => {
-    expect(rexRow(agent({ record: { state: "error" } })).state).toBe("done")
+  test("keeps errors distinct from completed work", () => {
+    expect(rexRow(agent({ record: { state: "error" } })).state).toBe("error")
   })
 
   test("is idle and active now with no record", () => {
