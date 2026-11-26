@@ -8,7 +8,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 
 import { PRIORITY, type Attention } from "~/threads/live/collect.ts"
 import { mux } from "~/threads/live/mux.ts"
-import { rexJumpClient } from "~/threads/live/rex.ts"
+import { inRex, rexJumpClient } from "~/threads/live/rex.ts"
 import { runApp } from "~/ui/app.tsx"
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
 import { DIVE_MS, paintSenu, rowGlow, type DivePlan } from "~/ui/dive.ts"
@@ -1165,6 +1165,6 @@ export async function runBrowser(
   const app = Promise.resolve(initial).then((es) => (
     <Browser initial={es} {...opts} onOpen={(e) => (picked = e)} />
   ))
-  await runApp(app, { useMouse: true })
+  await runApp(app, { useMouse: true, syncStartupSize: inRex() })
   return picked
 }
