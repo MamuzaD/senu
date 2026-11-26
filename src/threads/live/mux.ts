@@ -21,7 +21,10 @@ export interface Mux {
   /** Keeps what it learns between polls, so the picker holds one. */
   collector(): { collect(): Promise<Collected> }
   seen(profiles: Profile[]): Promise<Seen>
-  jump(live: Live, opts: Pick<ThreadsConfig, "raiseGhosttyTab">): Promise<string | null>
+  jump(
+    live: Live,
+    opts: Pick<ThreadsConfig, "raiseGhosttyTab"> & { rexClientId?: string | undefined },
+  ): Promise<string | null>
   kill(paneId: string): Promise<boolean>
   /** Whether a resumed thread gets its own window rather than this terminal. */
   resumesInWindow(mode: ThreadsConfig["resume"]): Promise<boolean>

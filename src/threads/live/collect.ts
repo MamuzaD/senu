@@ -22,6 +22,7 @@ export interface AgentRow {
   label: string
   /** Whether the state came from the daemon (`watch`) or from classifying the screen now (`live`). */
   source: "watch" | "live"
+  host?: string | undefined
 }
 
 export type PaneRow = AgentRow & { active: boolean }
@@ -119,12 +120,13 @@ export function sortRows<T extends { state: Attention; activity: number }>(rows:
 export function foldWindows(rows: PaneRow[]): AgentRow[] {
   const byWindow = new Map<string, PaneRow>()
   for (const r of rows) {
-    const best = byWindow.get(r.windowId)
-    if (!best) byWindow.set(r.windowId, r)
+    const key = JSON.stringify([r.host, r.windowId])
+    const best = byWindow.get(key)
+    if (!best) byWindow.set(key, r)
     else {
       const d = PRIORITY[r.state] - PRIORITY[best.state]
       const winner = d > 0 || (d === 0 && r.active && !best.active) ? r : best
-      byWindow.set(r.windowId, { ...winner, activity: Math.max(r.activity, best.activity) })
+      byWindow.set(key, { ...winner, activity: Math.max(r.activity, best.activity) })
     }
   }
   return sortRows([...byWindow.values()].map(({ active: _, ...r }) => r))

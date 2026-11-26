@@ -15,7 +15,7 @@ appendFileSync(process.env.REX_TEST_LOG, JSON.stringify(args) + "\\n");
 const passes = process.env.REX_TEST_PASS_WITH && args.includes(process.env.REX_TEST_PASS_WITH);
 if (process.env.REX_TEST_FAIL && args.includes(process.env.REX_TEST_FAIL) && !passes) process.exit(1);
 console.log(args.includes("client.list")
-  ? process.env.REX_TEST_CLIENTS
+  ? (args.includes("-S") ? process.env.REX_TEST_REMOTE_CLIENTS : process.env.REX_TEST_CLIENTS)
   : args.includes("inspect")
   ? JSON.stringify({ session_id: "session:here", windows: [] })
   : JSON.stringify(args.includes("run")
@@ -36,14 +36,14 @@ const cli = { client_id: "client:cli", info: { kind: "cli" }, principal: { trans
 async function invoke(
   expression: string,
   fail = "",
-  opts: { clients?: object[]; client?: string; passWith?: string } = {},
+  opts: { clients?: object[]; remoteClients?: object[]; client?: string; passWith?: string } = {},
 ) {
   const log = join(dir, `${crypto.randomUUID()}.jsonl`)
   const proc = Bun.spawn(
     [
       process.execPath,
       "--eval",
-      `import { rexJump, rexOpenWindow } from ${JSON.stringify(modulePath)}; console.log(await (${expression}));`,
+      `import { rexJump, rexJumpClient, rexMux, rexOpenWindow } from ${JSON.stringify(modulePath)}; console.log(await (${expression}));`,
     ],
     {
       env: {
@@ -55,6 +55,9 @@ async function invoke(
         REX_TEST_FAIL: fail,
         REX_TEST_PASS_WITH: opts.passWith ?? "",
         REX_TEST_CLIENTS: JSON.stringify({ clients: opts.clients ?? [] }),
+        REX_TEST_REMOTE_CLIENTS: JSON.stringify({
+          clients: opts.remoteClients ?? opts.clients ?? [],
+        }),
         REX_CLIENT: opts.client ?? "",
       },
       stdout: "pipe",
@@ -221,5 +224,107 @@ describe("Rex resume", () => {
     const result = await invoke(launch, "inspect")
     expect(result.out).toBe("false")
     expect(result.calls).toHaveLength(1)
+  })
+})
+
+describe("Rex on another server", () => {
+  const there = ["--autostart=false", "--timeout", "3s", "-S", "glamdring"]
+  const jumpThere = 'rexJump("glamdring//session:there/block:target", "window:target")'
+  const mac = { ...app("client:here-id", "ssh"), info: { kind: "app", label: "mac" } }
+  const remoteMac = { ...mac, client_id: "client:there-id" }
+  const resolve = 'JSON.stringify(await rexJumpClient("glamdring//session:there/block:target"))'
+
+  test("connects the source app to a unique matching destination label", async () => {
+    const result = await invoke(resolve, "", {
+      clients: [mac],
+      remoteClients: [remoteMac],
+      client: mac.client_id,
+    })
+    expect(JSON.parse(result.out)).toEqual({
+      id: remoteMac.client_id,
+      label: "mac",
+      confirm: false,
+    })
+  })
+
+  test("asks before switching the only destination app with a different label", async () => {
+    const other = { ...remoteMac, info: { ...mac.info, label: "other" } }
+    const result = await invoke(resolve, "", {
+      clients: [mac],
+      remoteClients: [other],
+      client: mac.client_id,
+    })
+    expect(JSON.parse(result.out)).toEqual({ id: other.client_id, label: "other", confirm: true })
+  })
+
+  test("does not choose between duplicate destination labels", async () => {
+    const result = await invoke(resolve, "", {
+      clients: [mac],
+      remoteClients: [remoteMac, { ...remoteMac, client_id: "client:other" }],
+      client: mac.client_id,
+    })
+    expect(result.out).toBe("null")
+  })
+
+  test("focuses and selects only when the exact app ID is connected to the destination", async () => {
+    const result = await invoke(jumpThere, "", { clients: [mac], client: mac.client_id })
+    expect(result.out).toBe("ok")
+    expect(result.calls[1]).toEqual([
+      ...there,
+      "api",
+      "call",
+      "session.focus_block",
+      JSON.stringify({ session_id: "session:there", block_id: "block:target" }),
+    ])
+    expect(result.calls.at(-1)).toEqual([
+      ...there,
+      "-C",
+      mac.client_id,
+      "do",
+      "session.select",
+      "session_id=session:there",
+      "window_id=window:target",
+    ])
+  })
+
+  test("does not focus or select when only a matching label exists", async () => {
+    const result = await invoke(jumpThere, "", { clients: [mac], client: "mac" })
+    expect(result.out).toBe("remote-client")
+    expect(result.calls).toEqual([
+      [...there, "api", "call", "client.list", JSON.stringify({ kinds: ["app"] })],
+    ])
+  })
+
+  test("switches the confirmed destination app when the inherited ID is from another host", async () => {
+    const result = await invoke(
+      `rexJump("glamdring//session:there/block:target", "window:target", "${mac.client_id}")`,
+      "",
+      { clients: [mac], client: "client:source" },
+    )
+    expect(result.out).toBe("ok")
+    expect(result.calls.at(-1)?.slice(there.length, there.length + 2)).toEqual([
+      "-C",
+      mac.client_id,
+    ])
+  })
+
+  test("does not switch a different app when the exact destination app is disconnected", async () => {
+    const lost = { ...mac, connection_state: "lost" }
+    const other = { ...mac, client_id: "client:other" }
+    const result = await invoke(jumpThere, "", { clients: [lost, other], client: lost.client_id })
+    expect(result.out).toBe("remote-client")
+    expect(result.calls).toHaveLength(1)
+  })
+
+  test("closes the block on that server", async () => {
+    const result = await invoke('rexMux.kill("glamdring//session:there/block:target")')
+    expect(result.out).toBe("true")
+    expect(result.calls[0]).toEqual([
+      ...there,
+      "api",
+      "call",
+      "block.close",
+      JSON.stringify({ session_id: "session:there", block_id: "block:target" }),
+    ])
   })
 })

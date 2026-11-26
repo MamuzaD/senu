@@ -8,6 +8,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 
 import { PRIORITY, type Attention } from "~/threads/live/collect.ts"
 import { mux } from "~/threads/live/mux.ts"
+import { rexJumpClient } from "~/threads/live/rex.ts"
 import { runApp } from "~/ui/app.tsx"
 import { Canvas, CanvasView } from "~/ui/canvas.tsx"
 import { DIVE_MS, paintSenu, rowGlow, type DivePlan } from "~/ui/dive.ts"
@@ -288,6 +289,7 @@ interface View {
   note: string
   count: string
   confirming: Entry | null
+  jumpPrompt: string
   hints: Hint[]
   live: boolean
   scouting: boolean
@@ -365,6 +367,8 @@ function paintList(c: Canvas, v: View, x0: number, w: number) {
 
     const agentFg = noColor ? colors.fg : colors[e.agent]
     let mx = c.text(x0 + 5, y + 1, icons[e.agent], agentFg)
+    const host = e.live?.host
+    if (host) mx = c.text(mx + 2, y + 1, `${icons.host} ${host}`, colors.dim, { max: right })
     const profile = profileName(e)
     if (profile) mx = c.text(mx + 1, y + 1, profile, colors.dim, { max: right })
     const proj = project(e)
@@ -468,6 +472,8 @@ function paint(v: View): Canvas {
   if (v.confirming) {
     let kx = c.text(1, fy, "kill this ", colors.bad)
     kx = c.text(kx, fy, v.confirming.agent, colors.bad, { attrs: BOLD })
+    const host = v.confirming.live?.host
+    if (host) kx = c.text(kx, fy, ` on ${host}`, colors.bad, { max: v.width - 9 })
     const title = v.confirming.title
     const room = v.width - kx - 40
     if (room > 8)
@@ -480,7 +486,8 @@ function paint(v: View): Canvas {
     kx = c.text(kx, fy, "?  ", colors.bad)
     kx = c.text(kx, fy, "y", brand.papyrus, { attrs: BOLD })
     c.text(kx, fy, " kill · any other key keeps it", colors.muted)
-  } else if (v.note) c.text(1, fy, v.note, brand.gold)
+  } else if (v.jumpPrompt) c.text(1, fy, v.jumpPrompt, brand.gold)
+  else if (v.note) c.text(1, fy, v.note, brand.gold)
   else {
     const diving = v.senu?.t != null
     const watch = !v.live
@@ -551,7 +558,7 @@ export function Browser({
   recentMs: number
   /** `initial` holds only some saved threads, so the rest load right away. */
   partial?: boolean
-  jump: (e: Entry) => Promise<unknown>
+  jump: (e: Entry, rexClientId?: string) => Promise<unknown>
   searchMessages?: SearchMessages
   onOpen: (e: Entry) => void
 }) {
@@ -591,6 +598,8 @@ export function Browser({
   // How far back the selected thread's preview reads, as a `previewAt` depth
   const [reach, setReach] = useState({ key: "", depth: 0 })
   const [confirming, setConfirmingState] = useState<Entry | null>(null)
+  const [jumpPrompt, setJumpPrompt] = useState("")
+  const pendingJump = useRef<(() => void) | null>(null)
   const confirmingRef = useRef<Entry | null>(null)
   const setConfirming = (e: Entry | null) => {
     confirmingRef.current = e
@@ -616,10 +625,10 @@ export function Browser({
   const refresh = usePoll(async () => {
     const scope = loadAll.current ? "all" : live ? "live" : "recent"
     const loaded = await load(scope)
-    const since = scope === "recent" ? Date.now() - recentMs : Infinity
-    if (scope !== "all") return setEntries((es) => mergeLoaded(es, loaded, since))
+    const since = scope === "all" ? null : scope === "recent" ? Date.now() - recentMs : Infinity
+    setEntries((es) => mergeLoaded(es, loaded, since))
+    if (scope !== "all") return
     loadAll.current = false
-    setEntries(loaded)
     setComplete(true)
   }, REFRESH_MS)
   const refreshAll = () => {
@@ -769,12 +778,23 @@ export function Browser({
 
   const { split, listW } = layout(width, showPreview)
   const listShown = !showPreview || split
-  const go = (e: Entry) => {
+  const go = (e: Entry, rexClientId?: string) => {
     divingRef.current = true
-    const jumped = jump(e)
+    const jumped = jump(e, rexClientId)
     if (reducedMotion || noColor || !listShown || listW < 30) return void jumped.finally(close)
     setDiveAt(now())
     void Promise.all([jumped, Bun.sleep(DIVE_MS)]).finally(close)
+  }
+  const goRemote = async (e: Entry) => {
+    const host = e.live?.host
+    if (!host || !e.live) return
+    divingRef.current = true
+    const client = await rexJumpClient(e.live.paneId).catch(() => null)
+    divingRef.current = false
+    if (!client) return flash(`couldn't identify a Rex app on ${host}`)
+    if (!client.confirm) return go(e, client.id)
+    pendingJump.current = () => go(e, client.id)
+    setJumpPrompt(`Switch ${client.label} on ${host}?  y / esc`)
   }
   useTicker(diveAt == null ? 0 : FPS)
   let selY = HEAD_ROWS
@@ -789,13 +809,26 @@ export function Browser({
 
   useKeyboard((key) => {
     if (divingRef.current) return
+    const switchApp = pendingJump.current
+    if (switchApp) {
+      pendingJump.current = null
+      setJumpPrompt("")
+      if (key.name === "y") switchApp()
+      return
+    }
     const pending = confirmingRef.current
     if (pending) {
       setConfirming(null)
-      if (key.name === "y" && pending.live)
+      const target = pending.live
+      if (key.name === "y" && target)
         void mux()
-          .kill(pending.live.paneId)
-          .then(() => Promise.all([watchNow(), refresh()]))
+          .kill(target.paneId)
+          .catch(() => false)
+          .then((closed) => {
+            if (!closed)
+              flash(target.host ? `couldn't close pane on ${target.host}` : "couldn't close pane")
+            return Promise.all([watchNow(), refresh()])
+          })
       return
     }
     if (!searchingRef.current) return
@@ -810,7 +843,11 @@ export function Browser({
 
   useBindings(
     () => ({
-      enabled: () => !searchingRef.current && !confirmingRef.current && !divingRef.current,
+      enabled: () =>
+        !searchingRef.current &&
+        !confirmingRef.current &&
+        !pendingJump.current &&
+        !divingRef.current,
       bindings: keysFor(live, showPreview),
       commands: [
         { name: "quit", run: (n: number) => (n ? undefined : close()) },
@@ -900,6 +937,7 @@ export function Browser({
           run: () => {
             const { e } = current()
             if (!e) return
+            if (e.live?.host) return void goRemote(e)
             if (live && e.live) return go(e)
             // Said here, so a gone folder doesn't close the browser to report it
             if (!e.live && e.thread && !existsSync(e.cwd)) return flash(`${e.cwd} no longer exists`)
@@ -979,6 +1017,7 @@ export function Browser({
         ? "searching messages…"
         : ""),
     confirming,
+    jumpPrompt,
     count: pendingCount,
     hints: useHints(),
     live,
@@ -986,7 +1025,8 @@ export function Browser({
     senu,
   })
   const onWheel = (event: MouseEvent) => {
-    if (searchingRef.current || confirmingRef.current || divingRef.current) return
+    if (searchingRef.current || confirmingRef.current || pendingJump.current || divingRef.current)
+      return
     const up = event.scroll?.direction === "up"
     if (showPreview && (!split || event.x >= listW)) scrollPreview(up ? WHEEL_LINES : -WHEEL_LINES)
     else select(current().i + (up ? -1 : 1))
@@ -1118,7 +1158,7 @@ export async function runBrowser(
     recentMs: number
     partial?: boolean
     searchMessages?: SearchMessages
-    jump: (e: Entry) => Promise<unknown>
+    jump: (e: Entry, rexClientId?: string) => Promise<unknown>
   },
 ): Promise<Entry | null> {
   let picked: Entry | null = null

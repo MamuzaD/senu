@@ -19,6 +19,7 @@ export interface Live {
   windowIndex: number
   paneIndex?: number | undefined
   session: string
+  host?: string | undefined
 }
 
 export interface Entry {
@@ -51,6 +52,7 @@ export const agentEntry = (r: AgentRow, cwd: string): Entry => ({
     windowId: r.windowId,
     windowIndex: r.windowIndex,
     session: r.session,
+    host: r.host,
   },
 })
 
@@ -104,15 +106,21 @@ export function refreshLive(
 }
 
 /**
- * Puts a narrower load over the last list. Threads older than `since` it didn't read keep their
- * place, and any that were running have stopped, since every running thread is read. A newer one
- * it didn't read is gone.
+ * Keeps remote rows from the live poll across local reloads. A narrower load also keeps unread
+ * threads older than `since` and clears their live state. A full load passes null.
  */
-export function mergeLoaded(last: Entry[], loaded: Entry[], since = Infinity): Entry[] {
+export function mergeLoaded(
+  last: Entry[],
+  loaded: Entry[],
+  since: number | null = Infinity,
+): Entry[] {
   const keyOf = (t: Thread) => threadKey(t.profile, t.sessionId)
   const read = new Set(loaded.flatMap((e) => (e.thread ? [keyOf(e.thread)] : [])))
-  const skipped = (e: Entry) => !!e.thread && !read.has(keyOf(e.thread)) && e.updatedMs < since
-  const kept = last.flatMap((e) => (skipped(e) ? [e.live ? { ...e, live: null } : e] : []))
+  const kept = last.flatMap((e) => {
+    if (e.live?.host) return [e]
+    if (since === null || !e.thread || read.has(keyOf(e.thread)) || e.updatedMs >= since) return []
+    return [e.live ? { ...e, live: null } : e]
+  })
   return [...loaded, ...kept].toSorted((a, b) => b.updatedMs - a.updatedMs)
 }
 
@@ -141,7 +149,7 @@ export class OpenError extends Error {}
 
 export async function openEntry(
   e: Entry,
-  opts: Pick<ThreadsConfig, "raiseGhosttyTab" | "resume">,
+  opts: Pick<ThreadsConfig, "raiseGhosttyTab" | "resume"> & { rexClientId?: string | undefined },
 ): Promise<number> {
   if (e.live) {
     const failed = await mux().jump(e.live, opts)

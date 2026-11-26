@@ -76,6 +76,14 @@ describe("foldWindows", () => {
     expect(rows[0]!.paneId).toBe("%2")
     expect("active" in rows[0]!).toBe(false)
   })
+
+  test("matching window IDs on different hosts stay separate", () => {
+    const rows = foldWindows([
+      row("w", "idle", 1, { paneId: "session:s/block:b" }),
+      row("w", "idle", 1, { paneId: "glamdring//session:s/block:b", host: "glamdring" }),
+    ])
+    expect(rows.map((r) => r.paneId)).toEqual(["session:s/block:b", "glamdring//session:s/block:b"])
+  })
 })
 
 describe("states", () => {

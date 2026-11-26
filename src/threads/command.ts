@@ -160,7 +160,8 @@ async function browse(
     preview: live ? threads.livePreview : threads.preview,
     recentMs,
     partial: true,
-    jump: (e) => openEntry(e, threads).catch((err: unknown) => (jumpFailed = err)),
+    jump: (e, rexClientId) =>
+      openEntry(e, { ...threads, rexClientId }).catch((err: unknown) => (jumpFailed = err)),
   })
   for (const f of failures) console.error(`senu threads: ${f}`)
   try {

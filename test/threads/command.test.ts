@@ -251,6 +251,15 @@ test("mergeLoaded keeps the threads a narrower load skipped, stopped if they wer
   ])
   // Past the cutoff the load read everything, so a thread it missed was archived or deleted
   expect(mergeLoaded(last, [], 2).map((e) => e.title)).toEqual(["older"])
+  const remote = {
+    ...entry(null, "remote agent", 2, true),
+    live: { ...live, host: "glamdring", paneId: "glamdring//session:s/block:1" },
+  }
+  expect(mergeLoaded([...last, remote], [], 2).map((e) => e.title)).toEqual([
+    "remote agent",
+    "older",
+  ])
+  expect(mergeLoaded([...last, remote], [], null)).toEqual([remote])
 })
 
 describe("senu threads", () => {

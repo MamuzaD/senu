@@ -42,6 +42,7 @@ export const icons = {
   claude: "\u{EC82}", // Nerd Font cod-claude
   opencode: "\u{F121}", // Nerd Font fa-code
   message: "\u{EA6B}", // Nerd Font cod-comment
+  host: "\u{F233}", // Nerd Font fa-server
 }
 
 const clamp01 = (k: number) => Math.max(0, Math.min(1, k))

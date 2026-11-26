@@ -34,6 +34,7 @@ const view = {
 
 const agent = (over: Partial<RexAgent> = {}): RexAgent => ({
   id: "session:a/block:1",
+  host: null,
   pid: 10,
   agent: "codex",
   session: "work",
@@ -75,6 +76,15 @@ describe("terminalsIn", () => {
     expect(found.map((t) => t.windowIndex)).toEqual([1, 2, 2])
     expect(found[1]).toMatchObject({ id: "session:a/block:2", session: "work", active: true })
     expect(found[0]!.active).toBe(false)
+  })
+
+  test("names another server's sessions and panes after it", () => {
+    const found = terminalsIn(view, "glamdring")
+    expect(found[1]).toMatchObject({
+      host: "glamdring",
+      id: "glamdring//session:a/block:2",
+      session: "work",
+    })
   })
 })
 
@@ -160,6 +170,7 @@ describe("rexRunArgs", () => {
   })
 })
 
-test("paneId carries the session", () => {
+test("paneId carries the session, and the server when it's another one", () => {
   expect(paneId("session:a", "block:1")).toBe("session:a/block:1")
+  expect(paneId("session:a", "block:1", "daniel@sr8")).toBe("daniel@sr8//session:a/block:1")
 })
